@@ -181,7 +181,7 @@ websocat ws://YOUR-BITAXE-IP/api/ws/live
 
 ### Bridge firmware HTTP API
 
-`GET /api/system/info` includes the installed bridge version and protocol in the `asicHealth` object. The current production controller requires bridge protocol major `1`, minor `2` or a newer compatible minor version.
+`GET /api/system/info` includes the installed bridge version and protocol in the `asicHealth` object. The current production controller requires bridge protocol major `1`, minor `0` or a newer compatible minor version.
 
 ```bash
 curl -s http://YOUR-BITAXE-IP/api/system/info | jq '.asicHealth | {
