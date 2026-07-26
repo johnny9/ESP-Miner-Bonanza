@@ -6,6 +6,24 @@ This is a Bonanza-specific fork of [ESP-Miner](https://github.com/bitaxeorg/ESP-
 
 The 1002x hardware is still described as a prototype by its hardware repository. Treat both the hardware and this firmware as active development work, and use the matching Bonanza ESP32 firmware and [`bonanza-bridge-fw`](https://github.com/johnny9/bonanza-bridge-fw) RP2040 firmware.
 
+## Supported feature summary
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Four-chip BZM2 mining | 🟢 Working | All four ASICs and 944 engines run at the fixed production profile of 800 MHz and a 2.8 V board rail. |
+| Stratum V1 and V2 | 🟢 Working | Primary and fallback pools, encrypted Stratum V2 transport, share submission, and recovery are supported. |
+| Bonanza startup and safety supervision | 🟢 Working | Bridge compatibility, safe-off ownership, power sequencing, runtime fault handling, and controlled restart are enforced. |
+| Bonanza health dashboard | 🟡 Partially working | Bonanza Miner Health, hashrate, shares, pool state, and ASIC/engine diagnostics work. Some legacy generic power, heat, fan, and chart fields are not populated. |
+| Wi-Fi, mDNS, and Swarm discovery | 🟢 Working | Setup, `.local` access, discovery, device listing, remote settings, restart, and identify are available. |
+| Scoreboard and logs | 🟢 Working | Highest-difficulty shares, live WebSocket logs, filtering, and log downloads are available. |
+| ESP firmware and AxeOS OTA | 🟢 Working | `esp-miner.bin` and `www.bin` can be uploaded through AxeOS or the HTTP API. |
+| RP2040 bridge update and blank-bridge recovery | 🟢 Working | Manifested raw bridge images are programmed and read-back verified over onboard SWD. |
+| Pause and resume mining | 🔴 Not yet working | The API changes the AxeOS flag but does not stop or restart the Bonanza controller and work dispatcher. |
+| Frequency and voltage tuning | 🔴 Not supported | Board 1002 is intentionally locked to its validated 800 MHz and 2.8 V production profile. |
+| Automatic and manual fan control | 🔴 Not supported | The Bonanza safety controller currently requires the bridge-controlled fan to remain at 100%. |
+| On-device display | 🔴 Not yet working | Board 1002 routes display SCL/SDA to ESP32-S3 GPIO6/GPIO7, while this firmware initializes its I²C bus on GPIO48/GPIO47. AxeOS exposes display settings, but the board-specific display pin/bus path is not implemented or validated. |
+| Bonanza-aware latest-release lookup | 🔴 Not yet working | AxeOS still queries the upstream ESP-Miner release feed and must not be used to select Bonanza firmware. |
+
 ## AxeOS feature parity
 
 This table tracks AxeOS feature parity for the Bitaxe Bonanza. 🟢 **Working** features operate end to end, 🟡 **Partially working** features have the limitations described below, and 🔴 **Not yet working** features are remaining implementation work.
@@ -40,7 +58,7 @@ This table tracks AxeOS feature parity for the Bitaxe Bonanza. 🟢 **Working** 
 | Settings | ASIC frequency and voltage | 🔴 Not yet working | Board 1002 is deliberately locked to 800 MHz and a 2.8 V board rail; overclock mode does not expose tuning controls. |
 | Settings | Automatic/manual fan control | 🔴 Not yet working | Bonanza safety requires the bridge-controlled fan at 100%; target temperature, minimum fan, and manual fan controls are not applied. |
 | Settings | Overheat-mode reset | 🔴 Not yet working | Bonanza uses its dedicated fail-closed safety supervisor. A latched Bonanza fault requires inspection and restart rather than the generic overheat reset flow. |
-| Settings | Display configuration | 🟢 Working | Display type, rotation, color inversion, and display timeout use the normal AxeOS display path. |
+| Settings | On-device display and display configuration | 🔴 Not yet working | AxeOS exposes display type, rotation, color inversion, and timeout settings, but board 1002 routes display SCL/SDA to GPIO6/GPIO7 while this firmware initializes its I²C bus on GPIO48/GPIO47. The board-specific display pin/bus path is not implemented or validated. |
 | Settings | Statistics/data logging | 🟡 Partially working | Logging and retention work, but generic power, temperature, voltage, and fan samples are not yet backed by Bonanza telemetry. |
 | Update | Manual ESP firmware OTA | 🟢 Working | Uploading `esp-miner.bin` is guarded by a verified Bonanza safe-off transition before flash and restart. |
 | Update | Manual AxeOS OTA | 🟢 Working | Uploading `www.bin`, progress reporting, and recovery mode are available. |
