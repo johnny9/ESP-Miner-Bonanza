@@ -1,6 +1,6 @@
 # Bonanza Bitaxe 1002 production support
 
-Board 1002 uses a fixed, automatic production profile. After Wi-Fi and the
+Board 1002 uses an automatic production profile. After Wi-Fi and the
 normal Stratum queue are ready, the ASIC driver transitions through:
 
 ```text
@@ -9,10 +9,10 @@ SAFE_OFF -> STARTING -> MINING -> FAULT or MAINTENANCE
 
 There is no manual arm, numeric startup level, operator heartbeat, or remote
 bring-up action. The controller first proves safe-off, verifies a compatible
-bridge, enables and verifies the fixed 2.800 V TPS546 profile, discovers four
+bridge, enables and verifies the 2.800 V startup TPS546 profile, discovers four
 ASICs, configures telemetry and both 800 MHz PLLs, activates 944 engines with
 bounded stack skew, and then starts the normal ESP-Miner work, result,
-statistics, and Stratum tasks.
+statistics, Stratum, and live-frequency tasks.
 
 ## Work scheduling
 
@@ -42,15 +42,33 @@ and lease state cannot be verified.
 
 Parser byte realignment and result-attribution recovery are bounded production
 behaviors. Their byte, event, rejection, and timeout thresholds are the only
-Bonanza recovery settings exposed in Kconfig. Voltage and frequency are not
-tunable.
+Bonanza recovery settings exposed in Kconfig. Operators may select a frequency
+target from 800 through 2000 MHz; direct voltage tuning is not exposed.
+
+## Live frequency targeting
+
+Startup always proves the complete mining path at 800 MHz. If the configured
+target is higher, the controller keeps TDM and normal pool work active while it
+applies the BZMD-derived initial shortcut, capped at 1425 MHz, then waits 90
+seconds for thermal stabilization. It advances in 25 MHz steps and qualifies
+every ASIC/PLL domain from attributed valid and rejected mining results. A
+domain that cannot sustain a step is returned to its last passing frequency
+while the remaining domains may continue.
+
+Changing the AxeOS target while mining starts the same process without an ESP
+restart. Downward changes use bounded 25 MHz steps. The frequency policy derives
+the TPS546 rail command, verifies each change against live readback, and may
+retry a failed qualification at the next policy voltage. The command is always
+capped at 3.20 V; a voltage or PLL transaction that cannot be verified latches
+the normal fail-closed supervisor path.
 
 ## AxeOS status
 
 The normal `/api/system/info` response includes optional `asicHealth` data.
 AxeOS renders lifecycle and state age, current pool/work age, warm-up and
-average hashrate, four-ASIC and 944-engine status, the locked clock and voltage,
-measured VOUT, temperature and fan telemetry, bridge compatibility, recovery
+average hashrate, four-ASIC and 944-engine status, the active clock and voltage,
+measured VOUT, measured ASIC-rail power, hottest fresh ASIC temperature, fan
+telemetry, bridge compatibility, recovery
 counters, and the last persistent fault with a safe next action.
 
 Qualification snapshots, raw templates, midstates, per-engine traces, and
@@ -96,7 +114,7 @@ python3 tools/bzm_blank_bridge_recovery_regression.py \
 
 | ESP-Miner Bonanza controller | Required bridge protocol | Result |
 | --- | --- | --- |
-| Production MVO | major 1, minor 3 or newer compatible minor | Mining allowed with raw RX bytes and the RX-stats command |
+| Production MVO | protocol 1.0 | Mining allowed with raw RX bytes and the RX-stats command |
 | Production MVO | protocol missing, major mismatch, lease/trip policy missing, or required control path missing | Safe-off with an incompatible-bridge fault |
 
 Before VCORE can be energized, the bridge must report the fixed trip-latch
