@@ -33,6 +33,7 @@ module.exports = function (config) {
       useBrowserName: false
     },
     port: 9876,
+    hostname: '127.0.0.1',
     colors: true,
     logLevel: config.LOG_INFO,
     autoWatch: true,
@@ -40,7 +41,13 @@ module.exports = function (config) {
     customLaunchers: {
       ChromeHeadlessCI: {
         base: 'ChromeHeadless',
-        flags: ['--no-sandbox', '--disable-gpu']
+        flags: [
+          '--no-sandbox',
+          '--disable-gpu',
+          '--disable-background-networking',
+          '--no-proxy-server',
+          '--password-store=basic'
+        ]
       }
     },
     singleRun: false,
