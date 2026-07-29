@@ -246,7 +246,7 @@ def health_check(report: Report, info: dict[str, Any], *, require_mining: bool,
     report.check("944 active engines",
                  health.get("activeEngineCount") == health.get("expectedEngineCount") == 944,
                  f"{health.get('activeEngineCount')}/{health.get('expectedEngineCount')}")
-    report.check("locked profile",
+    report.check("default startup target",
                  health.get("fixedFrequencyMHz") == 800 and health.get("fixedVoltageMV") == 2800,
                  f"{health.get('fixedFrequencyMHz')} MHz, {health.get('fixedVoltageMV')} mV")
     report.check("bridge compatibility", health.get("bridgeCompatible") is True,

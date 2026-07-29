@@ -299,7 +299,7 @@ esp_err_t self_test_init(void * pvParameters)
 {
     GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
 
-    /* Board 1002 has a fixed-profile production controller and must never
+    /* Board 1002 has a dedicated production controller and must never
      * enter the legacy implicit powered self-test path. Neither an NVS flag
      * nor a held boot button may enter this path. */
     if (GLOBAL_STATE != NULL &&

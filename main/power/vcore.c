@@ -356,7 +356,8 @@ esp_err_t VCORE_set_voltage(GlobalState * GLOBAL_STATE, float core_voltage)
 
     if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
         if (!bzm_power_voltage_is_allowed(core_voltage)) {
-            ESP_LOGE(TAG, "Bitaxe 1002 TPS rail is fixed at 2.800V");
+            ESP_LOGE(TAG,
+                     "Bitaxe 1002 startup rail accepts only off or 2.800V");
             return ESP_ERR_INVALID_ARG;
         }
 

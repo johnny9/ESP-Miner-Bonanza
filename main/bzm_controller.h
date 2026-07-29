@@ -7,7 +7,7 @@
 #include "esp_err.h"
 #include "global_state.h"
 
-/* Fixed-profile Bonanza production controller. These operations are invoked
+/* Bonanza production controller. These operations are invoked
  * by normal boot, OTA, and restart flows; there is no external staged control
  * surface in a production image. */
 esp_err_t bzm_controller_init(GlobalState *global_state);

@@ -154,8 +154,8 @@ void app_main(void)
     if (system_init_ret == ESP_OK) {
         if (GLOBAL_STATE.DEVICE_CONFIG.bonanza_bridge) {
             /*
-             * Board 1002 uses its fixed-profile production controller instead
-             * of the legacy tunable voltage path.
+             * Board 1002 uses its dedicated production controller instead of
+             * the legacy voltage and frequency management task.
              */
             esp_err_t runtime_err = bzm_controller_init(&GLOBAL_STATE);
             if (runtime_err != ESP_OK) {

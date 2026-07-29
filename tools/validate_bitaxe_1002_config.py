@@ -136,7 +136,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print(
         "Bitaxe 1002 factory configuration and sdkconfig defaults "
-        "match the automatic fixed-profile production configuration"
+        "match the automatic 800 MHz startup production configuration"
     )
     return 0
 
