@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "bzm.h"
+#include "bzm_frequency.h"
 #include "bzm_registers.h"
 
 enum
@@ -542,6 +543,28 @@ static uint8_t pll_register(uint8_t pll, uint8_t pll0_register)
     return pll == 0 ? pll0_register : (uint8_t) (pll0_register + 0x0aU);
 }
 
+static void set_all_domain_clocks(bzm_bringup_state_t *state, float mhz)
+{
+    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+            state->domain_clock_mhz[asic][pll] = mhz;
+        }
+    }
+    state->clock_mhz = mhz;
+}
+
+static float average_domain_clocks(const bzm_bringup_state_t *state)
+{
+    float total = 0.0f;
+    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+            total += state->domain_clock_mhz[asic][pll];
+        }
+    }
+    return total /
+        (float)(BZM_BRINGUP_ASIC_COUNT * BZM_BRINGUP_PLL_COUNT);
+}
+
 bzm_bringup_outcome_t bzm_bringup_stage_clocks(bzm_bringup_state_t * state, const bzm_bringup_ops_t * ops, void * ops_context,
                                                const bzm_bringup_pll_profile_t * profile,
                                                const bzm_bringup_telemetry_policy_t * telemetry_policy,
@@ -699,7 +722,246 @@ bzm_bringup_outcome_t bzm_bringup_stage_clocks(bzm_bringup_state_t * state, cons
     }
 
     state->clocks_verified = true;
+    set_all_domain_clocks(state, BZM_FREQUENCY_POWER_ON_MHZ);
     return set_report(report, BZM_BRINGUP_GOOD, BZM_BRINGUP_REASON_NONE, BZM_LAST_ASIC_ID, 1, 0, 800, 800, BZM_BRINGUP_ASIC_COUNT);
+}
+
+static bzm_bringup_outcome_t live_frequency_report(
+    bzm_bringup_report_t *report, bzm_bringup_outcome_t outcome,
+    bzm_bringup_reason_t reason, size_t asic, size_t pll, uint8_t offset,
+    uint32_t expected, uint32_t actual, uint16_t completed)
+{
+    return set_report(
+        report, outcome, reason,
+        asic < BZM_BRINGUP_ASIC_COUNT ? bzm_asic_wire_ids[asic]
+                                      : BZM_ALL_ASICS,
+        (uint8_t)pll, offset, expected, actual, completed);
+}
+
+static bzm_bringup_outcome_t verify_live_frequency_domain(
+    const bzm_bringup_ops_t *ops, void *ops_context, size_t asic, size_t pll,
+    const bzm_frequency_target_t *target, bzm_bringup_report_t *report,
+    uint16_t completed)
+{
+    const uint8_t asic_id = bzm_asic_wire_ids[asic];
+    const bzm_register_value_t expected[] = {
+        {pll_register((uint8_t)pll, BZM_LOCAL_REG_PLL0_FBDIV),
+         target->feedback_divider},
+        {pll_register((uint8_t)pll, BZM_LOCAL_REG_PLL0_POSTDIV),
+         target->postdiv_register},
+    };
+    for (size_t item = 0; item < sizeof(expected) / sizeof(expected[0]);
+         ++item) {
+        uint32_t actual = 0;
+        if (!ops->read_u32(ops_context, asic_id,
+                           BZM_BRINGUP_CONTROL_ENGINE_ID,
+                           expected[item].offset, &actual)) {
+            return live_frequency_report(
+                report, BZM_BRINGUP_BAD, BZM_BRINGUP_REASON_IO, asic, pll,
+                expected[item].offset, expected[item].value, 0, completed);
+        }
+        if (actual != expected[item].value) {
+            return live_frequency_report(
+                report, BZM_BRINGUP_BAD,
+                BZM_BRINGUP_REASON_REGISTER_READBACK, asic, pll,
+                expected[item].offset, expected[item].value, actual,
+                completed);
+        }
+    }
+
+    const uint8_t enable_register =
+        pll_register((uint8_t)pll, BZM_LOCAL_REG_PLL0_ENABLE);
+    uint32_t enable_value = 0;
+    for (uint8_t attempt = 0; attempt < 30; ++attempt) {
+        if (!ops->read_u32(ops_context, asic_id,
+                           BZM_BRINGUP_CONTROL_ENGINE_ID, enable_register,
+                           &enable_value)) {
+            return live_frequency_report(
+                report, BZM_BRINGUP_BAD, BZM_BRINGUP_REASON_IO, asic, pll,
+                enable_register, BZM_PLL_LOCK_MASK, 0, completed);
+        }
+        if ((enable_value & BZM_PLL_LOCK_MASK) == BZM_PLL_LOCK_MASK) {
+            return BZM_BRINGUP_GOOD;
+        }
+        if (ops->delay_ms != NULL) ops->delay_ms(ops_context, 100);
+    }
+    return live_frequency_report(
+        report, BZM_BRINGUP_BAD, BZM_BRINGUP_REASON_PLL_UNLOCKED, asic, pll,
+        enable_register, BZM_PLL_LOCK_MASK,
+        enable_value & BZM_PLL_LOCK_MASK, completed);
+}
+
+static bzm_bringup_outcome_t program_live_frequency_domain(
+    const bzm_bringup_ops_t *ops, void *ops_context, size_t asic, size_t pll,
+    const bzm_frequency_target_t *target, bzm_bringup_report_t *report,
+    uint16_t completed)
+{
+    const uint8_t asic_id = bzm_asic_wire_ids[asic];
+    const uint8_t feedback_register =
+        pll_register((uint8_t)pll, BZM_LOCAL_REG_PLL0_FBDIV);
+    const uint8_t postdiv_register =
+        pll_register((uint8_t)pll, BZM_LOCAL_REG_PLL0_POSTDIV);
+    if (!ops->write_u32(ops_context, asic_id,
+                        BZM_BRINGUP_CONTROL_ENGINE_ID, feedback_register,
+                        target->feedback_divider) ||
+        !ops->write_u32(ops_context, asic_id,
+                        BZM_BRINGUP_CONTROL_ENGINE_ID, postdiv_register,
+                        target->postdiv_register)) {
+        return live_frequency_report(
+            report, BZM_BRINGUP_BAD, BZM_BRINGUP_REASON_IO, asic, pll,
+            feedback_register, target->feedback_divider, 0, completed);
+    }
+
+    /* bzmd leaves the PLL enabled and waits 1 ms after changing dividers. */
+    if (ops->delay_ms != NULL) ops->delay_ms(ops_context, 1);
+    return verify_live_frequency_domain(
+        ops, ops_context, asic, pll, target, report, completed);
+}
+
+static bzm_bringup_outcome_t program_live_broadcast_shortcut(
+    const bzm_bringup_ops_t *ops, void *ops_context,
+    const bzm_frequency_target_t *target, bzm_bringup_report_t *report)
+{
+    for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+        const uint8_t feedback_register =
+            pll_register((uint8_t)pll, BZM_LOCAL_REG_PLL0_FBDIV);
+        const uint8_t postdiv_register =
+            pll_register((uint8_t)pll, BZM_LOCAL_REG_PLL0_POSTDIV);
+        if (!ops->write_u32(
+                ops_context, BZM_ALL_ASICS, BZM_BRINGUP_CONTROL_ENGINE_ID,
+                feedback_register, target->feedback_divider) ||
+            !ops->write_u32(
+                ops_context, BZM_ALL_ASICS, BZM_BRINGUP_CONTROL_ENGINE_ID,
+                postdiv_register, target->postdiv_register)) {
+            return live_frequency_report(
+                report, BZM_BRINGUP_BAD, BZM_BRINGUP_REASON_IO,
+                BZM_BRINGUP_ASIC_COUNT, pll, feedback_register,
+                target->feedback_divider, 0, (uint16_t)pll);
+        }
+        if (ops->delay_ms != NULL) ops->delay_ms(ops_context, 1);
+    }
+
+    uint16_t completed = 0;
+    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+            bzm_bringup_outcome_t outcome = verify_live_frequency_domain(
+                ops, ops_context, asic, pll, target, report, completed);
+            if (outcome != BZM_BRINGUP_GOOD) return outcome;
+            ++completed;
+        }
+    }
+    return BZM_BRINGUP_GOOD;
+}
+
+bzm_bringup_outcome_t bzm_bringup_live_frequency_domains_step(
+    bzm_bringup_state_t *state, const bzm_bringup_ops_t *ops,
+    void *ops_context,
+    const float
+        target_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
+    bool allow_initial_jump, bzm_bringup_report_t *report)
+{
+    bzm_frequency_target_t
+        targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
+    bool changed[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT] = {0};
+    float shortcut_target = 0.0f;
+    if (state == NULL || !basic_ops_are_valid(ops) || target_mhz == NULL ||
+        !state->clocks_verified || !state->running_verified) {
+        return live_frequency_report(
+            report, BZM_BRINGUP_BLOCKED,
+            BZM_BRINGUP_REASON_INVALID_ARGUMENT, BZM_BRINGUP_ASIC_COUNT, 0,
+            0, 0, 0, 0);
+    }
+
+    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+            const float current = state->domain_clock_mhz[asic][pll];
+            if (!bzm_frequency_request_is_valid(current) ||
+                !bzm_frequency_resolve_target(target_mhz[asic][pll],
+                                              &targets[asic][pll]) ||
+                fabsf(targets[asic][pll].actual_mhz -
+                       target_mhz[asic][pll]) >= 0.001f) {
+                return live_frequency_report(
+                    report, BZM_BRINGUP_BLOCKED,
+                    BZM_BRINGUP_REASON_INVALID_ARGUMENT, asic, pll, 0,
+                    (uint32_t)lroundf(current),
+                    (uint32_t)lroundf(isfinite(target_mhz[asic][pll])
+                                         ? target_mhz[asic][pll]
+                                         : 0.0f),
+                    0);
+            }
+
+            const float delta =
+                fabsf(targets[asic][pll].actual_mhz - current);
+            changed[asic][pll] = delta >= 0.001f;
+            if (allow_initial_jump) {
+                if (fabsf(current - BZM_FREQUENCY_POWER_ON_MHZ) >= 0.001f ||
+                    targets[asic][pll].actual_mhz <
+                        BZM_FREQUENCY_POWER_ON_MHZ ||
+                    targets[asic][pll].actual_mhz >
+                        BZM_FREQUENCY_INITIAL_MAX_MHZ) {
+                    return live_frequency_report(
+                        report, BZM_BRINGUP_BLOCKED,
+                        BZM_BRINGUP_REASON_INVALID_ARGUMENT, asic, pll, 0,
+                        (uint32_t)BZM_FREQUENCY_POWER_ON_MHZ,
+                        (uint32_t)lroundf(target_mhz[asic][pll]), 0);
+                }
+                if (asic == 0 && pll == 0) {
+                    shortcut_target = targets[asic][pll].actual_mhz;
+                } else if (fabsf(shortcut_target -
+                                 targets[asic][pll].actual_mhz) >= 0.001f) {
+                    return live_frequency_report(
+                        report, BZM_BRINGUP_BLOCKED,
+                        BZM_BRINGUP_REASON_INVALID_ARGUMENT, asic, pll, 0,
+                        (uint32_t)lroundf(shortcut_target),
+                        (uint32_t)lroundf(target_mhz[asic][pll]), 0);
+                }
+            } else if (changed[asic][pll] &&
+                       delta > BZM_FREQUENCY_RAMP_STEP_MHZ + 0.001f) {
+                return live_frequency_report(
+                    report, BZM_BRINGUP_BLOCKED,
+                    BZM_BRINGUP_REASON_INVALID_ARGUMENT, asic, pll, 0,
+                    (uint32_t)lroundf(current),
+                    (uint32_t)lroundf(target_mhz[asic][pll]), 0);
+            }
+        }
+    }
+
+    if (allow_initial_jump &&
+        shortcut_target > BZM_FREQUENCY_POWER_ON_MHZ) {
+        bzm_bringup_outcome_t outcome = program_live_broadcast_shortcut(
+            ops, ops_context, &targets[0][0], report);
+        if (outcome != BZM_BRINGUP_GOOD) return outcome;
+        set_all_domain_clocks(state, shortcut_target);
+    } else {
+        uint16_t completed = 0;
+        for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+            for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+                if (changed[asic][pll]) {
+                    bzm_bringup_outcome_t outcome =
+                        program_live_frequency_domain(
+                            ops, ops_context, asic, pll, &targets[asic][pll],
+                            report, completed);
+                    if (outcome != BZM_BRINGUP_GOOD) {
+                        state->clock_mhz = average_domain_clocks(state);
+                        return outcome;
+                    }
+                    state->domain_clock_mhz[asic][pll] =
+                        targets[asic][pll].actual_mhz;
+                }
+                ++completed;
+            }
+        }
+        state->clock_mhz = average_domain_clocks(state);
+    }
+
+    state->clocks_configured_us =
+        ops->now_us == NULL ? 0 : ops->now_us(ops_context);
+    return live_frequency_report(
+        report, BZM_BRINGUP_GOOD, BZM_BRINGUP_REASON_NONE,
+        BZM_BRINGUP_ASIC_COUNT - 1U, BZM_BRINGUP_PLL_COUNT - 1U, 0,
+        (uint32_t)lroundf(state->clock_mhz),
+        (uint32_t)lroundf(state->clock_mhz),
+        BZM_BRINGUP_ASIC_COUNT * BZM_BRINGUP_PLL_COUNT);
 }
 
 static bool topology_is_exact(void)

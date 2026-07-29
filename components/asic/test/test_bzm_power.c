@@ -21,6 +21,8 @@ typedef struct {
     size_t fail_call;
     uint32_t delays[2];
     size_t delay_count;
+    float requested_vout;
+    float validated_vout;
 } simulated_power_t;
 
 static esp_err_t record_call(simulated_power_t *power, power_call_t call)
@@ -42,11 +44,15 @@ static esp_err_t simulated_set_regulator(void *context, bool enabled)
 
 static esp_err_t simulated_set_vout(void *context, float volts)
 {
+    simulated_power_t *power = context;
+    power->requested_vout = volts;
     return record_call(context, volts == 0.0f ? CALL_VOUT_OFF : CALL_VOUT_ON);
 }
 
-static esp_err_t simulated_validate(void *context)
+static esp_err_t simulated_validate(void *context, float expected_vout)
 {
+    simulated_power_t *power = context;
+    power->validated_vout = expected_vout;
     return record_call(context, CALL_VALIDATE);
 }
 
@@ -151,6 +157,8 @@ TEST_CASE("BZM power startup is active high and validates before 5V release",
     TEST_ASSERT_EQUAL_UINT32(2, power.delay_count);
     TEST_ASSERT_EQUAL_UINT32(100, power.delays[0]);
     TEST_ASSERT_EQUAL_UINT32(100, power.delays[1]);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8f, power.requested_vout);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8f, power.validated_vout);
 }
 
 TEST_CASE("BZM rail-only stage validates power but keeps downstream 5V off",
@@ -166,6 +174,7 @@ TEST_CASE("BZM rail-only stage validates power but keeps downstream 5V off",
     TEST_ASSERT_EQUAL_UINT32(sizeof(expected) / sizeof(expected[0]),
                              power.call_count);
     TEST_ASSERT_EQUAL_INT_ARRAY(expected, power.calls, power.call_count);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8f, power.validated_vout);
 }
 
 TEST_CASE("BZM power validation failure reverses the complete sequence",
@@ -181,6 +190,106 @@ TEST_CASE("BZM power validation failure reverses the complete sequence",
         &SIMULATED_POWER_OPS, &power, true));
     TEST_ASSERT_EQUAL_UINT32(sizeof(expected) / sizeof(expected[0]),
                              power.call_count);
+    TEST_ASSERT_EQUAL_INT_ARRAY(expected, power.calls, power.call_count);
+}
+
+TEST_CASE("BZM frequency voltage curve matches bzmd within the safe rail cap",
+          "[asic][bzm][power][frequency]")
+{
+    const struct {
+        float frequency_mhz;
+        float voltage_v;
+    } cases[] = {
+        {800.0f, 2.55f},
+        {1000.0f, 2.75f},
+        {1100.0f, 2.95f},
+        {1150.0f, 2.75f},
+        {1175.0f, 2.80f},
+        {1200.0f, 2.75f},
+        {1250.0f, 2.90f},
+        {1300.0f, 3.05f},
+        {1350.0f, 3.20f},
+        {1400.0f, 3.20f},
+        {1425.0f, 2.75f},
+        {1500.0f, 2.975f},
+        {1675.0f, 3.20f},
+        {2000.0f, 3.20f},
+    };
+
+    for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]);
+         ++index) {
+        float voltage_v = 0.0f;
+        TEST_ASSERT_TRUE(bzm_power_frequency_target_voltage(
+            cases[index].frequency_mhz, &voltage_v));
+        TEST_ASSERT_FLOAT_WITHIN(
+            0.001f, cases[index].voltage_v, voltage_v);
+    }
+
+    float voltage_v = 0.0f;
+    TEST_ASSERT_FALSE(
+        bzm_power_frequency_target_voltage(799.0f, &voltage_v));
+    TEST_ASSERT_FALSE(
+        bzm_power_frequency_target_voltage(2001.0f, &voltage_v));
+    TEST_ASSERT_FALSE(
+        bzm_power_frequency_target_voltage(NAN, &voltage_v));
+    TEST_ASSERT_FALSE(
+        bzm_power_frequency_target_voltage(1000.0f, NULL));
+}
+
+TEST_CASE("BZM PnP voltage retries stop at the adaptive and rail limits",
+          "[asic][bzm][power][pnp]")
+{
+    float next_v = 0.0f;
+    TEST_ASSERT_TRUE(
+        bzm_power_pnp_next_voltage(2.975f, 2.975f, &next_v));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.025f, next_v);
+    TEST_ASSERT_TRUE(
+        bzm_power_pnp_next_voltage(2.975f, 3.175f, &next_v));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.20f, next_v);
+    TEST_ASSERT_FALSE(
+        bzm_power_pnp_next_voltage(2.975f, 3.20f, &next_v));
+    TEST_ASSERT_FALSE(
+        bzm_power_pnp_next_voltage(3.20f, 3.20f, &next_v));
+    TEST_ASSERT_FALSE(
+        bzm_power_pnp_next_voltage(2.00f, 2.80f, &next_v));
+}
+
+TEST_CASE("BZM runtime rail change validates the requested voltage",
+          "[asic][bzm][power][runtime]")
+{
+    simulated_power_t power = {0};
+    const power_call_t expected[] = {
+        CALL_VOUT_ON, CALL_DELAY, CALL_VALIDATE,
+    };
+    TEST_ASSERT_EQUAL(
+        ESP_OK,
+        bzm_power_set_runtime_voltage(
+            &SIMULATED_POWER_OPS, &power, 3.20f));
+    TEST_ASSERT_EQUAL_UINT32(
+        sizeof(expected) / sizeof(expected[0]), power.call_count);
+    TEST_ASSERT_EQUAL_INT_ARRAY(expected, power.calls, power.call_count);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.20f, power.requested_vout);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.20f, power.validated_vout);
+    TEST_ASSERT_FALSE(bzm_power_runtime_voltage_is_allowed(2.0f));
+    TEST_ASSERT_TRUE(bzm_power_runtime_voltage_is_allowed(2.1f));
+    TEST_ASSERT_TRUE(bzm_power_runtime_voltage_is_allowed(3.2f));
+    TEST_ASSERT_FALSE(bzm_power_runtime_voltage_is_allowed(3.201f));
+}
+
+TEST_CASE("BZM failed runtime rail validation powers down",
+          "[asic][bzm][power][runtime][rollback]")
+{
+    simulated_power_t power = {.fail_call = 3};
+    const power_call_t expected[] = {
+        CALL_VOUT_ON, CALL_DELAY, CALL_VALIDATE,
+        CALL_5V_OFF, CALL_VOUT_OFF, CALL_REGULATOR_OFF,
+    };
+    TEST_ASSERT_EQUAL(
+        ESP_FAIL,
+        bzm_power_set_runtime_voltage(
+            &SIMULATED_POWER_OPS, &power, 3.0f));
+    TEST_ASSERT_EQUAL_UINT32(
+        sizeof(expected) / sizeof(expected[0]), power.call_count);
     TEST_ASSERT_EQUAL_INT_ARRAY(expected, power.calls, power.call_count);
 }
 

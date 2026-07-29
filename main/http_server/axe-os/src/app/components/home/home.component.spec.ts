@@ -178,7 +178,7 @@ describe('HomeComponent', () => {
     expect(text).toContain('Work age: 4.2 s');
     expect(text).toContain('4 / 4 ASICs');
     expect(text).toContain('944 / 944 engines');
-    expect(text).toContain('800 MHz at 2800 mV fixed');
+    expect(text).toContain('800 MHz at 2800 mV');
     expect(text).toContain('2.800 V measured');
     expect(text).toContain('protocol 1.0');
     expect(text).toContain('Mapped results: 240');

@@ -63,6 +63,10 @@ static atomic_uint_fast64_t RUNNING_LOCALLY_VALID_RESULTS;
 static atomic_uint_fast64_t RUNNING_LOCALLY_REJECTED_RESULTS;
 static atomic_uint_fast64_t RUNNING_DUPLICATE_RESULTS;
 static atomic_uint_fast64_t HASHRATE_DIFFICULTY_ONE_COUNTERS[BZM_MAX_ASIC_COUNT];
+static atomic_uint_fast64_t
+    FREQUENCY_DOMAIN_VALID[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
+static atomic_uint_fast64_t
+    FREQUENCY_DOMAIN_REJECTED[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
 static atomic_uint_fast32_t RUNNING_LOCAL_REJECTION_STREAK;
 static atomic_bool RUNNING_LOCAL_RECOVERY_PENDING;
 static asic_driver_health_t DRIVER_HEALTH;
@@ -85,11 +89,6 @@ static size_t RESULT_DEDUP_NEXT;
 
 enum
 {
-    BZM_REG_DTS_SRST_PD = 0x2e,
-    BZM_REG_TEMPSENSOR_TUNECODE = 0x30,
-    BZM_REG_TEMPSENSOR_TEMP_CODE_STATUS = 0x32,
-    BZM_REG_SENSOR_CLK_DIV = 0x3d,
-    BZM_DEFAULT_THERMAL_SENSOR_DIV = 8,
     BZM_PARSER_SETTLE_WINDOW_MS = 100,
     BZM_PARSER_SETTLE_REQUIRED_CLEAN_WINDOWS = 10,
     BZM_PARSER_SETTLE_MAX_WINDOWS = 30,
@@ -98,6 +97,7 @@ enum
 static bool staged_settle_parser(bzm_serial_transport_t * transport, const char * stage_name,
                                  const bzm_serial_parser_stats_t * initial_baseline,
                                  bzm_serial_parser_stats_t * accepted_baseline);
+static void staged_sleep(void *context, uint32_t delay_ms);
 
 static void reset_result_dedup(void)
 {
@@ -182,6 +182,14 @@ uint8_t BZM_init(GlobalState * state)
     for (size_t i = 0; i < BZM_MAX_ASIC_COUNT; ++i) {
         atomic_store_explicit(&HASHRATE_DIFFICULTY_ONE_COUNTERS[i], 0,
                               memory_order_relaxed);
+        for (size_t domain = 0; domain < BZM_ENGINE_STACK_COUNT; ++domain) {
+            atomic_store_explicit(
+                &FREQUENCY_DOMAIN_VALID[i][domain], 0,
+                memory_order_relaxed);
+            atomic_store_explicit(
+                &FREQUENCY_DOMAIN_REJECTED[i][domain], 0,
+                memory_order_relaxed);
+        }
     }
     atomic_store_explicit(&RUNNING_LOCAL_REJECTION_STREAK, 0, memory_order_seq_cst);
     atomic_store_explicit(&RUNNING_LOCAL_RECOVERY_PENDING, false, memory_order_seq_cst);
@@ -491,20 +499,33 @@ bool BZM_hashrate_counter_snapshot(GlobalState *state,
 }
 
 void BZM_record_local_result(GlobalState *state, uint8_t asic_index,
-                             bool valid,
+                             uint16_t engine_id, bool valid,
                              double nonce_difficulty)
 {
     (void)state;
-    if (asic_index < BZM_MAX_ASIC_COUNT && valid &&
-        bzm_running_result_meets_proof(
-                     nonce_difficulty,
-                     (double)CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY)) {
+    const uint64_t difficulty_one_units =
+        UINT64_C(1) << (CONFIG_BZM_1002_LEAD_ZEROS - 32);
+    const bool proof =
+        asic_index < BZM_MAX_ASIC_COUNT && valid &&
+        bzm_running_result_meets_proof(nonce_difficulty,
+                                      (double)difficulty_one_units);
+    bzm_engine_location_t engine;
+    const bool attributed =
+        asic_index < BZM_MAX_ASIC_COUNT &&
+        bzm_topology_engine_at(engine_id, &engine);
+    if (attributed) {
+        atomic_fetch_add_explicit(
+            proof
+                ? &FREQUENCY_DOMAIN_VALID[asic_index][engine.stack]
+                : &FREQUENCY_DOMAIN_REJECTED[asic_index][engine.stack],
+            1, memory_order_relaxed);
+    }
+
+    if (proof) {
         /* One result passing the programmed leading-zero filter represents
          * 2^(lead_zeros - 32) difficulty-one hash counters. This feeds the
          * normal ESP-Miner/AxeOS hashrate monitor without trusting corrupted
          * or merely mapped ASIC frames. */
-        const uint64_t difficulty_one_units =
-            UINT64_C(1) << (CONFIG_BZM_1002_LEAD_ZEROS - 32);
         atomic_fetch_add_explicit(
             &HASHRATE_DIFFICULTY_ONE_COUNTERS[asic_index],
             difficulty_one_units, memory_order_relaxed);
@@ -514,58 +535,20 @@ void BZM_record_local_result(GlobalState *state, uint8_t asic_index,
     }
 }
 
-static bool read_u32(uint8_t asic_id, uint8_t offset, uint32_t * value)
+bool BZM_frequency_domain_stats_snapshot(
+    bzm_frequency_domain_stats_t *stats)
 {
-    uint8_t bytes[4];
-    if (value == NULL || !bzm_serial_read_register(&TRANSPORT, asic_id, BZM_CONTROL_ENGINE_ID, offset, bytes, sizeof(bytes))) {
-        return false;
+    if (stats == NULL) return false;
+    for (size_t asic = 0; asic < BZM_MAX_ASIC_COUNT; ++asic) {
+        for (size_t domain = 0; domain < BZM_ENGINE_STACK_COUNT; ++domain) {
+            stats->valid[asic][domain] = atomic_load_explicit(
+                &FREQUENCY_DOMAIN_VALID[asic][domain],
+                memory_order_relaxed);
+            stats->rejected[asic][domain] = atomic_load_explicit(
+                &FREQUENCY_DOMAIN_REJECTED[asic][domain],
+                memory_order_relaxed);
+        }
     }
-    *value = (uint32_t) bytes[0] | ((uint32_t) bytes[1] << 8) | ((uint32_t) bytes[2] << 16) | ((uint32_t) bytes[3] << 24);
-    return true;
-}
-
-static bool write_u32(uint8_t asic_id, uint8_t offset, uint32_t value)
-{
-    uint8_t bytes[4] = {
-        value & 0xff,
-        (value >> 8) & 0xff,
-        (value >> 16) & 0xff,
-        (value >> 24) & 0xff,
-    };
-    return bzm_serial_write_register_to(&TRANSPORT, asic_id, BZM_CONTROL_ENGINE_ID, offset, bytes, sizeof(bytes));
-}
-
-static bool read_chip_temperature(uint8_t asic_id, float * temperature)
-{
-    uint32_t original_clk_div;
-    uint32_t original_dts_config;
-    uint32_t original_temp_config;
-    uint32_t temp_status = 0;
-    bool success = read_u32(asic_id, BZM_REG_SENSOR_CLK_DIV, &original_clk_div) &&
-                   read_u32(asic_id, BZM_REG_DTS_SRST_PD, &original_dts_config) &&
-                   read_u32(asic_id, BZM_REG_TEMPSENSOR_TUNECODE, &original_temp_config);
-    if (!success)
-        return false;
-
-    uint32_t configured_clk_div = (original_clk_div & ~(0x1fu << 5)) | (BZM_DEFAULT_THERMAL_SENSOR_DIV << 5);
-    uint32_t configured_dts_config = (original_dts_config | (1u << 8)) & ~1u;
-    uint32_t configured_temp_config = original_temp_config | 1u;
-
-    success = write_u32(asic_id, BZM_REG_SENSOR_CLK_DIV, configured_clk_div) &&
-              write_u32(asic_id, BZM_REG_DTS_SRST_PD, configured_dts_config) &&
-              write_u32(asic_id, BZM_REG_TEMPSENSOR_TUNECODE, configured_temp_config);
-    if (success) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        success = read_u32(asic_id, BZM_REG_TEMPSENSOR_TEMP_CODE_STATUS, &temp_status);
-    }
-
-    bool restored = write_u32(asic_id, BZM_REG_TEMPSENSOR_TUNECODE, original_temp_config);
-    restored = write_u32(asic_id, BZM_REG_DTS_SRST_PD, original_dts_config) && restored;
-    restored = write_u32(asic_id, BZM_REG_SENSOR_CLK_DIV, original_clk_div) && restored;
-    if (!success || !restored || (temp_status & (1u << 12)) != 0) {
-        return false;
-    }
-    *temperature = bzm_temperature_from_code(temp_status & 0x0fff);
     return true;
 }
 
@@ -580,20 +563,19 @@ float BZM_read_temperature(GlobalState * state)
         return LAST_TEMPERATURE;
     }
 
+    bzm_telemetry_store_t snapshot;
     pthread_mutex_lock(&REACTOR_LOCK);
-    float total = 0.0f;
-    size_t valid = 0;
-    for (size_t i = 0; i < TRANSPORT.asic_count; ++i) {
-        float temperature;
-        if (read_chip_temperature(TRANSPORT.asic_ids[i], &temperature)) {
-            total += temperature;
-            valid++;
-        }
-    }
+    const bool available =
+        bzm_serial_get_telemetry_snapshot(&TRANSPORT, &snapshot);
     pthread_mutex_unlock(&REACTOR_LOCK);
 
-    if (valid != 0) {
-        LAST_TEMPERATURE = total / valid;
+    float hottest_c = -1.0f;
+    if (available &&
+        bzm_telemetry_max_temperature(
+            &snapshot, (uint64_t)now,
+            (uint64_t)CONFIG_BZM_1002_TELEMETRY_MAX_AGE_MS * 1000U,
+            &hottest_c)) {
+        LAST_TEMPERATURE = hottest_c;
     }
     LAST_TEMPERATURE_US = now;
     return LAST_TEMPERATURE;
@@ -699,6 +681,58 @@ static bool staged_mining_lease_service_due(void)
         return false;
     }
     return true;
+}
+
+static bool staged_live_mining_check(void)
+{
+    if (!STAGED_LEASE_IO_OK || !STAGED_TRANSPORT_READY ||
+        !STAGED_BRINGUP.running_verified ||
+        !bzm_dispatch_gate_is_authorized(&STAGED_DISPATCH_GATE) ||
+        !staged_mining_lease_renew(NULL)) {
+        STAGED_LEASE_IO_OK = false;
+        return false;
+    }
+    return true;
+}
+
+static bool staged_live_write_u32(void *context, uint8_t asic_id,
+                                  uint16_t engine_id, uint8_t offset,
+                                  uint32_t value)
+{
+    if (!staged_live_mining_check()) return false;
+    uint8_t bytes[4] = {
+        value & 0xff,
+        (value >> 8) & 0xff,
+        (value >> 16) & 0xff,
+        (value >> 24) & 0xff,
+    };
+    return bzm_serial_write_register_to(
+        context, asic_id, engine_id, offset, bytes, sizeof(bytes));
+}
+
+static bool staged_live_read_u32(void *context, uint8_t asic_id,
+                                 uint16_t engine_id, uint8_t offset,
+                                 uint32_t *value)
+{
+    if (!staged_live_mining_check() || value == NULL) return false;
+    uint8_t bytes[4];
+    if (!bzm_serial_read_register(
+            context, asic_id, engine_id, offset, bytes, sizeof(bytes))) {
+        return false;
+    }
+    *value = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+             ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+    return true;
+}
+
+static void staged_live_delay_ms(void *context, uint32_t delay_ms)
+{
+    (void)context;
+    if (!STAGED_LEASE_IO_OK ||
+        !bzm_lease_guard_delay(
+            delay_ms, staged_mining_lease_renew, staged_sleep, NULL)) {
+        STAGED_LEASE_IO_OK = false;
+    }
 }
 
 static bool staged_operation_check(void)
@@ -1135,6 +1169,13 @@ static const bzm_bringup_ops_t STAGED_RAMP_OPS = {
     .activation_barrier = staged_activation_barrier,
 };
 
+static const bzm_bringup_ops_t STAGED_LIVE_FREQUENCY_OPS = {
+    .write_u32 = staged_live_write_u32,
+    .read_u32 = staged_live_read_u32,
+    .delay_ms = staged_live_delay_ms,
+    .now_us = staged_now_us,
+};
+
 static bool staged_mining_write_work(void * context, const bzm_work_t * work)
 {
     /* Called once per engine from the reactor while REACTOR_LOCK is held.
@@ -1327,6 +1368,38 @@ bzm_bringup_outcome_t BZM_staged_clocks(const bzm_bringup_pll_profile_t * profil
         bzm_bringup_stage_clocks(&STAGED_BRINGUP, &STAGED_OPS, &TRANSPORT, profile, telemetry_policy, report);
     if (outcome != BZM_BRINGUP_GOOD)
         (void) staged_fail_closed_locked();
+    pthread_mutex_unlock(&REACTOR_LOCK);
+    return outcome;
+}
+
+bzm_bringup_outcome_t BZM_staged_frequency_domains_step_live(
+    const float
+        target_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
+    bool allow_initial_jump, bzm_bringup_report_t *report,
+    float *actual_mhz)
+{
+    pthread_mutex_lock(&REACTOR_LOCK);
+    if (!STAGED_TRANSPORT_READY || !STAGED_LEASE_IO_OK ||
+        !STAGED_BRINGUP.running_verified ||
+        !bzm_dispatch_gate_is_authorized(&STAGED_DISPATCH_GATE)) {
+        if (actual_mhz != NULL) *actual_mhz = STAGED_BRINGUP.clock_mhz;
+        pthread_mutex_unlock(&REACTOR_LOCK);
+        staged_report(report, BZM_BRINGUP_BLOCKED,
+                      BZM_BRINGUP_REASON_PREREQUISITE);
+        return BZM_BRINGUP_BLOCKED;
+    }
+
+    bzm_bringup_outcome_t outcome =
+        bzm_bringup_live_frequency_domains_step(
+            &STAGED_BRINGUP, &STAGED_LIVE_FREQUENCY_OPS, &TRANSPORT,
+            target_mhz, allow_initial_jump, report);
+    if (outcome == BZM_BRINGUP_GOOD) {
+        /* Keep mining live; replace work that crossed the PLL transition. */
+        bzm_serial_discard_pending_results(&TRANSPORT);
+        reset_result_dedup();
+        FAST_DISPATCH_REMAINING = REACTOR.config.engine_count;
+    }
+    if (actual_mhz != NULL) *actual_mhz = STAGED_BRINGUP.clock_mhz;
     pthread_mutex_unlock(&REACTOR_LOCK);
     return outcome;
 }

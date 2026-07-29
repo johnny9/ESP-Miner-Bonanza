@@ -12,6 +12,7 @@
 #define BZM_BRINGUP_FIRST_ASIC_ID BZM_FIRST_ASIC_ID
 #define BZM_BRINGUP_LAST_ASIC_ID BZM_LAST_ASIC_ID
 #define BZM_BRINGUP_CONTROL_ENGINE_ID 0x0fffU
+#define BZM_BRINGUP_PLL_COUNT 2U
 
 typedef enum
 {
@@ -71,6 +72,8 @@ typedef struct
     bool running_verified;
     uint64_t sensors_configured_us;
     uint64_t clocks_configured_us;
+    float clock_mhz;
+    float domain_clock_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
 } bzm_bringup_state_t;
 
 typedef struct
@@ -154,6 +157,18 @@ bzm_bringup_outcome_t bzm_bringup_stage_clocks(bzm_bringup_state_t * state, cons
                                                const bzm_bringup_pll_profile_t * profile,
                                                const bzm_bringup_telemetry_policy_t * telemetry_policy,
                                                bzm_bringup_report_t * report);
+/*
+ * Apply one live bzmd-style PnP transaction across the eight ASIC/PLL
+ * domains. TDM and mining remain active. Ordinary steps are limited to
+ * 25 MHz per domain; allow_initial_jump is only for the bounded
+ * target-minus-100 MHz shortcut after 800 MHz mining is proven.
+ */
+bzm_bringup_outcome_t bzm_bringup_live_frequency_domains_step(
+    bzm_bringup_state_t *state, const bzm_bringup_ops_t *ops,
+    void *ops_context,
+    const float
+        target_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
+    bool allow_initial_jump, bzm_bringup_report_t *report);
 bzm_bringup_outcome_t bzm_bringup_stage_balanced_ramp(bzm_bringup_state_t * state, const bzm_bringup_ops_t * ops,
                                                       void * ops_context, const bzm_bringup_telemetry_policy_t * telemetry_policy,
                                                       bzm_bringup_report_t * report);

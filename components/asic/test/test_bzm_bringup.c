@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "bzm_bringup.h"
+#include "bzm_frequency.h"
 #include "bzm_registers.h"
 
 typedef struct
@@ -300,6 +301,49 @@ static void state_at_clocks(bzm_bringup_state_t * state)
 {
     state_at_sensors(state);
     state->sensors_verified = true;
+}
+
+static void state_at_live_frequency(bzm_bringup_state_t *state,
+                                    bringup_mock_t *mock,
+                                    float frequency_mhz)
+{
+    bzm_frequency_target_t frequency;
+    TEST_ASSERT_TRUE(
+        bzm_frequency_resolve_target(frequency_mhz, &frequency));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, frequency_mhz, frequency.actual_mhz);
+
+    state_at_clocks(state);
+    state->clocks_verified = true;
+    state->running_verified = true;
+    state->clock_mhz = frequency_mhz;
+    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+            state->domain_clock_mhz[asic][pll] = frequency_mhz;
+            mock->registers[asic][
+                pll == 0 ? BZM_LOCAL_REG_PLL0_FBDIV
+                         : BZM_LOCAL_REG_PLL1_FBDIV] =
+                frequency.feedback_divider;
+            mock->registers[asic][
+                pll == 0 ? BZM_LOCAL_REG_PLL0_POSTDIV
+                         : BZM_LOCAL_REG_PLL1_POSTDIV] =
+                frequency.postdiv_register;
+            mock->registers[asic][
+                pll == 0 ? BZM_LOCAL_REG_PLL0_ENABLE
+                         : BZM_LOCAL_REG_PLL1_ENABLE] = 1;
+        }
+    }
+}
+
+static void fill_live_frequency_targets(
+    float targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
+    float frequency_mhz)
+{
+    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+            targets[asic][pll] = frequency_mhz;
+        }
+    }
 }
 
 TEST_CASE("bzm bringup reference profiles are exact", "[bzm_bringup]")
@@ -898,6 +942,122 @@ TEST_CASE("bzm clocks reject any profile other than exact 800 MHz", "[bzm_bringu
     TEST_ASSERT_EQUAL(BZM_BRINGUP_BAD, bzm_bringup_stage_clocks(&state, &MOCK_OPS, &mock, &profile, &policy, &report));
     TEST_ASSERT_EQUAL(BZM_BRINGUP_REASON_INVALID_ARGUMENT, report.reason);
     TEST_ASSERT_EQUAL_UINT16(0, mock.write_count);
+}
+
+TEST_CASE("bzm live shortcut changes both PLLs while TDM remains active",
+          "[bzm_bringup][frequency]")
+{
+    bringup_mock_t mock = good_mock();
+    bzm_bringup_state_t state;
+    bzm_bringup_report_t report;
+    float targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
+    state_at_live_frequency(&state, &mock, 800.0f);
+    fill_live_frequency_targets(targets, 1400.0f);
+
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_GOOD,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, true, &report));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1400.0f, state.clock_mhz);
+    TEST_ASSERT_EQUAL_UINT16(4, mock.all_asic_write_count);
+    TEST_ASSERT_GREATER_THAN_UINT16(0, mock.reads_while_tdm_active);
+    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+        TEST_ASSERT_EQUAL_HEX32(
+            0x0000fec9,
+            mock.registers[asic][BZM_LOCAL_REG_UART_TDM_CONTROL]);
+        TEST_ASSERT_EQUAL_HEX32(
+            224, mock.registers[asic][BZM_LOCAL_REG_PLL0_FBDIV]);
+        TEST_ASSERT_EQUAL_HEX32(
+            224, mock.registers[asic][BZM_LOCAL_REG_PLL1_FBDIV]);
+        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+            TEST_ASSERT_FLOAT_WITHIN(
+                0.001f, 1400.0f, state.domain_clock_mhz[asic][pll]);
+        }
+    }
+}
+
+TEST_CASE("bzm live ramp changes one PLL domain by 25 MHz",
+          "[bzm_bringup][frequency]")
+{
+    bringup_mock_t mock = good_mock();
+    bzm_bringup_state_t state;
+    bzm_bringup_report_t report;
+    float targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
+    state_at_live_frequency(&state, &mock, 800.0f);
+    fill_live_frequency_targets(targets, 800.0f);
+    targets[2][1] = 825.0f;
+
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_GOOD,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, false, &report));
+    TEST_ASSERT_EQUAL_UINT16(0, mock.all_asic_write_count);
+    TEST_ASSERT_EQUAL_HEX32(
+        132, mock.registers[2][BZM_LOCAL_REG_PLL1_FBDIV]);
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, 825.0f, state.domain_clock_mhz[2][1]);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 803.125f, state.clock_mhz);
+    TEST_ASSERT_EQUAL_UINT16(
+        BZM_BRINGUP_ASIC_COUNT * BZM_BRINGUP_PLL_COUNT,
+        report.completed_items);
+}
+
+TEST_CASE("bzm live ramp rejects oversized and asymmetric shortcut steps",
+          "[bzm_bringup][frequency]")
+{
+    bringup_mock_t mock = good_mock();
+    bzm_bringup_state_t state;
+    bzm_bringup_report_t report;
+    float targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
+    state_at_live_frequency(&state, &mock, 800.0f);
+    fill_live_frequency_targets(targets, 850.0f);
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_BLOCKED,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, false, &report));
+    TEST_ASSERT_EQUAL(BZM_BRINGUP_REASON_INVALID_ARGUMENT, report.reason);
+    TEST_ASSERT_EQUAL_UINT16(0, mock.write_count);
+
+    fill_live_frequency_targets(targets, 1400.0f);
+    targets[3][1] = 1375.0f;
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_BLOCKED,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, true, &report));
+    TEST_ASSERT_EQUAL(BZM_BRINGUP_REASON_INVALID_ARGUMENT, report.reason);
+    TEST_ASSERT_EQUAL_UINT16(0, mock.write_count);
+
+    fill_live_frequency_targets(targets, 1450.0f);
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_BLOCKED,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, true, &report));
+    TEST_ASSERT_EQUAL(BZM_BRINGUP_REASON_INVALID_ARGUMENT, report.reason);
+    TEST_ASSERT_EQUAL_UINT16(0, mock.write_count);
+}
+
+TEST_CASE("bzm live ramp reports a PLL that does not relock",
+          "[bzm_bringup][frequency]")
+{
+    bringup_mock_t mock = good_mock();
+    bzm_bringup_state_t state;
+    bzm_bringup_report_t report;
+    float targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
+    state_at_live_frequency(&state, &mock, 800.0f);
+    fill_live_frequency_targets(targets, 800.0f);
+    targets[1][1] = 825.0f;
+    mock.pll_locked[1][1] = false;
+
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_BAD,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, false, &report));
+    TEST_ASSERT_EQUAL(BZM_BRINGUP_REASON_PLL_UNLOCKED, report.reason);
+    TEST_ASSERT_EQUAL_HEX8(bzm_asic_wire_ids[1], report.asic_id);
+    TEST_ASSERT_EQUAL_UINT8(1, report.pll_index);
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, 800.0f, state.domain_clock_mhz[1][1]);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 800.0f, state.clock_mhz);
 }
 
 TEST_CASE("bzm balanced ramp is blocked without the sequential pair adapter", "[bzm_bringup]")

@@ -242,18 +242,22 @@ static esp_err_t bonanza_set_regulator_enabled(void *context, bool enabled)
 static esp_err_t bonanza_set_vout(void *context, float volts)
 {
     GlobalState *state = context;
-    if (!bzm_power_voltage_is_allowed(volts)) {
-        ESP_LOGE(TAG, "Bitaxe 1002 TPS rail accepts only off or 2.800V");
+    if (volts != 0.0f &&
+        !bzm_power_runtime_voltage_is_allowed(volts)) {
+        ESP_LOGE(TAG,
+                 "Bitaxe 1002 TPS rail request %.3fV is outside 2.1..3.2V",
+                 volts);
         return ESP_ERR_INVALID_ARG;
     }
     return state->DEVICE_CONFIG.TPS546 ? TPS546_set_vout(volts)
                                        : ESP_ERR_INVALID_STATE;
 }
 
-static esp_err_t bonanza_validate_power(void *context)
+static esp_err_t bonanza_validate_power(void *context, float expected_vout)
 {
     (void)context;
-    if (gpio_get_level(GPIO_TPS546_PGOOD) == 0) {
+    if (!bzm_power_runtime_voltage_is_allowed(expected_vout) ||
+        gpio_get_level(GPIO_TPS546_PGOOD) == 0) {
         ESP_LOGE(TAG, "TPS546 PGOOD remained low");
         return ESP_FAIL;
     }
@@ -267,11 +271,19 @@ static esp_err_t bonanza_validate_power(void *context)
           TPS546_STATUS_OFF | TPS546_STATUS_TEMP |
           TPS546_STATUS_CML)) != 0 ||
         (snapshot.operation & 0x80) == 0 ||
+        !isfinite(snapshot.vout_command) ||
+        fabsf(snapshot.vout_command - expected_vout) >
+            BZM_TPS546_VOUT_READBACK_TOLERANCE_V ||
         snapshot.read_vin < BZM_TPS546_BIRDS_PROFILE.vin_off ||
-        snapshot.read_vout < 2.65f || snapshot.read_vout > 2.95f ||
+        snapshot.read_vout <
+            expected_vout - BZM_TPS546_VOUT_OPERATING_TOLERANCE_V ||
+        snapshot.read_vout >
+            expected_vout + BZM_TPS546_VOUT_OPERATING_TOLERANCE_V ||
         snapshot.read_temp1 >= BZM_TPS546_BIRDS_PROFILE.ot_fault_limit) {
         TPS546_log_snapshot(&snapshot);
-        ESP_LOGE(TAG, "TPS546 status/telemetry validation failed");
+        ESP_LOGE(TAG,
+                 "TPS546 %.3fV command/status/telemetry validation failed",
+                 expected_vout);
         return ESP_FAIL;
     }
     return ESP_OK;
@@ -300,6 +312,18 @@ esp_err_t VCORE_bzm_set_rail_enabled(GlobalState *GLOBAL_STATE, bool enabled)
     }
     return bzm_power_set_rail_enabled(
         &BONANZA_POWER_OPS, GLOBAL_STATE, enabled);
+}
+
+esp_err_t VCORE_bzm_set_runtime_voltage(GlobalState *GLOBAL_STATE,
+                                        float volts)
+{
+    if (GLOBAL_STATE == NULL ||
+        !GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge ||
+        !GLOBAL_STATE->DEVICE_CONFIG.TPS546) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return bzm_power_set_runtime_voltage(
+        &BONANZA_POWER_OPS, GLOBAL_STATE, volts);
 }
 
 esp_err_t VCORE_bzm_force_regulator_off(GlobalState *GLOBAL_STATE)

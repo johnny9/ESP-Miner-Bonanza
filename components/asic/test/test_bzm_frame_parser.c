@@ -660,6 +660,44 @@ TEST_CASE("BZM telemetry store keeps independent per-ASIC samples", "[asic][bzm]
     TEST_ASSERT_FALSE(bzm_telemetry_store_apply_frame(&store, &result));
 }
 
+TEST_CASE("BZM temperature aggregation reports the hottest fresh ASIC",
+          "[asic][bzm][telemetry][temperature]")
+{
+    bzm_telemetry_store_t store;
+    bzm_telemetry_store_init(&store);
+    for (size_t index = 0; index < BZM_MAX_ASIC_COUNT; ++index) {
+        store.samples[index].received = true;
+        store.samples[index].timestamp_us = 900 + index;
+        store.samples[index].temperature_c = 40.0f + 5.0f * index;
+        store.samples[index].thermal_valid = true;
+    }
+
+    float hottest_c = 0.0f;
+    TEST_ASSERT_TRUE(
+        bzm_telemetry_max_temperature(&store, 1000, 100, &hottest_c));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 55.0f, hottest_c);
+
+    store.samples[1].received = false;
+    TEST_ASSERT_FALSE(
+        bzm_telemetry_max_temperature(&store, 1000, 100, &hottest_c));
+    store.samples[1].received = true;
+    store.samples[1].timestamp_us = 899;
+    TEST_ASSERT_FALSE(
+        bzm_telemetry_max_temperature(&store, 1000, 100, &hottest_c));
+    store.samples[1].timestamp_us = 901;
+    store.samples[1].thermal_valid = false;
+    TEST_ASSERT_FALSE(
+        bzm_telemetry_max_temperature(&store, 1000, 100, &hottest_c));
+    store.samples[1].thermal_valid = true;
+    store.samples[1].temperature_c = NAN;
+    TEST_ASSERT_FALSE(
+        bzm_telemetry_max_temperature(&store, 1000, 100, &hottest_c));
+    TEST_ASSERT_FALSE(
+        bzm_telemetry_max_temperature(NULL, 1000, 100, &hottest_c));
+    TEST_ASSERT_FALSE(
+        bzm_telemetry_max_temperature(&store, 1000, 100, NULL));
+}
+
 TEST_CASE("BZM local register definitions expose stable diagnostics", "[asic][bzm][registers]")
 {
     TEST_ASSERT_EQUAL_STRING("uart_tdm_control", bzm_local_register_name(BZM_LOCAL_REG_UART_TDM_CONTROL));

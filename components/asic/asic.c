@@ -144,12 +144,12 @@ float ASIC_get_temperature(GlobalState *state)
 }
 
 void ASIC_record_local_result(GlobalState *state, uint8_t asic_index,
-                              bool valid,
+                              uint16_t engine_id, bool valid,
                               double nonce_difficulty)
 {
     const asic_driver_t *driver = active_driver(state);
     if (driver != NULL && driver->ops.record_local_result != NULL) {
-        driver->ops.record_local_result(state, asic_index, valid,
+        driver->ops.record_local_result(state, asic_index, engine_id, valid,
                                         nonce_difficulty);
     }
 }

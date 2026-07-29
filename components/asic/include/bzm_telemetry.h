@@ -93,6 +93,9 @@ float bzm_telemetry_voltage_from_code_mv(uint16_t code);
 
 bool bzm_telemetry_decode(uint8_t asic_id, const uint8_t * payload, size_t payload_length, uint64_t timestamp_us,
                           bzm_telemetry_sample_t * sample);
+bool bzm_telemetry_max_temperature(const bzm_telemetry_store_t *store,
+                                   uint64_t now_us, uint64_t max_age_us,
+                                   float *max_temperature_c);
 
 void bzm_telemetry_store_init(bzm_telemetry_store_t * store);
 bool bzm_telemetry_store_apply_frame(bzm_telemetry_store_t * store, const bzm_frame_t * frame);

@@ -79,7 +79,7 @@ typedef struct {
                                       size_t counter_count);
     float (*read_temperature)(GlobalState *state);
     void (*record_local_result)(GlobalState *state, uint8_t asic_index,
-                                bool valid,
+                                uint16_t engine_id, bool valid,
                                 double nonce_difficulty);
     bool (*health_snapshot)(GlobalState *state,
                             asic_driver_health_t *health);

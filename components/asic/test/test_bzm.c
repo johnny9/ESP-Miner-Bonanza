@@ -229,13 +229,21 @@ TEST_CASE("Bitaxe 1002 selects the Bonanza board profile",
                              board->family.asic.default_frequency_mhz);
     TEST_ASSERT_EQUAL_UINT16(800,
                              board->family.asic.frequency_options[0]);
-    TEST_ASSERT_EQUAL_UINT16(0,
+    TEST_ASSERT_EQUAL_UINT16(1000,
                              board->family.asic.frequency_options[1]);
-    TEST_ASSERT_FALSE(board->family.asic.frequency_tunable);
+    TEST_ASSERT_EQUAL_UINT16(1350,
+                             board->family.asic.frequency_options[4]);
+    TEST_ASSERT_EQUAL_UINT16(1500,
+                             board->family.asic.frequency_options[7]);
+    TEST_ASSERT_EQUAL_UINT16(0,
+                             board->family.asic.frequency_options[8]);
+    TEST_ASSERT_TRUE(board->family.asic.frequency_tunable);
     TEST_ASSERT_TRUE(device_config_accepts_frequency(board, 800.0f));
-    TEST_ASSERT_FALSE(device_config_accepts_frequency(board, 50.0f));
+    TEST_ASSERT_TRUE(device_config_accepts_frequency(board, 1000.0f));
+    TEST_ASSERT_TRUE(device_config_accepts_frequency(board, 1500.0f));
+    TEST_ASSERT_TRUE(device_config_accepts_frequency(board, 2000.0f));
     TEST_ASSERT_FALSE(device_config_accepts_frequency(board, 799.0f));
-    TEST_ASSERT_FALSE(device_config_accepts_frequency(board, 801.0f));
+    TEST_ASSERT_FALSE(device_config_accepts_frequency(board, 2001.0f));
     TEST_ASSERT_EQUAL_UINT16(2800,
                              board->family.asic.default_voltage_mv);
     TEST_ASSERT_EQUAL_UINT16(2800,

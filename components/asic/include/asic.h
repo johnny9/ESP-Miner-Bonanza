@@ -29,7 +29,7 @@ bool ASIC_get_hashrate_counters(GlobalState *GLOBAL_STATE,
                                 size_t counter_count);
 float ASIC_get_temperature(GlobalState * GLOBAL_STATE);
 void ASIC_record_local_result(GlobalState *GLOBAL_STATE, uint8_t asic_index,
-                              bool valid,
+                              uint16_t engine_id, bool valid,
                               double nonce_difficulty);
 bool ASIC_get_health(GlobalState *GLOBAL_STATE,
                      asic_driver_health_t *health);

@@ -14,6 +14,12 @@
 
 typedef struct GlobalState GlobalState;
 
+typedef struct
+{
+    uint64_t valid[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
+    uint64_t rejected[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
+} bzm_frequency_domain_stats_t;
+
 uint8_t BZM_init(GlobalState * state);
 int BZM_set_max_baud(void);
 bool BZM_send_work(GlobalState * state, const mining_template_t * template);
@@ -31,8 +37,10 @@ bool BZM_running_stats_snapshot(bzm_running_stats_t * stats);
 void BZM_running_record_proof(void);
 void BZM_running_record_rejection(void);
 void BZM_record_local_result(GlobalState *state, uint8_t asic_index,
-                             bool valid,
+                             uint16_t engine_id, bool valid,
                              double nonce_difficulty);
+bool BZM_frequency_domain_stats_snapshot(
+    bzm_frequency_domain_stats_t *stats);
 
 /* Thread-safe copies of the singleton transport's receive diagnostics. */
 bool BZM_get_telemetry(uint8_t asic_id, bzm_telemetry_sample_t * sample);
@@ -58,6 +66,11 @@ bzm_bringup_outcome_t BZM_staged_sensors(const bzm_bringup_sensor_profile_t * pr
                                          const bzm_bringup_telemetry_policy_t * telemetry_policy, bzm_bringup_report_t * report);
 bzm_bringup_outcome_t BZM_staged_clocks(const bzm_bringup_pll_profile_t * profile,
                                         const bzm_bringup_telemetry_policy_t * telemetry_policy, bzm_bringup_report_t * report);
+bzm_bringup_outcome_t BZM_staged_frequency_domains_step_live(
+    const float
+        target_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
+    bool allow_initial_jump, bzm_bringup_report_t *report,
+    float *actual_mhz);
 bzm_bringup_outcome_t BZM_staged_balanced_ramp(const bzm_bringup_telemetry_policy_t * telemetry_policy,
                                                bzm_bringup_report_t * report);
 bzm_bringup_outcome_t BZM_staged_running(GlobalState * state, const bzm_bringup_telemetry_policy_t * telemetry_policy,

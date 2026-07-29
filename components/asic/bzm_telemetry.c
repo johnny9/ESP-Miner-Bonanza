@@ -56,6 +56,30 @@ bool bzm_telemetry_decode(uint8_t asic_id, const uint8_t * payload, size_t paylo
     return true;
 }
 
+bool bzm_telemetry_max_temperature(const bzm_telemetry_store_t *store,
+                                   uint64_t now_us, uint64_t max_age_us,
+                                   float *max_temperature_c)
+{
+    if (store == NULL || max_temperature_c == NULL) return false;
+
+    float hottest_c = -INFINITY;
+    for (size_t index = 0; index < BZM_MAX_ASIC_COUNT; ++index) {
+        const bzm_telemetry_sample_t *sample = &store->samples[index];
+        if (sample->asic_id != bzm_asic_wire_ids[index] ||
+            !sample->thermal_valid || !isfinite(sample->temperature_c) ||
+            !bzm_telemetry_sample_is_fresh(
+                sample, now_us, max_age_us)) {
+            return false;
+        }
+        if (sample->temperature_c > hottest_c) {
+            hottest_c = sample->temperature_c;
+        }
+    }
+
+    *max_temperature_c = hottest_c;
+    return isfinite(*max_temperature_c);
+}
+
 void bzm_telemetry_store_init(bzm_telemetry_store_t * store)
 {
     if (store == NULL)
