@@ -42,6 +42,15 @@
 #define BZM_FREQUENCY_QUALIFICATION_MIN_RESULTS 8U
 #define BZM_FREQUENCY_QUALIFICATION_MIN_EXPECTED_RATE 0.50f
 #define BZM_FREQUENCY_QUALIFICATION_MIN_CORRECT_RATIO 0.90f
+#define BZM_CREATE_JOBS_TASK_PRIORITY 20U
+#define BZM_ASIC_RESULT_TASK_PRIORITY 15U
+#define BZM_SAFETY_TASK_PRIORITY 18U
+#define BZM_TUNING_TASK_PRIORITY 16U
+
+_Static_assert(BZM_TUNING_TASK_PRIORITY > BZM_ASIC_RESULT_TASK_PRIORITY,
+               "live tuning must not be starved by ASIC result processing");
+_Static_assert(BZM_TUNING_TASK_PRIORITY < BZM_SAFETY_TASK_PRIORITY,
+               "Bonanza safety must preempt live tuning");
 
 typedef struct
 {
@@ -91,6 +100,7 @@ typedef struct
     bzm_running_evidence_lifecycle_t running_evidence_lifecycle;
     bzm_running_evidence_result_t running_evidence;
     float frequency_target_mhz;
+    float voltage_target_v;
     uint32_t frequency_target_generation;
     bool frequency_ramp_active;
     float rail_command_v;
@@ -342,11 +352,15 @@ static bool start_mining_tasks_locked(void)
     /* Every task starts while ASIC_initalized is false and the independent
      * dispatch gate is closed. Partial creation is safe and retryable. */
     if (RUNTIME.create_jobs_task_handle == NULL &&
-        xTaskCreate(create_jobs_task, "stratum miner", 8192, state, 20, &RUNTIME.create_jobs_task_handle) != pdPASS) {
+        xTaskCreate(create_jobs_task, "stratum miner", 8192, state,
+                    BZM_CREATE_JOBS_TASK_PRIORITY,
+                    &RUNTIME.create_jobs_task_handle) != pdPASS) {
         return false;
     }
     if (RUNTIME.asic_result_task_handle == NULL &&
-        xTaskCreate(ASIC_result_task, "asic result", 8192, state, 15, &RUNTIME.asic_result_task_handle) != pdPASS) {
+        xTaskCreate(ASIC_result_task, "asic result", 8192, state,
+                    BZM_ASIC_RESULT_TASK_PRIORITY,
+                    &RUNTIME.asic_result_task_handle) != pdPASS) {
         return false;
     }
     if (RUNTIME.hashrate_task_handle == NULL && xTaskCreateWithCaps(hashrate_monitor_task, "hashrate monitor", 8192, state, 5,
@@ -1105,31 +1119,45 @@ static float expected_bzm_hashrate_ghs(const GlobalState *state,
            state->DEVICE_CONFIG.family.asic_count * 4.0f / 3.0f / 1000.0f;
 }
 
-static bool frequency_task_snapshot(float *target_mhz, uint32_t *generation)
+static bool frequency_task_snapshot(float *target_mhz,
+                                    float *target_voltage_v,
+                                    uint32_t *generation)
 {
     pthread_mutex_lock(&RUNTIME.lock);
-    bzm_frequency_target_t target;
-    const float requested =
+    bzm_frequency_target_t frequency_target;
+    const float requested_mhz =
         nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
-    const bool target_valid =
-        bzm_frequency_request_is_valid(requested) &&
-        bzm_frequency_resolve_target(requested, &target);
-    if (target_valid &&
-        fabsf(RUNTIME.frequency_target_mhz - target.actual_mhz) >= 0.001f) {
-        RUNTIME.frequency_target_mhz = target.actual_mhz;
+    const uint16_t requested_voltage_mv =
+        nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
+    float requested_voltage_v = 0.0f;
+    const bool frequency_valid =
+        bzm_frequency_request_is_valid(requested_mhz) &&
+        bzm_frequency_resolve_target(requested_mhz, &frequency_target);
+    const bool voltage_valid =
+        bzm_power_resolve_user_voltage(
+            requested_voltage_mv, &requested_voltage_v);
+    const bool target_valid = frequency_valid && voltage_valid;
+    const bool target_changed =
+        target_valid &&
+        (fabsf(RUNTIME.frequency_target_mhz -
+               frequency_target.actual_mhz) >= 0.001f ||
+         fabsf(RUNTIME.voltage_target_v - requested_voltage_v) >= 0.001f);
+    if (target_changed) {
+        RUNTIME.frequency_target_mhz = frequency_target.actual_mhz;
+        RUNTIME.voltage_target_v = requested_voltage_v;
         ++RUNTIME.frequency_target_generation;
         RUNTIME.frequency_ramp_active = true;
         if (RUNTIME.global_state != NULL) {
             RUNTIME.global_state->POWER_MANAGEMENT_MODULE.frequency_value =
-                target.actual_mhz;
+                frequency_target.actual_mhz;
             RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate =
                 expected_bzm_hashrate_ghs(
-                    RUNTIME.global_state, target.actual_mhz);
+                    RUNTIME.global_state, frequency_target.actual_mhz);
         }
         ESP_LOGI(TAG,
-                 "BZM live mining target changed to %.3f MHz "
+                 "BZM live mining target changed to %.3f MHz, %.3f V "
                  "(generation %lu)",
-                 target.actual_mhz,
+                 frequency_target.actual_mhz, requested_voltage_v,
                  (unsigned long)RUNTIME.frequency_target_generation);
     }
 
@@ -1145,6 +1173,9 @@ static bool frequency_task_snapshot(float *target_mhz, uint32_t *generation)
         !RUNTIME.supervisor.fault_latched && evidence_ready &&
         bzm_supervisor_dispatch_allowed(&RUNTIME.supervisor, current_ms);
     if (target_mhz != NULL) *target_mhz = RUNTIME.frequency_target_mhz;
+    if (target_voltage_v != NULL) {
+        *target_voltage_v = RUNTIME.voltage_target_v;
+    }
     if (generation != NULL) {
         *generation = RUNTIME.frequency_target_generation;
     }
@@ -1215,10 +1246,11 @@ static bool frequency_apply_voltage(float target_v, uint32_t generation)
     snprintf(
         RUNTIME.supervisor.report.stages[BZM_STAGE_POWER_RAIL].detail,
         sizeof(RUNTIME.supervisor.report.stages[BZM_STAGE_POWER_RAIL].detail),
-        "POWER_RAIL GOOD; bzmd target command %.3f V", target_v);
+        "POWER_RAIL GOOD; user target command %.3f V", target_v);
     pthread_mutex_unlock(&RUNTIME.lock);
     ESP_LOGI(TAG,
-             "BZM live mining rail reached %.3f V for generation %lu",
+             "BZM live mining rail reached user target %.3f V "
+             "for generation %lu",
              target_v, (unsigned long)generation);
     return true;
 }
@@ -1275,10 +1307,10 @@ static bool frequency_task_wait(uint32_t duration_ms, uint32_t generation)
         if ((uint64_t)delay_ms > duration_ms - elapsed_ms) {
             delay_ms = (uint32_t)(duration_ms - elapsed_ms);
         }
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(delay_ms));
 
         uint32_t current_generation = 0;
-        if (!frequency_task_snapshot(NULL, &current_generation) ||
+        if (!frequency_task_snapshot(NULL, NULL, &current_generation) ||
             current_generation != generation) {
             return false;
         }
@@ -1322,17 +1354,6 @@ static void frequency_domains_copy(
     memcpy(destination, source,
            sizeof(float) * BZM_BRINGUP_ASIC_COUNT *
                BZM_BRINGUP_PLL_COUNT);
-}
-
-static bool frequency_domains_any_capped(
-    const bool capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT])
-{
-    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
-        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
-            if (capped[asic][pll]) return true;
-        }
-    }
-    return false;
 }
 
 static void frequency_task_latch_fault(const char *detail)
@@ -1403,11 +1424,8 @@ static bool frequency_qualify_window(
         candidates[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
     uint32_t generation,
     bool capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
-    float rollback_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
-    bool *voltage_retryable)
+    float rollback_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT])
 {
-    if (voltage_retryable != NULL) *voltage_retryable = false;
-
     bzm_frequency_domain_stats_t baseline = {0};
     bzm_running_stats_t running_baseline = {0};
     if (!BZM_frequency_domain_stats_snapshot(&baseline) ||
@@ -1475,38 +1493,7 @@ static bool frequency_qualify_window(
             }
         }
     }
-    if (voltage_retryable != NULL) {
-        *voltage_retryable = rollback_required && !mapping_rejected;
-    }
     return !rollback_required;
-}
-
-typedef enum {
-    BZM_PNP_VOLTAGE_NO_STEP = 0,
-    BZM_PNP_VOLTAGE_APPLIED,
-    BZM_PNP_VOLTAGE_FAILED,
-} bzm_pnp_voltage_step_result_t;
-
-static bzm_pnp_voltage_step_result_t frequency_try_pnp_voltage_step(
-    float initial_voltage_v, uint32_t generation,
-    float *adaptive_voltage_v)
-{
-    const float current_v = frequency_task_rail_command();
-    float next_v = 0.0f;
-    if (!bzm_power_pnp_next_voltage(
-            initial_voltage_v, current_v, &next_v)) {
-        return BZM_PNP_VOLTAGE_NO_STEP;
-    }
-
-    ESP_LOGW(TAG,
-             "Frequency qualification underperformed at %.3f V; "
-             "applying bzmd PnP retry at %.3f V",
-             current_v, next_v);
-    if (!frequency_apply_voltage(next_v, generation)) {
-        return BZM_PNP_VOLTAGE_FAILED;
-    }
-    if (adaptive_voltage_v != NULL) *adaptive_voltage_v = next_v;
-    return BZM_PNP_VOLTAGE_APPLIED;
 }
 
 static void runtime_frequency_task(void *parameter)
@@ -1517,20 +1504,19 @@ static void runtime_frequency_task(void *parameter)
     bool qualify_current = false;
     uint32_t observed_generation = 0;
     uint32_t blocked_generation = 0;
-    uint32_t voltage_generation = 0;
-    float initial_target_voltage_v = 0.0f;
-    float adaptive_target_voltage_v = 0.0f;
     bool capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT] = {0};
 
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(BZM_FREQUENCY_TASK_POLL_MS));
+        (void)ulTaskNotifyTake(
+            pdTRUE, pdMS_TO_TICKS(BZM_FREQUENCY_TASK_POLL_MS));
         float target_mhz = 0.0f;
+        float target_voltage_v = 0.0f;
         uint32_t generation = 0;
-        if (!frequency_task_snapshot(&target_mhz, &generation)) {
+        if (!frequency_task_snapshot(
+                &target_mhz, &target_voltage_v, &generation)) {
             session_active = false;
             qualify_current = false;
             blocked_generation = 0;
-            voltage_generation = 0;
             continue;
         }
 
@@ -1558,23 +1544,6 @@ static void runtime_frequency_task(void *parameter)
             }
         }
         if (blocked_generation == generation) continue;
-
-        float target_voltage_v = 0.0f;
-        if (!bzm_power_frequency_target_voltage(
-                target_mhz, &target_voltage_v)) {
-            ESP_LOGE(TAG,
-                     "BZM %.3f MHz target has no valid bounded rail command",
-                     target_mhz);
-            blocked_generation = generation;
-            frequency_task_set_active(false);
-            continue;
-        }
-        if (voltage_generation != generation) {
-            voltage_generation = generation;
-            initial_target_voltage_v = target_voltage_v;
-            adaptive_target_voltage_v = target_voltage_v;
-        }
-        target_voltage_v = adaptive_target_voltage_v;
 
         const float rail_command_v = frequency_task_rail_command();
         if (target_voltage_v >
@@ -1683,33 +1652,16 @@ static void runtime_frequency_task(void *parameter)
                             BZM_FREQUENCY_RAMP_STEP_MHZ);
                 }
             }
-            bool voltage_retryable = false;
             const bool all_passed = frequency_qualify_window(
                 state.domain_clock_mhz, current_candidates, generation,
-                trial_capped, rollback, &voltage_retryable);
+                trial_capped, rollback);
             qualify_current = false;
             if (!all_passed) {
                 uint32_t latest_generation = 0;
                 if (!frequency_task_snapshot(
-                        NULL, &latest_generation) ||
+                        NULL, NULL, &latest_generation) ||
                     latest_generation != generation) {
                     continue;
-                }
-                if (voltage_retryable &&
-                    !frequency_domains_any_capped(capped)) {
-                    const bzm_pnp_voltage_step_result_t voltage_step =
-                        frequency_try_pnp_voltage_step(
-                            initial_target_voltage_v, generation,
-                            &adaptive_target_voltage_v);
-                    if (voltage_step == BZM_PNP_VOLTAGE_APPLIED) {
-                        qualify_current = true;
-                        continue;
-                    }
-                    if (voltage_step == BZM_PNP_VOLTAGE_FAILED) {
-                        blocked_generation = generation;
-                        frequency_task_set_active(false);
-                        continue;
-                    }
                 }
                 memcpy(capped, trial_capped, sizeof(capped));
                 float actual_mhz = state.clock_mhz;
@@ -1762,31 +1714,13 @@ static void runtime_frequency_task(void *parameter)
 
         bool trial_capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
         memcpy(trial_capped, capped, sizeof(trial_capped));
-        bool voltage_retryable = false;
         const bool all_passed = frequency_qualify_window(
-            next, candidates, generation, trial_capped, rollback,
-            &voltage_retryable);
+            next, candidates, generation, trial_capped, rollback);
         if (!all_passed) {
             uint32_t latest_generation = 0;
-            if (!frequency_task_snapshot(NULL, &latest_generation) ||
+            if (!frequency_task_snapshot(NULL, NULL, &latest_generation) ||
                 latest_generation != generation) {
                 continue;
-            }
-            if (voltage_retryable &&
-                !frequency_domains_any_capped(capped)) {
-                const bzm_pnp_voltage_step_result_t voltage_step =
-                    frequency_try_pnp_voltage_step(
-                        initial_target_voltage_v, generation,
-                        &adaptive_target_voltage_v);
-                if (voltage_step == BZM_PNP_VOLTAGE_APPLIED) {
-                    qualify_current = true;
-                    continue;
-                }
-                if (voltage_step == BZM_PNP_VOLTAGE_FAILED) {
-                    blocked_generation = generation;
-                    frequency_task_set_active(false);
-                    continue;
-                }
             }
             memcpy(capped, trial_capped, sizeof(capped));
             if (!frequency_apply_domains(
@@ -1916,10 +1850,24 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
                  requested_mhz);
     }
     RUNTIME.frequency_target_mhz = configured_target.actual_mhz;
+    const uint16_t requested_voltage_mv =
+        nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
+    float requested_voltage_v = 0.0f;
+    if (bzm_power_resolve_user_voltage(
+            requested_voltage_mv, &requested_voltage_v)) {
+        RUNTIME.voltage_target_v = requested_voltage_v;
+    } else {
+        RUNTIME.voltage_target_v = BZM_TPS546_FIXED_VOUT_V;
+        ESP_LOGW(TAG,
+                 "Invalid saved Bonanza rail voltage %u mV; using 2800 mV",
+                 (unsigned)requested_voltage_mv);
+    }
     RUNTIME.frequency_target_generation = 1;
     RUNTIME.frequency_ramp_active =
         fabsf(configured_target.actual_mhz -
-              BZM_FREQUENCY_POWER_ON_MHZ) >= 0.001f;
+              BZM_FREQUENCY_POWER_ON_MHZ) >= 0.001f ||
+        fabsf(RUNTIME.voltage_target_v -
+              BZM_TPS546_FIXED_VOUT_V) >= 0.001f;
     RUNTIME.rail_command_v = BZM_TPS546_FIXED_VOUT_V;
     global_state->POWER_MANAGEMENT_MODULE.frequency_value =
         configured_target.actual_mhz;
@@ -1969,7 +1917,8 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
     if (!safe)
         return ESP_FAIL;
 
-    if (xTaskCreate(runtime_monitor_task, "bzm_safety", 6144, NULL, 18, NULL) != pdPASS) {
+    if (xTaskCreate(runtime_monitor_task, "bzm_safety", 6144, NULL,
+                    BZM_SAFETY_TASK_PRIORITY, NULL) != pdPASS) {
         pthread_mutex_lock(&RUNTIME.lock);
         close_dispatch_locked();
         (void) bzm_supervisor_latch_fault(&RUNTIME.supervisor, 0x1002, "Bonanza safety monitor task could not start");
@@ -1979,7 +1928,8 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
     pthread_mutex_lock(&RUNTIME.lock);
     RUNTIME.monitor_running = true;
     pthread_mutex_unlock(&RUNTIME.lock);
-    if (xTaskCreate(runtime_frequency_task, "bzm_frequency", 6144, NULL, 10,
+    if (xTaskCreate(runtime_frequency_task, "bzm_frequency", 6144, NULL,
+                    BZM_TUNING_TASK_PRIORITY,
                     &RUNTIME.frequency_task_handle) != pdPASS) {
         pthread_mutex_lock(&RUNTIME.lock);
         close_dispatch_locked();
@@ -2023,6 +1973,18 @@ bool bzm_controller_active(void)
 bool bzm_controller_dispatch_allowed(void)
 {
     return runtime_dispatch_authorizer(&RUNTIME);
+}
+
+void bzm_controller_tuning_settings_changed(void)
+{
+    pthread_mutex_lock(&RUNTIME.lock);
+    TaskHandle_t task = RUNTIME.active && RUNTIME.initialized
+                            ? RUNTIME.frequency_task_handle
+                            : NULL;
+    pthread_mutex_unlock(&RUNTIME.lock);
+    if (task != NULL) {
+        xTaskNotifyGive(task);
+    }
 }
 
 bool bzm_controller_acquire_maintenance(bzm_supervisor_owner_t owner)

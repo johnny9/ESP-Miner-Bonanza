@@ -902,6 +902,9 @@ static esp_err_t PATCH_update_settings(httpd_req_t * req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
         return ESP_OK;
     }
+    const bool tuning_settings_changed =
+        cJSON_GetObjectItem(root, "frequency") != NULL ||
+        cJSON_GetObjectItem(root, "coreVoltage") != NULL;
 
     cJSON *hostname_item = cJSON_GetObjectItem(root, "hostname");
     char *current_hostname = cJSON_IsString(hostname_item) ? nvs_config_get_string(NVS_CONFIG_HOSTNAME) : NULL;
@@ -924,6 +927,9 @@ static esp_err_t PATCH_update_settings(httpd_req_t * req)
         if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_IF_NOT_READY) {
             ESP_LOGW(TAG, "Failed to apply hostname live: %s", esp_err_to_name(err));
         }
+    }
+    if (tuning_settings_changed) {
+        bzm_controller_tuning_settings_changed();
     }
 
     // Create response JSON

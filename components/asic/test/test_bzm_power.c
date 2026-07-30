@@ -100,7 +100,8 @@ TEST_CASE("BZM TPS profile contains every BIRDS regulator setting",
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.9f, p->vout_margin_low);
     TEST_ASSERT_EQUAL_HEX16(0xe010, p->vout_transition_rate);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.125f, p->vout_scale_loop);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.1f, p->vout_min);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, BZM_TPS546_MIN_VOUT_V,
+                             p->vout_min);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 11.0f, p->vin_on);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 10.5f, p->vin_off);
     TEST_ASSERT_EQUAL_HEX16(0xc880, p->iout_cal_gain);
@@ -271,9 +272,31 @@ TEST_CASE("BZM runtime rail change validates the requested voltage",
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.20f, power.requested_vout);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.20f, power.validated_vout);
     TEST_ASSERT_FALSE(bzm_power_runtime_voltage_is_allowed(2.0f));
-    TEST_ASSERT_TRUE(bzm_power_runtime_voltage_is_allowed(2.1f));
+    TEST_ASSERT_TRUE(
+        bzm_power_runtime_voltage_is_allowed(BZM_TPS546_MIN_VOUT_V));
     TEST_ASSERT_TRUE(bzm_power_runtime_voltage_is_allowed(3.2f));
     TEST_ASSERT_FALSE(bzm_power_runtime_voltage_is_allowed(3.201f));
+}
+
+TEST_CASE("BZM user voltage is authoritative within rail bounds",
+          "[asic][bzm][power][manual]")
+{
+    float resolved_v = 0.0f;
+    TEST_ASSERT_TRUE(
+        bzm_power_resolve_user_voltage(2800, &resolved_v));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8f, resolved_v);
+    TEST_ASSERT_TRUE(
+        bzm_power_resolve_user_voltage(2900, &resolved_v));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.9f, resolved_v);
+    TEST_ASSERT_TRUE(
+        bzm_power_resolve_user_voltage(3200, &resolved_v));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.2f, resolved_v);
+    TEST_ASSERT_FALSE(
+        bzm_power_resolve_user_voltage(2099, &resolved_v));
+    TEST_ASSERT_FALSE(
+        bzm_power_resolve_user_voltage(3201, &resolved_v));
+    TEST_ASSERT_FALSE(
+        bzm_power_resolve_user_voltage(2800, NULL));
 }
 
 TEST_CASE("BZM failed runtime rail validation powers down",

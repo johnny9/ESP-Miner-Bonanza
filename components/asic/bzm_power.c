@@ -38,7 +38,7 @@ const bzm_tps546_profile_t BZM_TPS546_BIRDS_PROFILE = {
     .vout_margin_low = 0.90f,
     .vout_transition_rate = 0xe010,
     .vout_scale_loop = 0.125f,
-    .vout_min = 2.1f,
+    .vout_min = BZM_TPS546_MIN_VOUT_V,
     .vin_on = 11.0f,
     .vin_off = 10.5f,
     .iout_cal_gain = 0xc880,
@@ -79,6 +79,15 @@ bool bzm_power_runtime_voltage_is_allowed(float volts)
     return isfinite(volts) &&
            volts >= BZM_TPS546_BIRDS_PROFILE.vout_min &&
            volts <= BZM_TPS546_BIRDS_PROFILE.vout_max;
+}
+
+bool bzm_power_resolve_user_voltage(uint16_t millivolts, float *volts)
+{
+    if (volts == NULL) return false;
+    const float requested_v = (float)millivolts / 1000.0f;
+    if (!bzm_power_runtime_voltage_is_allowed(requested_v)) return false;
+    *volts = requested_v;
+    return true;
 }
 
 bool bzm_power_frequency_target_voltage(float frequency_mhz,

@@ -12,7 +12,7 @@ bring-up action. The controller first proves safe-off, verifies a compatible
 bridge, enables and verifies the 2.800 V startup TPS546 profile, discovers four
 ASICs, configures telemetry and both 800 MHz PLLs, activates 944 engines with
 bounded stack skew, and then starts the normal ESP-Miner work, result,
-statistics, Stratum, and live-frequency tasks.
+statistics, Stratum, and live-tuning tasks.
 
 ## Work scheduling
 
@@ -43,24 +43,29 @@ and lease state cannot be verified.
 Parser byte realignment and result-attribution recovery are bounded production
 behaviors. Their byte, event, rejection, and timeout thresholds are the only
 Bonanza recovery settings exposed in Kconfig. Operators may select a frequency
-target from 800 through 2000 MHz; direct voltage tuning is not exposed.
+target from 800 through 2000 MHz and an aggregate TPS546 rail target from
+2.1 through 3.2 V.
 
-## Live frequency targeting
+## Live frequency and voltage targeting
 
-Startup always proves the complete mining path at 800 MHz. If the configured
-target is higher, the controller keeps TDM and normal pool work active while it
-applies the BZMD-derived initial shortcut, capped at 1425 MHz, then waits 90
-seconds for thermal stabilization. It advances in 25 MHz steps and qualifies
-every ASIC/PLL domain from attributed valid and rejected mining results. A
-domain that cannot sustain a step is returned to its last passing frequency
-while the remaining domains may continue.
+Startup always proves the complete mining path at 800 MHz and 2.8 V. The live
+tuning worker then applies the saved user voltage and frequency without an ESP
+restart. If the configured frequency is higher, the controller keeps TDM and
+normal pool work active while it applies the BZMD-derived initial shortcut,
+capped at 1425 MHz, then waits 90 seconds for thermal stabilization. It advances
+in 25 MHz steps and qualifies every ASIC/PLL domain from attributed valid and
+rejected mining results. A domain that cannot sustain a step is returned to its
+last passing frequency while the remaining domains may continue.
 
 Changing the AxeOS target while mining starts the same process without an ESP
-restart. Downward changes use bounded 25 MHz steps. The frequency policy derives
-the TPS546 rail command, verifies each change against live readback, and may
-retry a failed qualification at the next policy voltage. The command is always
-capped at 3.20 V; a voltage or PLL transaction that cannot be verified latches
-the normal fail-closed supervisor path.
+restart. Downward changes use bounded 25 MHz steps. A requested voltage increase
+is applied before raising clocks; a requested decrease is delayed until lower
+clocks are reached. A voltage-only change applies directly. Every request is
+bounded to 2.1–3.2 V and verified against TPS546 command, PGOOD, status, and
+telemetry readback. Automatic BZMD PnP voltage selection and retry are disabled
+for the manual path, so frequency changes never replace the saved user voltage.
+A voltage or PLL transaction that cannot be verified latches the normal
+fail-closed supervisor path.
 
 ## AxeOS status
 

@@ -18,6 +18,8 @@
 #include "bap_subscription.h"
 #include "bap.h"
 #include "asic.h"
+#include "bzm_controller.h"
+#include "device_config.h"
 
 static const char *TAG = "BAP_HANDLERS";
 
@@ -303,23 +305,32 @@ void BAP_handle_settings(const char *parameter, const char *value) {
         case BAP_PARAM_FREQUENCY:
             {
                 float target_frequency = atof(value);
-                
-                if (target_frequency < 100.0f || target_frequency > 800.0f) {
-                    ESP_LOGE(TAG, "Invalid frequency value: %.2f MHz (valid range: 100-800 MHz)", target_frequency);
+                const bool bonanza =
+                    bap_global_state->DEVICE_CONFIG.bonanza_bridge &&
+                    bap_global_state->DEVICE_CONFIG.family.asic.id == BZM;
+                const bool valid = bonanza
+                    ? device_config_accepts_frequency(
+                          &bap_global_state->DEVICE_CONFIG,
+                          target_frequency)
+                    : target_frequency >= 100.0f &&
+                          target_frequency <= 800.0f;
+
+                if (!valid) {
+                    ESP_LOGE(TAG, "Invalid frequency value: %.2f MHz",
+                             target_frequency);
                     BAP_send_message(BAP_CMD_ERR, parameter, "invalid_range");
                     return;
                 }
-                
-                //ESP_LOGI(TAG, "Setting ASIC frequency to %.2f MHz", target_frequency);
-                
-                bap_global_state->POWER_MANAGEMENT_MODULE.frequency_value = target_frequency;
-
-                ASIC_set_frequency(bap_global_state);
-                ASIC_set_nonce_space(bap_global_state);
-
-                //ESP_LOGI(TAG, "Frequency successfully set to %.2f MHz", target_frequency);
 
                 nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, target_frequency);
+                if (bonanza) {
+                    bzm_controller_tuning_settings_changed();
+                } else {
+                    bap_global_state->POWER_MANAGEMENT_MODULE.frequency_value =
+                        target_frequency;
+                    ASIC_set_frequency(bap_global_state);
+                    ASIC_set_nonce_space(bap_global_state);
+                }
 
                 char freq_str[32];
                 snprintf(freq_str, sizeof(freq_str), "%.2f", target_frequency);
@@ -329,17 +340,27 @@ void BAP_handle_settings(const char *parameter, const char *value) {
         case BAP_PARAM_ASIC_VOLTAGE:
             {
                 uint16_t target_voltage_mv = (uint16_t)atoi(value);
+                const bool bonanza =
+                    bap_global_state->DEVICE_CONFIG.bonanza_bridge &&
+                    bap_global_state->DEVICE_CONFIG.family.asic.id == BZM;
+                const bool valid = bonanza
+                    ? device_config_accepts_voltage(
+                          &bap_global_state->DEVICE_CONFIG,
+                          target_voltage_mv)
+                    : target_voltage_mv >= 700 &&
+                          target_voltage_mv <= 1400;
 
-                if (target_voltage_mv < 700 || target_voltage_mv > 1400) {
-                    ESP_LOGE(TAG, "Invalid voltage value: %d mV (valid range: 700-1400 mV)", target_voltage_mv);
+                if (!valid) {
+                    ESP_LOGE(TAG, "Invalid voltage value: %d mV",
+                             target_voltage_mv);
                     BAP_send_message(BAP_CMD_ERR, parameter, "invalid_range");
                     return;
                 }
 
-                //ESP_LOGI(TAG, "Setting ASIC voltage to %d mV", target_voltage_mv);
-
                 nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, target_voltage_mv);
-                //ESP_LOGI(TAG, "Voltage successfully set to %d mV", target_voltage_mv);
+                if (bonanza) {
+                    bzm_controller_tuning_settings_changed();
+                }
 
                 char voltage_str[32];
                 snprintf(voltage_str, sizeof(voltage_str), "%d", target_voltage_mv);

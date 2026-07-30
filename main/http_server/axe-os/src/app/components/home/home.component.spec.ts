@@ -96,27 +96,27 @@ describe('HomeComponent', () => {
       deviceModel: 'Bonanza',
       swarmColor: 'yellow',
       asicCount: 4,
-      defaultFrequency: 50,
-      frequencyOptions: [50],
-      frequencyTunable: false,
+      defaultFrequency: 800,
+      frequencyOptions: [800, 1000, 1250],
+      frequencyTunable: true,
       defaultVoltage: 2800,
-      voltageOptions: [2800],
-      voltageTunable: false,
+      voltageOptions: [2800, 2900, 3200],
+      voltageTunable: true,
     } as ISystemASIC);
 
-    expect(component.minimumFrequency).toBe(50);
-    expect(component.maxFrequency).toBe(50);
-    expect(component.maxCoreVoltage).toBe(2.8);
+    expect(component.minimumFrequency).toBe(800);
+    expect(component.maxFrequency).toBe(1250);
+    expect(component.maxCoreVoltage).toBe(3.2);
 
     const info = {
-      frequency: 50,
+      frequency: 800,
       version: 'test',
       axeOSVersion: 'test',
     } as ISystemInfo;
     component.handleSystemMessages(info, { duration: 0, startTime: null });
     expect(component.messages.some(message => message.type === 'FREQUENCY_LOW')).toBeFalse();
 
-    info.frequency = 49;
+    info.frequency = 799;
     component.handleSystemMessages(info, { duration: 0, startTime: null });
     expect(component.messages.some(message => message.type === 'FREQUENCY_LOW')).toBeTrue();
   });

@@ -105,6 +105,10 @@ static inline bool device_config_accepts_voltage(const DeviceConfig *config,
                                                  uint16_t voltage_mv)
 {
     if (config == NULL || voltage_mv == 0) return false;
+    if (config->family.asic.id == BZM) {
+        /* Aggregate rail bounds for four series BZM chips. */
+        return voltage_mv >= 2100 && voltage_mv <= 3200;
+    }
     return config->family.voltage_tunable ||
            voltage_mv == config->family.asic.default_voltage_mv;
 }
@@ -121,8 +125,11 @@ static const uint16_t BM1397_VOLTAGE_OPTIONS[] = {1100, 1150, 1200, 1250, 1300, 
 static const uint16_t BM1366_VOLTAGE_OPTIONS[] = {1100, 1150, 1200, 1250, 1300,                         0};
 static const uint16_t BM1368_VOLTAGE_OPTIONS[] = {1100, 1150, 1166, 1200, 1250, 1300,                   0};
 static const uint16_t BM1370_VOLTAGE_OPTIONS[] = {1000, 1060, 1100, 1150, 1200, 1250,                   0};
-// This is the fixed TPS546 board rail, not an on-die BZM core-voltage knob.
-static const uint16_t BZM_VOLTAGE_OPTIONS[]    = {2800, 0};
+/* Aggregate TPS546 rail presets. Custom values remain available through the
+ * existing overclock unlock, subject to the 2.1..3.2 V hardware bounds. */
+static const uint16_t BZM_VOLTAGE_OPTIONS[]    = {
+    2800, 2850, 2900, 2950, 3000, 3050, 3100, 3150, 3200, 0
+};
 
 static const AsicConfig ASIC_BM1397 = { .id = BM1397, .name = "BM1397", .chip_id = 1397, .default_frequency_mhz = 425, .frequency_options = BM1397_FREQUENCY_OPTIONS, .frequency_tunable = true, .default_voltage_mv = 1400, .voltage_options = BM1397_VOLTAGE_OPTIONS, .difficulty = 256, .core_count = 168, .small_core_count =  672, .hash_domains = 1, .hashrate_test_percentage_target = 0.85, .default_asic_timeout = 20};
 static const AsicConfig ASIC_BM1366 = { .id = BM1366, .name = "BM1366", .chip_id = 1366, .default_frequency_mhz = 485, .frequency_options = BM1366_FREQUENCY_OPTIONS, .frequency_tunable = true, .default_voltage_mv = 1200, .voltage_options = BM1366_VOLTAGE_OPTIONS, .difficulty = 256, .core_count = 112, .small_core_count =  894, .hash_domains = 4, .hashrate_test_percentage_target = 0.85, .default_asic_timeout = 2000};
@@ -148,7 +155,7 @@ static const FamilyConfig FAMILY_GAMMA       = { .id = GAMMA,       .name = "Gam
 static const FamilyConfig FAMILY_GAMMA_DUO   = { .id = GAMMA_DUO,   .name = "GammaDuo",   .asic = ASIC_BM1370XP, .asic_count = 2, .max_power =  40, .power_offset = 5,  .nominal_voltage = 5,  .voltage_domains = 1, .voltage_tunable = true,  .swarm_color = "green",    };
 static const FamilyConfig FAMILY_SUPRA_HEX   = { .id = SUPRA_HEX,   .name = "SupraHex",   .asic = ASIC_BM1368,   .asic_count = 6, .max_power = 120, .power_offset = 25, .nominal_voltage = 12, .voltage_domains = 3, .voltage_tunable = true,  .swarm_color = "darkblue", };
 static const FamilyConfig FAMILY_GAMMA_TURBO = { .id = GAMMA_TURBO, .name = "GammaTurbo", .asic = ASIC_BM1370,   .asic_count = 2, .max_power =  60, .power_offset = 10, .nominal_voltage = 12, .voltage_domains = 1, .voltage_tunable = true,  .swarm_color = "cyan",     };
-static const FamilyConfig FAMILY_BONANZA     = { .id = BONANZA,     .name = "Bonanza",    .asic = ASIC_BZM,      .asic_count = 4, .max_power = 140, .power_offset = 0,  .nominal_voltage = 12, .voltage_domains = 1, .voltage_tunable = false, .swarm_color = "yellow",   };
+static const FamilyConfig FAMILY_BONANZA     = { .id = BONANZA,     .name = "Bonanza",    .asic = ASIC_BZM,      .asic_count = 4, .max_power = 140, .power_offset = 0,  .nominal_voltage = 12, .voltage_domains = 1, .voltage_tunable = true,  .swarm_color = "yellow",   };
 
 static const FamilyConfig default_families[] = {
     FAMILY_MAX,

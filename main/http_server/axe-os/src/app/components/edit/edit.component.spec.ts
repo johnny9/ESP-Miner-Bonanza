@@ -25,10 +25,10 @@ describe('EditComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('disables fixed BZM frequency and voltage settings', () => {
+  it('enables live BZM frequency and voltage settings', () => {
     const fb = TestBed.inject(FormBuilder);
     component.form = fb.group({
-      frequency: [50],
+      frequency: [800],
       coreVoltage: [2800],
     });
 
@@ -37,16 +37,18 @@ describe('EditComponent', () => {
       deviceModel: 'Bonanza',
       swarmColor: 'yellow',
       asicCount: 4,
-      defaultFrequency: 50,
-      frequencyOptions: [50],
-      frequencyTunable: false,
+      defaultFrequency: 800,
+      frequencyOptions: [800, 1000, 1250],
+      frequencyTunable: true,
       defaultVoltage: 2800,
-      voltageOptions: [2800],
-      voltageTunable: false,
+      voltageOptions: [2800, 2850, 2900, 3200],
+      voltageTunable: true,
     } as ISystemASIC);
 
-    expect(component.hasTunableAsicSettings).toBeFalse();
-    expect(component.form.controls['frequency'].disabled).toBeTrue();
-    expect(component.form.controls['coreVoltage'].disabled).toBeTrue();
+    expect(component.hasTunableAsicSettings).toBeTrue();
+    expect(component.form.controls['frequency'].enabled).toBeTrue();
+    expect(component.form.controls['coreVoltage'].enabled).toBeTrue();
+    expect(component.noRestartFields).toContain('frequency');
+    expect(component.noRestartFields).toContain('coreVoltage');
   });
 });

@@ -248,12 +248,20 @@ TEST_CASE("Bitaxe 1002 selects the Bonanza board profile",
                              board->family.asic.default_voltage_mv);
     TEST_ASSERT_EQUAL_UINT16(2800,
                              board->family.asic.voltage_options[0]);
-    TEST_ASSERT_EQUAL_UINT16(0,
+    TEST_ASSERT_EQUAL_UINT16(2850,
                              board->family.asic.voltage_options[1]);
-    TEST_ASSERT_FALSE(board->family.voltage_tunable);
+    TEST_ASSERT_EQUAL_UINT16(3200,
+                             board->family.asic.voltage_options[8]);
+    TEST_ASSERT_EQUAL_UINT16(0,
+                             board->family.asic.voltage_options[9]);
+    TEST_ASSERT_TRUE(board->family.voltage_tunable);
+    TEST_ASSERT_TRUE(device_config_accepts_voltage(board, 2100));
+    TEST_ASSERT_TRUE(device_config_accepts_voltage(board, 2700));
     TEST_ASSERT_TRUE(device_config_accepts_voltage(board, 2800));
-    TEST_ASSERT_FALSE(device_config_accepts_voltage(board, 2700));
-    TEST_ASSERT_FALSE(device_config_accepts_voltage(board, 2900));
+    TEST_ASSERT_TRUE(device_config_accepts_voltage(board, 2900));
+    TEST_ASSERT_TRUE(device_config_accepts_voltage(board, 3200));
+    TEST_ASSERT_FALSE(device_config_accepts_voltage(board, 2099));
+    TEST_ASSERT_FALSE(device_config_accepts_voltage(board, 3201));
     TEST_ASSERT_EQUAL_UINT16(140, board->family.max_power);
     TEST_ASSERT_EQUAL_UINT16(0, board->family.power_offset);
     TEST_ASSERT_EQUAL_UINT16(12, board->family.nominal_voltage);

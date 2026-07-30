@@ -7,6 +7,7 @@
 #include "esp_err.h"
 
 #define BZM_TPS546_FIXED_VOUT_V 2.8f
+#define BZM_TPS546_MIN_VOUT_V 2.1f
 /* Four series BZM chips are limited to 0.81 V each on average (3.24 V
  * aggregate). Keep 40 mV of command margin below that absolute limit. */
 #define BZM_TPS546_MAX_VOUT_V 3.2f
@@ -71,6 +72,7 @@ extern const bzm_tps546_profile_t BZM_TPS546_BIRDS_PROFILE;
 
 bool bzm_power_voltage_is_allowed(float volts);
 bool bzm_power_runtime_voltage_is_allowed(float volts);
+bool bzm_power_resolve_user_voltage(uint16_t millivolts, float *volts);
 bool bzm_power_frequency_target_voltage(float frequency_mhz,
                                         float *voltage_v);
 bool bzm_power_pnp_next_voltage(float initial_voltage_v,

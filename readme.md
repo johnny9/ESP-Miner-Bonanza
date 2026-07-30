@@ -2,7 +2,7 @@
 
 ESP-Miner-Bonanza is open-source ESP32-S3 firmware and an AxeOS web interface for the Intel BZM2-based Bitaxe Bonanza. It currently targets board revision 1002: the quad-BZM2 [`bitaxeorg/bitaxeBonanza` 1002x hardware design](https://github.com/bitaxeorg/bitaxeBonanza/tree/1002x).
 
-This is a Bonanza-specific fork of [ESP-Miner](https://github.com/bitaxeorg/ESP-Miner). It adds the BZM2 driver, RP2040 bridge protocol, automatic startup, runtime safety supervision, live frequency targeting, and Bonanza health telemetry needed by the 1002x design. The four BZM2 ASICs prove mining at 800 MHz before the controller applies a requested 800–2000 MHz target while mining. The controller derives and verifies the required rail command automatically; direct voltage tuning remains disabled.
+This is a Bonanza-specific fork of [ESP-Miner](https://github.com/bitaxeorg/ESP-Miner). It adds the BZM2 driver, RP2040 bridge protocol, automatic startup, runtime safety supervision, live frequency and voltage targeting, and Bonanza health telemetry needed by the 1002x design. The four BZM2 ASICs prove mining at 800 MHz and a 2.8 V startup rail before the controller applies the requested 800–2000 MHz and 2.1–3.2 V settings while mining.
 
 The 1002x hardware is still described as a prototype by its hardware repository. Treat both the hardware and this firmware as active development work, and use the matching Bonanza ESP32 firmware and [`bonanza-bridge-fw`](https://github.com/johnny9/bonanza-bridge-fw) RP2040 firmware.
 
@@ -20,7 +20,7 @@ The 1002x hardware is still described as a prototype by its hardware repository.
 | RP2040 bridge update and blank-bridge recovery | 🟢 Working | Manifested raw bridge images are programmed and read-back verified over onboard SWD. |
 | Pause and resume mining | 🔴 Not yet working | The API changes the AxeOS flag but does not stop or restart the Bonanza controller and work dispatcher. |
 | Frequency targeting | 🟢 Working | AxeOS accepts 800–2000 MHz without rebooting. The controller keeps mining through a BZMD-derived initial shortcut and 25 MHz qualification ramp. |
-| Direct voltage tuning | 🔴 Not supported | Rail voltage follows the frequency policy automatically and is capped at 3.20 V; AxeOS does not expose a manual voltage override. |
+| Direct voltage tuning | 🟢 Working | AxeOS accepts an aggregate TPS546 rail target from 2.1–3.2 V and applies it live with command, PGOOD, status, and telemetry readback validation. |
 | Automatic and manual fan control | 🔴 Not supported | The Bonanza safety controller currently requires the bridge-controlled fan to remain at 100%. |
 | On-device display | 🔴 Not yet working | Board 1002 routes display SCL/SDA to ESP32-S3 GPIO6/GPIO7, while this firmware initializes its I²C bus on GPIO48/GPIO47. AxeOS exposes display settings, but the board-specific display pin/bus path is not implemented or validated. |
 | Bonanza-aware latest-release lookup | 🔴 Not yet working | AxeOS still queries the upstream ESP-Miner release feed and must not be used to select Bonanza firmware. |
@@ -57,7 +57,7 @@ This table tracks AxeOS feature parity for the Bitaxe Bonanza. 🟢 **Working** 
 | Network | mDNS and AxeOS discovery | 🟢 Working | Publishes HTTP and AxeOS DNS-SD records and supports `.local` access and Swarm discovery. |
 | Theme | Appearance | 🟢 Working | Dark, light, and white themes plus custom accent colors are available and persisted. |
 | Settings | ASIC frequency | 🟢 Working | Presets cover common BZMD targets and overclock mode accepts any 800–2000 MHz value. A new target is ramped and qualified while mining, without rebooting. |
-| Settings | ASIC voltage | 🔴 Not supported | Voltage is selected by the frequency policy, verified against TPS546 readback, and safety-capped at 3.20 V; manual voltage control remains disabled. |
+| Settings | ASIC voltage | 🟢 Working | Presets cover 2.8–3.2 V and overclock mode accepts any bounded 2.1–3.2 V aggregate rail value. The user value is applied and verified live without rebooting. |
 | Settings | Automatic/manual fan control | 🔴 Not yet working | Bonanza safety requires the bridge-controlled fan at 100%; target temperature, minimum fan, and manual fan controls are not applied. |
 | Settings | Overheat-mode reset | 🔴 Not yet working | Bonanza uses its dedicated fail-closed safety supervisor. A latched Bonanza fault requires inspection and restart rather than the generic overheat reset flow. |
 | Settings | On-device display and display configuration | 🔴 Not yet working | AxeOS exposes display type, rotation, color inversion, and timeout settings, but board 1002 routes display SCL/SDA to GPIO6/GPIO7 while this firmware initializes its I²C bus on GPIO48/GPIO47. The board-specific display pin/bus path is not implemented or validated. |
@@ -67,7 +67,7 @@ This table tracks AxeOS feature parity for the Bitaxe Bonanza. 🟢 **Working** 
 | Update | RP2040 bridge firmware over HTTP | 🟢 Working | AxeOS accepts a raw RP2040 `.bin` with the board-1002 BZM bridge identity manifest, moves an operating bridge to verified safe-off, or keeps the ESP-owned regulator verified off for factory-blank recovery, then programs and verifies the bridge over onboard SWD, resets it, and confirms the running protocol and version match the manifest. A query-only `force=true` bypass exists for destructive regression fixtures and is not exposed in AxeOS. |
 | Update | Latest-release lookup/download | 🔴 Not yet working | AxeOS still queries the upstream ESP-Miner release feed, which is not Bonanza-aware and must not be used as a source of Bonanza firmware. |
 | Other | Bitcoin whitepaper | 🟢 Working | The bundled whitepaper link is a static AxeOS feature. |
-| API | REST and live WebSocket API | 🟡 Partially working | System, ASIC, statistics, scoreboard, logs, settings, live frequency changes, restart, identify, ESP/AxeOS OTA, and bridge firmware update paths are available. Pause/resume and generic Bonanza fan telemetry retain the limitations above. |
+| API | REST and live WebSocket API | 🟡 Partially working | System, ASIC, statistics, scoreboard, logs, settings, live frequency/voltage changes, restart, identify, ESP/AxeOS OTA, and bridge firmware update paths are available. Pause/resume and generic Bonanza fan telemetry retain the limitations above. |
 
 ## Community
 The upstream ESP-Miner firmware and AxeOS are maintained by OSMU, which hosts a [discussion forum](https://osmu.xyz).
@@ -344,7 +344,7 @@ In the event that the admin web front end is inaccessible, for example because o
 
 ### ASIC frequency, rail, and fan settings
 
-Board 1002 always proves four-chip mining at 800 MHz before applying the configured 800–2000 MHz target. AxeOS offers tested presets, and `?oc` mode accepts intermediate values. Target changes do not reboot the ESP: the controller keeps work flowing, applies the BZMD-derived initial shortcut when appropriate, and qualifies each 25 MHz step using attributed mining results. It automatically selects and verifies the rail command, never commands more than 3.20 V, and caps failing frequency domains instead of exposing direct voltage tuning. The bridge-controlled fan remains at the safety-required 100%; generic automatic/manual fan controls are not applied.
+Board 1002 always proves four-chip mining at 800 MHz and 2.8 V before applying the configured targets. AxeOS offers common 800–2000 MHz and 2.8–3.2 V presets; `?oc` mode accepts intermediate frequencies and bounded 2.1–3.2 V aggregate rail values. Target changes do not reboot the ESP. Voltage increases are applied before a frequency increase, voltage decreases wait until a frequency decrease completes, and voltage-only changes apply directly. Every rail command is checked against TPS546 command, PGOOD, status, and telemetry readback. The controller keeps work flowing, applies the BZMD-derived frequency shortcut when appropriate, and qualifies each 25 MHz step using attributed mining results. Automatic PnP voltage selection and voltage retries are not part of the manual path; the saved user voltage remains authoritative. The bridge-controlled fan remains at the safety-required 100%; generic automatic/manual fan controls are not applied.
 
 ## Development using ESP-Miner-Bonanza/devcontainer
 

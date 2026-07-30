@@ -15,6 +15,9 @@ bool bzm_controller_active(void);
 bool bzm_controller_mining_stack_ready(void);
 bool bzm_controller_dispatch_allowed(void);
 
+/* Wake the live tuning worker after frequency or voltage NVS changes. */
+void bzm_controller_tuning_settings_changed(void);
+
 /* Exclusive verified-safe-off ownership for production maintenance. */
 bool bzm_controller_acquire_maintenance(
     bzm_supervisor_owner_t owner);
