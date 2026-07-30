@@ -1162,10 +1162,13 @@ static bool frequency_task_snapshot(float *target_mhz,
     }
 
     const uint64_t current_ms = now_ms();
+    /* Stage 7's baseline proof is collected at the known-good 800 MHz
+     * startup point. Do not rewrite PLLs or the rail while that proof is in
+     * flight: doing so resets the engine rotation underneath the evidence
+     * window and can turn a healthy chain into a false startup timeout.
+     * Once GOOD, live tuning continues while mining without a reboot. */
     const bool evidence_ready =
-        RUNTIME.running_evidence.status == BZM_RUNNING_EVIDENCE_GOOD ||
-        (RUNTIME.frequency_ramp_active &&
-         RUNTIME.running_evidence.status != BZM_RUNNING_EVIDENCE_BAD);
+        RUNTIME.running_evidence.status == BZM_RUNNING_EVIDENCE_GOOD;
     const bool ready =
         target_valid && RUNTIME.initialized && RUNTIME.global_state != NULL &&
         RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_MINING &&
