@@ -19,8 +19,9 @@ The 1002x hardware is still described as a prototype by its hardware repository.
 | ESP firmware and AxeOS OTA | 🟢 Working | `esp-miner.bin` and `www.bin` can be uploaded through AxeOS or the HTTP API. |
 | RP2040 bridge update and blank-bridge recovery | 🟢 Working | Manifested raw bridge images are programmed and read-back verified over onboard SWD. |
 | Pause and resume mining | 🔴 Not yet working | The API changes the AxeOS flag but does not stop or restart the Bonanza controller and work dispatcher. |
-| Frequency targeting | 🟢 Working | AxeOS accepts 800–2000 MHz without rebooting. The controller keeps mining through a BZMD-derived initial shortcut and 25 MHz qualification ramp. |
+| Frequency targeting | 🟢 Working | AxeOS accepts 800–2000 MHz without rebooting. The controller keeps mining through a BZMD-derived initial shortcut and then advances directly to the user target in 25 MHz steps, replacing work between steps. |
 | Direct voltage tuning | 🟢 Working | AxeOS accepts an aggregate TPS546 rail target from 2.1–3.2 V and applies it live with command, PGOOD, status, and telemetry readback validation. |
+| Automatic voltage tuning | 🔴 Not yet working | The BZMD PnP curve and retry helpers are not connected to runtime control. The saved user voltage remains authoritative. |
 | Automatic and manual fan control | 🔴 Not supported | The Bonanza safety controller currently requires the bridge-controlled fan to remain at 100%. |
 | On-device display | 🔴 Not yet working | Board 1002 routes display SCL/SDA to ESP32-S3 GPIO6/GPIO7, while this firmware initializes its I²C bus on GPIO48/GPIO47. AxeOS exposes display settings, but the board-specific display pin/bus path is not implemented or validated. |
 | Bonanza-aware latest-release lookup | 🔴 Not yet working | AxeOS still queries the upstream ESP-Miner release feed and must not be used to select Bonanza firmware. |
@@ -56,8 +57,9 @@ This table tracks AxeOS feature parity for the Bitaxe Bonanza. 🟢 **Working** 
 | Network | Setup access point/captive setup | 🟢 Working | The AxeOS AP onboarding route is available when station setup is required. |
 | Network | mDNS and AxeOS discovery | 🟢 Working | Publishes HTTP and AxeOS DNS-SD records and supports `.local` access and Swarm discovery. |
 | Theme | Appearance | 🟢 Working | Dark, light, and white themes plus custom accent colors are available and persisted. |
-| Settings | ASIC frequency | 🟢 Working | Presets cover common BZMD targets and overclock mode accepts any 800–2000 MHz value. A new target is ramped and qualified while mining, without rebooting. |
+| Settings | ASIC frequency | 🟢 Working | Presets cover common BZMD targets and overclock mode accepts any 800–2000 MHz value. A new target is applied directly in bounded steps while mining, without rebooting. |
 | Settings | ASIC voltage | 🟢 Working | Presets cover 2.8–3.2 V and overclock mode accepts any bounded 2.1–3.2 V aggregate rail value. The user value is applied and verified live without rebooting. |
+| Settings | Automatic voltage tuning | 🔴 Not yet working | AxeOS does not yet expose a PnP automatic-voltage mode. Frequency changes retain the saved manual voltage. |
 | Settings | Automatic/manual fan control | 🔴 Not yet working | Bonanza safety requires the bridge-controlled fan at 100%; target temperature, minimum fan, and manual fan controls are not applied. |
 | Settings | Overheat-mode reset | 🔴 Not yet working | Bonanza uses its dedicated fail-closed safety supervisor. A latched Bonanza fault requires inspection and restart rather than the generic overheat reset flow. |
 | Settings | On-device display and display configuration | 🔴 Not yet working | AxeOS exposes display type, rotation, color inversion, and timeout settings, but board 1002 routes display SCL/SDA to GPIO6/GPIO7 while this firmware initializes its I²C bus on GPIO48/GPIO47. The board-specific display pin/bus path is not implemented or validated. |

@@ -21,6 +21,9 @@ uses the full 32-bit nonce domain. Only the four ASIC instances of that one
 logical engine divide the nonce range. Per-engine current and previous
 generations remain attributable through enhanced-mode sequence identifiers.
 The timestamp budget is 60, matching the BIRDS production scheduling model.
+Steady work advances every 100 ms, completing a measured full engine rotation
+in roughly 39 seconds so work is refreshed before that timestamp budget
+expires.
 The ASIC-facing PIO link remains at the qualified 5 Mbaud rate. The separate
 raw bridge-to-ESP UART runs at 2 Mbaud, more than twelve times its 160 kbit/s
 measured receive payload budget, to provide board-level signal margin without
@@ -52,10 +55,11 @@ Startup always proves the complete mining path at 800 MHz and 2.8 V. The live
 tuning worker then applies the saved user voltage and frequency without an ESP
 restart. If the configured frequency is higher, the controller keeps TDM and
 normal pool work active while it applies the BZMD-derived initial shortcut,
-capped at 1425 MHz, then waits 90 seconds for thermal stabilization. It advances
-in 25 MHz steps and qualifies every ASIC/PLL domain from attributed valid and
-rejected mining results. A domain that cannot sustain a step is returned to its
-last passing frequency while the remaining domains may continue.
+capped at 1425 MHz, then advances every ASIC/PLL domain directly toward the
+saved user target in 25 MHz steps. It waits for a full work replacement after
+each step so mining remains synchronized while clocks change. The manual path
+does not apply pass-rate qualification, per-domain frequency caps, or automatic
+rollback.
 
 Changing the AxeOS target while mining starts the same process without an ESP
 restart. Downward changes use bounded 25 MHz steps. A requested voltage increase
@@ -64,6 +68,8 @@ clocks are reached. A voltage-only change applies directly. Every request is
 bounded to 2.1–3.2 V and verified against TPS546 command, PGOOD, status, and
 telemetry readback. Automatic BZMD PnP voltage selection and retry are disabled
 for the manual path, so frequency changes never replace the saved user voltage.
+The PnP voltage curve and 50 mV retry helpers exist but are not exposed as an
+automatic-voltage mode.
 A voltage or PLL transaction that cannot be verified latches the normal
 fail-closed supervisor path.
 
@@ -76,7 +82,7 @@ measured VOUT, measured ASIC-rail power, hottest fresh ASIC temperature, fan
 telemetry, bridge compatibility, recovery
 counters, and the last persistent fault with a safe next action.
 
-Qualification snapshots, raw templates, midstates, per-engine traces, and
+Per-step pass-rate snapshots, raw templates, midstates, per-engine traces, and
 manual startup controls are intentionally absent from production firmware.
 The production bridge updater accepts a separately supplied raw RP2040 image,
 requires its embedded BZM bridge identity manifest by default, programs and
