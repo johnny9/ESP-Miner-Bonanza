@@ -19,7 +19,7 @@ static void fill_frequency(
     }
 }
 
-TEST_CASE("BZM qualification uses the bzmd full-nonce dwell",
+TEST_CASE("BZM qualification uses the full-nonce dwell",
           "[asic][bzm][frequency][qualification]")
 {
     TEST_ASSERT_EQUAL_UINT32(

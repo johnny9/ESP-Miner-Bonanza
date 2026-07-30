@@ -158,7 +158,7 @@ bzm_bringup_outcome_t bzm_bringup_stage_clocks(bzm_bringup_state_t * state, cons
                                                const bzm_bringup_telemetry_policy_t * telemetry_policy,
                                                bzm_bringup_report_t * report);
 /*
- * Apply one live bzmd-style PnP transaction across the eight ASIC/PLL
+ * Apply one live tuning transaction across the eight ASIC/PLL
  * domains. TDM and mining remain active. Ordinary steps are limited to
  * 25 MHz per domain; allow_initial_jump is only for the bounded
  * target-minus-100 MHz shortcut after 800 MHz mining is proven.

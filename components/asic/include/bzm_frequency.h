@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* BIRDS/bzmd frequency-targeting constants for the two BZM hash PLLs. */
+/* Frequency-targeting constants for the two BZM hash PLLs. */
 #define BZM_FREQUENCY_POWER_ON_MHZ 800.0f
 #define BZM_FREQUENCY_TARGET_MIN_MHZ 800.0f
 #define BZM_FREQUENCY_TARGET_MAX_MHZ 2000.0f

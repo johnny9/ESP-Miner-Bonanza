@@ -194,7 +194,7 @@ TEST_CASE("BZM power validation failure reverses the complete sequence",
     TEST_ASSERT_EQUAL_INT_ARRAY(expected, power.calls, power.call_count);
 }
 
-TEST_CASE("BZM frequency voltage curve matches bzmd within the safe rail cap",
+TEST_CASE("BZM frequency voltage curve stays within the safe rail cap",
           "[asic][bzm][power][frequency]")
 {
     const struct {
@@ -237,22 +237,22 @@ TEST_CASE("BZM frequency voltage curve matches bzmd within the safe rail cap",
         bzm_power_frequency_target_voltage(1000.0f, NULL));
 }
 
-TEST_CASE("BZM PnP voltage retries stop at the adaptive and rail limits",
-          "[asic][bzm][power][pnp]")
+TEST_CASE("BZM tuning voltage retries stop at the adaptive and rail limits",
+          "[asic][bzm][power][tuning]")
 {
     float next_v = 0.0f;
     TEST_ASSERT_TRUE(
-        bzm_power_pnp_next_voltage(2.975f, 2.975f, &next_v));
+        bzm_power_tuning_next_voltage(2.975f, 2.975f, &next_v));
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.025f, next_v);
     TEST_ASSERT_TRUE(
-        bzm_power_pnp_next_voltage(2.975f, 3.175f, &next_v));
+        bzm_power_tuning_next_voltage(2.975f, 3.175f, &next_v));
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.20f, next_v);
     TEST_ASSERT_FALSE(
-        bzm_power_pnp_next_voltage(2.975f, 3.20f, &next_v));
+        bzm_power_tuning_next_voltage(2.975f, 3.20f, &next_v));
     TEST_ASSERT_FALSE(
-        bzm_power_pnp_next_voltage(3.20f, 3.20f, &next_v));
+        bzm_power_tuning_next_voltage(3.20f, 3.20f, &next_v));
     TEST_ASSERT_FALSE(
-        bzm_power_pnp_next_voltage(2.00f, 2.80f, &next_v));
+        bzm_power_tuning_next_voltage(2.00f, 2.80f, &next_v));
 }
 
 TEST_CASE("BZM runtime rail change validates the requested voltage",

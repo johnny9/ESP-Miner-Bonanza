@@ -54,7 +54,7 @@ target from 800 through 2000 MHz and an aggregate TPS546 rail target from
 Startup always proves the complete mining path at 800 MHz and 2.8 V. The live
 tuning worker then applies the saved user voltage and frequency without an ESP
 restart. If the configured frequency is higher, the controller keeps TDM and
-normal pool work active while it applies the BZMD-derived initial shortcut,
+normal pool work active while it applies the bounded initial shortcut,
 capped at 1425 MHz, then advances every ASIC/PLL domain directly toward the
 saved user target in 25 MHz steps. It waits for a full work replacement after
 each step so mining remains synchronized while clocks change. The manual path
@@ -66,9 +66,9 @@ restart. Downward changes use bounded 25 MHz steps. A requested voltage increase
 is applied before raising clocks; a requested decrease is delayed until lower
 clocks are reached. A voltage-only change applies directly. Every request is
 bounded to 2.1–3.2 V and verified against TPS546 command, PGOOD, status, and
-telemetry readback. Automatic BZMD PnP voltage selection and retry are disabled
+telemetry readback. Automatic tuning-based voltage selection and retry are disabled
 for the manual path, so frequency changes never replace the saved user voltage.
-The PnP voltage curve and 50 mV retry helpers exist but are not exposed as an
+The tuning voltage curve and 50 mV retry helpers exist but are not exposed as an
 automatic-voltage mode.
 A voltage or PLL transaction that cannot be verified latches the normal
 fail-closed supervisor path.

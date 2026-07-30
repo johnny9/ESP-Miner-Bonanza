@@ -40,7 +40,7 @@ bool bzm_frequency_resolve_target(float requested_mhz,
         (float)BZM_REFERENCE_DIVIDER * (BZM_POST1_DIVIDER + 1) *
         (BZM_POST2_DIVIDER + 1) * clamped_mhz / BZM_REFERENCE_MHZ;
 
-    /* Match bzmd: exact half-divider ties remain at the lower value. */
+    /* Round normally while keeping exact half-divider ties at the lower value. */
     uint16_t feedback_divider = (uint16_t)feedback;
     if (feedback - (float)feedback_divider > 0.5f) ++feedback_divider;
 

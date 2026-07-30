@@ -812,7 +812,7 @@ static bzm_bringup_outcome_t program_live_frequency_domain(
             feedback_register, target->feedback_divider, 0, completed);
     }
 
-    /* bzmd leaves the PLL enabled and waits 1 ms after changing dividers. */
+    /* Live tuning leaves the PLL enabled and waits 1 ms after changing dividers. */
     if (ops->delay_ms != NULL) ops->delay_ms(ops_context, 1);
     return verify_live_frequency_domain(
         ops, ops_context, asic, pll, target, report, completed);

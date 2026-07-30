@@ -18,8 +18,8 @@
  * error only. */
 #define BZM_TPS546_VOUT_READBACK_TOLERANCE_V 0.002f
 #define BZM_TPS546_VOUT_OPERATING_TOLERANCE_V 0.15f
-#define BZM_PNP_VOLTAGE_STEP_V 0.05f
-#define BZM_PNP_MAX_VOLTAGE_STEPS 9U
+#define BZM_TUNING_VOLTAGE_STEP_V 0.05f
+#define BZM_TUNING_MAX_VOLTAGE_STEPS 9U
 
 typedef struct {
     uint8_t phase;
@@ -75,9 +75,9 @@ bool bzm_power_runtime_voltage_is_allowed(float volts);
 bool bzm_power_resolve_user_voltage(uint16_t millivolts, float *volts);
 bool bzm_power_frequency_target_voltage(float frequency_mhz,
                                         float *voltage_v);
-bool bzm_power_pnp_next_voltage(float initial_voltage_v,
-                                float current_voltage_v,
-                                float *next_voltage_v);
+bool bzm_power_tuning_next_voltage(float initial_voltage_v,
+                                   float current_voltage_v,
+                                   float *next_voltage_v);
 
 typedef struct {
     esp_err_t (*set_5v_enabled)(void *context, bool enabled);

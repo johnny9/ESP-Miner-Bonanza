@@ -27,7 +27,7 @@ TEST_CASE("BZM frequency targets use the fixed BIRDS PLL math",
     TEST_ASSERT_EQUAL_UINT16(192, target.feedback_divider);
 }
 
-TEST_CASE("BZM frequency targeting clamps like bzmd and rejects NaN",
+TEST_CASE("BZM frequency targeting clamps to its range and rejects NaN",
           "[asic][bzm][frequency]")
 {
     bzm_frequency_target_t target;
