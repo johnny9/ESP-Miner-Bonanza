@@ -74,7 +74,7 @@ static asic_driver_health_t DRIVER_HEALTH;
 static uint16_t FAST_DISPATCH_REMAINING;
 
 #define BZM_FAST_JOB_INTERVAL_MS 10.0
-#define BZM_STEADY_JOB_INTERVAL_MS 1000.0
+#define BZM_STEADY_JOB_INTERVAL_MS 100.0
 
 #define BZM_RESULT_DEDUP_CAPACITY 256U
 typedef struct {
@@ -242,8 +242,10 @@ uint8_t BZM_init(GlobalState * state)
     }
     bzm_reactor_config_t config = {
         .engine_count = engine_count,
-        /* BIRDS leaves each independent engine job enough ntime budget to
-         * remain productive throughout the paced 236-engine rotation. */
+        /* Refresh all 236 independent engines before their 60-value ntime
+         * budget expires. The bridge checkpoint adds about 64 ms per engine
+         * on board 1002, so a 100 ms scheduler interval completes a measured
+         * steady rotation in roughly 39 seconds. */
         .timestamp_count = 60,
         .lead_zeros = CONFIG_BZM_1002_LEAD_ZEROS,
         .nonce_offset = BZM_NONCE_GAP_1002,
