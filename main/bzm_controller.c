@@ -11,7 +11,6 @@
 #include "bzm_bridge_update.h"
 #include "bzm_driver.h"
 #include "bzm_frequency.h"
-#include "bzm_frequency_qualification.h"
 #include "bzm_lease_guard.h"
 #include "bzm_power.h"
 #include "bzm_running_evidence.h"
@@ -37,10 +36,6 @@
 #define BZM_SAFE_OFF_SAMPLE_MS 25U
 #define BZM_CONTROLLER_WATCHDOG_MS 300000U
 #define BZM_FREQUENCY_TASK_POLL_MS 100U
-#define BZM_FREQUENCY_THERMAL_STABILIZE_MS 90000U
-#define BZM_FREQUENCY_QUALIFICATION_MIN_RESULTS 8U
-#define BZM_FREQUENCY_QUALIFICATION_MIN_EXPECTED_RATE 0.50f
-#define BZM_FREQUENCY_QUALIFICATION_MIN_CORRECT_RATIO 0.90f
 #define BZM_CREATE_JOBS_TASK_PRIORITY 20U
 #define BZM_ASIC_RESULT_TASK_PRIORITY 15U
 #define BZM_SAFETY_TASK_PRIORITY 18U
@@ -1354,7 +1349,7 @@ static bool frequency_task_wait_for_work_replacement(uint32_t generation)
     if (pending) {
         ESP_LOGI(TAG,
                  "Waiting for BZM work replacement generation %lu "
-                 "before frequency qualification",
+                 "before the next frequency step",
                  (unsigned long)replacement_generation);
     }
     while (pending) {
@@ -1381,21 +1376,6 @@ static bool frequency_domains_all_at(const bzm_bringup_state_t *state,
         }
     }
     return true;
-}
-
-static float frequency_domains_minimum(
-    const float
-        frequency_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT])
-{
-    float minimum = frequency_mhz[0][0];
-    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
-        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
-            if (frequency_mhz[asic][pll] < minimum) {
-                minimum = frequency_mhz[asic][pll];
-            }
-        }
-    }
-    return minimum;
 }
 
 static void frequency_domains_copy(
@@ -1454,134 +1434,10 @@ static bool frequency_apply_domains(
     return true;
 }
 
-static bzm_frequency_qualification_config_t
-frequency_qualification_config(void)
-{
-    return (bzm_frequency_qualification_config_t){
-        .lead_zeros = CONFIG_BZM_1002_LEAD_ZEROS,
-        .minimum_observed_results =
-            BZM_FREQUENCY_QUALIFICATION_MIN_RESULTS,
-        .minimum_expected_pass_rate =
-            BZM_FREQUENCY_QUALIFICATION_MIN_EXPECTED_RATE,
-        .minimum_correct_result_ratio =
-            BZM_FREQUENCY_QUALIFICATION_MIN_CORRECT_RATIO,
-    };
-}
-
-static bool frequency_qualify_window(
-    const float
-        frequency_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
-    const bool
-        candidates[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
-    uint32_t generation,
-    bool capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
-    float rollback_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT])
-{
-    const uint32_t window_ms = bzm_frequency_qualification_window_ms(
-        frequency_domains_minimum(frequency_mhz));
-    if (window_ms == 0) return false;
-
-    bzm_frequency_domain_stats_t baseline = {0};
-    bzm_frequency_domain_stats_t current = {0};
-    bzm_running_stats_t running_baseline = {0};
-    bzm_running_stats_t running_current = {0};
-    uint32_t replacement_generation = 0;
-    uint32_t replacement_generation_after = 0;
-    bool replacement_pending = false;
-    bool replacement_pending_after = false;
-    uint32_t elapsed_ms = 0;
-    for (;;) {
-        if (!frequency_task_wait_for_work_replacement(generation) ||
-            !BZM_work_replacement_snapshot(
-                &replacement_generation, &replacement_pending) ||
-            replacement_pending ||
-            !BZM_frequency_domain_stats_snapshot(&baseline) ||
-            !BZM_running_stats_snapshot(&running_baseline)) {
-            ESP_LOGE(TAG,
-                     "BZM frequency qualification baseline unavailable");
-            return false;
-        }
-
-        ESP_LOGI(TAG,
-                 "Qualifying live clocks for %lu ms at %.3f MHz minimum",
-                 (unsigned long)window_ms,
-                 frequency_domains_minimum(frequency_mhz));
-        const uint64_t started_ms = now_ms();
-        if (!frequency_task_wait(window_ms, generation)) return false;
-        elapsed_ms = (uint32_t)(now_ms() - started_ms);
-
-        if (!BZM_frequency_domain_stats_snapshot(&current) ||
-            !BZM_running_stats_snapshot(&running_current) ||
-            !BZM_work_replacement_snapshot(
-                &replacement_generation_after,
-                &replacement_pending_after) ||
-            running_current.mapping_rejections <
-                running_baseline.mapping_rejections) {
-            return false;
-        }
-        if (replacement_pending_after ||
-            replacement_generation_after != replacement_generation) {
-            ESP_LOGW(TAG,
-                     "BZM work replacement interrupted frequency "
-                     "qualification; retrying after generation %lu",
-                     (unsigned long)replacement_generation_after);
-            continue;
-        }
-        break;
-    }
-    const bool mapping_rejected =
-        running_current.mapping_rejections !=
-        running_baseline.mapping_rejections;
-
-    bzm_frequency_qualification_result_t result;
-    const bzm_frequency_qualification_config_t config =
-        frequency_qualification_config();
-    if (!bzm_frequency_qualification_evaluate(
-            &baseline, &current, frequency_mhz, elapsed_ms, &config,
-            &result)) {
-        return false;
-    }
-
-    bool rollback_required = false;
-    for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
-        for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
-            if (!candidates[asic][pll]) continue;
-            const bzm_frequency_domain_result_t *domain =
-                &result.domain[asic][pll];
-            const bool passed =
-                !mapping_rejected &&
-                domain->verdict == BZM_FREQUENCY_DOMAIN_PASS;
-            ESP_LOGI(
-                TAG,
-                "BZM ASIC%u PLL%u %.3f MHz: valid=%llu rejected=%llu "
-                "expected=%.1f pass=%.1f%% correct=%.1f%% %s",
-                (unsigned)asic, (unsigned)pll, frequency_mhz[asic][pll],
-                (unsigned long long)domain->valid_results,
-                (unsigned long long)domain->rejected_results,
-                domain->expected_results,
-                domain->expected_pass_rate * 100.0f,
-                domain->correct_result_ratio * 100.0f,
-                passed ? "PASS" : "ROLLBACK");
-            if (!passed) {
-                capped[asic][pll] = true;
-                rollback_required = true;
-            } else {
-                rollback_mhz[asic][pll] = frequency_mhz[asic][pll];
-            }
-        }
-    }
-    return !rollback_required;
-}
-
 static void runtime_frequency_task(void *parameter)
 {
     (void)parameter;
-    bool session_active = false;
-    bool shortcut_available = false;
-    bool qualify_current = false;
-    uint32_t observed_generation = 0;
     uint32_t blocked_generation = 0;
-    bool capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT] = {0};
 
     for (;;) {
         (void)ulTaskNotifyTake(
@@ -1591,8 +1447,6 @@ static void runtime_frequency_task(void *parameter)
         uint32_t generation = 0;
         if (!frequency_task_snapshot(
                 &target_mhz, &target_voltage_v, &generation)) {
-            session_active = false;
-            qualify_current = false;
             blocked_generation = 0;
             continue;
         }
@@ -1602,24 +1456,6 @@ static void runtime_frequency_task(void *parameter)
             continue;
         }
 
-        if (!session_active) {
-            memset(capped, 0, sizeof(capped));
-            observed_generation = generation;
-            blocked_generation = 0;
-            shortcut_available = frequency_domains_all_at(
-                &state, BZM_FREQUENCY_POWER_ON_MHZ);
-            qualify_current = false;
-            session_active = true;
-        } else if (generation != observed_generation) {
-            memset(capped, 0, sizeof(capped));
-            observed_generation = generation;
-            blocked_generation = 0;
-            qualify_current = false;
-            if (frequency_domains_all_at(
-                    &state, BZM_FREQUENCY_POWER_ON_MHZ)) {
-                shortcut_available = true;
-            }
-        }
         if (blocked_generation == generation) continue;
 
         const float rail_command_v = frequency_task_rail_command();
@@ -1650,44 +1486,41 @@ static void runtime_frequency_task(void *parameter)
         }
         frequency_task_set_active(true);
 
-        if (shortcut_available &&
-            target_mhz > BZM_FREQUENCY_POWER_ON_MHZ + 0.001f &&
+        if (target_mhz > BZM_FREQUENCY_POWER_ON_MHZ + 0.001f &&
             frequency_domains_all_at(
                 &state, BZM_FREQUENCY_POWER_ON_MHZ)) {
             const float initial_mhz =
                 bzm_frequency_initial_mhz(target_mhz);
-            float initial[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
-            for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
-                for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
-                    initial[asic][pll] = initial_mhz;
+            if (initial_mhz >
+                BZM_FREQUENCY_POWER_ON_MHZ + 0.001f) {
+                float initial[BZM_BRINGUP_ASIC_COUNT]
+                             [BZM_BRINGUP_PLL_COUNT];
+                for (size_t asic = 0;
+                     asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
+                    for (size_t pll = 0;
+                         pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
+                        initial[asic][pll] = initial_mhz;
+                    }
                 }
-            }
-            float actual_mhz = state.clock_mhz;
-            if (initial_mhz > BZM_FREQUENCY_POWER_ON_MHZ + 0.001f &&
-                !frequency_apply_domains(initial, true, &actual_mhz)) {
-                blocked_generation = generation;
-                frequency_task_set_active(false);
+                float actual_mhz = state.clock_mhz;
+                if (!frequency_apply_domains(
+                        initial, true, &actual_mhz)) {
+                    blocked_generation = generation;
+                    frequency_task_set_active(false);
+                    continue;
+                }
+                ESP_LOGI(TAG,
+                         "BZM live shortcut reached %.3f MHz; continuing "
+                         "directly to the user target",
+                         initial_mhz);
+                (void)frequency_task_wait_for_work_replacement(generation);
                 continue;
             }
-            shortcut_available = false;
-            ESP_LOGI(TAG,
-                     "BZM live shortcut reached %.3f MHz; waiting 90 s "
-                     "for bzmd thermal stabilization",
-                     initial_mhz);
-            if (!frequency_task_wait(
-                    BZM_FREQUENCY_THERMAL_STABILIZE_MS, generation)) {
-                qualify_current = false;
-                continue;
-            }
-            qualify_current = true;
-            continue;
         }
 
         float next[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
         frequency_domains_copy(next, state.domain_clock_mhz);
-        bool candidates[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT] = {
-            0};
-        bool lowering = false;
+        bool changing = false;
         for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
             for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
                 const float current = state.domain_clock_mhz[asic][pll];
@@ -1695,115 +1528,27 @@ static void runtime_frequency_task(void *parameter)
                     next[asic][pll] =
                         fmaxf(target_mhz,
                               current - BZM_FREQUENCY_RAMP_STEP_MHZ);
-                    candidates[asic][pll] = true;
-                    lowering = true;
-                }
-            }
-        }
-        if (lowering) {
-            float actual_mhz = state.clock_mhz;
-            if (!frequency_apply_domains(next, false, &actual_mhz)) {
-                blocked_generation = generation;
-                frequency_task_set_active(false);
-            } else if (!frequency_task_wait_for_work_replacement(
-                           generation)) {
-                qualify_current = false;
-            }
-            continue;
-        }
-
-        if (qualify_current) {
-            bool current_candidates[BZM_BRINGUP_ASIC_COUNT]
-                                   [BZM_BRINGUP_PLL_COUNT];
-            bool trial_capped[BZM_BRINGUP_ASIC_COUNT]
-                             [BZM_BRINGUP_PLL_COUNT];
-            float rollback[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
-            memcpy(trial_capped, capped, sizeof(trial_capped));
-            for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
-                for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
-                    current_candidates[asic][pll] = true;
-                    rollback[asic][pll] = fmaxf(
-                        BZM_FREQUENCY_POWER_ON_MHZ,
-                        state.domain_clock_mhz[asic][pll] -
-                            BZM_FREQUENCY_RAMP_STEP_MHZ);
-                }
-            }
-            const bool all_passed = frequency_qualify_window(
-                state.domain_clock_mhz, current_candidates, generation,
-                trial_capped, rollback);
-            qualify_current = false;
-            if (!all_passed) {
-                uint32_t latest_generation = 0;
-                if (!frequency_task_snapshot(
-                        NULL, NULL, &latest_generation) ||
-                    latest_generation != generation) {
-                    continue;
-                }
-                memcpy(capped, trial_capped, sizeof(capped));
-                float actual_mhz = state.clock_mhz;
-                if (!frequency_apply_domains(
-                        rollback, false, &actual_mhz)) {
-                    blocked_generation = generation;
-                    frequency_task_set_active(false);
-                }
-            }
-            continue;
-        }
-
-        bool advancing = false;
-        for (size_t asic = 0; asic < BZM_BRINGUP_ASIC_COUNT; ++asic) {
-            for (size_t pll = 0; pll < BZM_BRINGUP_PLL_COUNT; ++pll) {
-                const float current = state.domain_clock_mhz[asic][pll];
-                if (!capped[asic][pll] &&
-                    current < target_mhz - 0.001f) {
+                    changing = true;
+                } else if (current < target_mhz - 0.001f) {
                     next[asic][pll] =
                         fminf(target_mhz,
                               current + BZM_FREQUENCY_RAMP_STEP_MHZ);
-                    candidates[asic][pll] = true;
-                    advancing = true;
+                    changing = true;
                 }
             }
         }
-        if (!advancing) {
-            ESP_LOGW(TAG,
-                     "BZM target %.3f MHz settled at %.3f MHz because one "
-                     "or more PLL domains reached their qualified limit",
-                     target_mhz, state.clock_mhz);
+        if (!changing) {
             frequency_task_set_active(false);
-            blocked_generation = generation;
             continue;
         }
 
-        float rollback[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
-        frequency_domains_copy(rollback, state.domain_clock_mhz);
         float actual_mhz = state.clock_mhz;
         if (!frequency_apply_domains(next, false, &actual_mhz)) {
             blocked_generation = generation;
             frequency_task_set_active(false);
             continue;
         }
-        if (!frequency_task_wait_for_work_replacement(generation)) {
-            qualify_current = false;
-            continue;
-        }
-
-        bool trial_capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
-        memcpy(trial_capped, capped, sizeof(trial_capped));
-        const bool all_passed = frequency_qualify_window(
-            next, candidates, generation, trial_capped, rollback);
-        if (!all_passed) {
-            uint32_t latest_generation = 0;
-            if (!frequency_task_snapshot(NULL, NULL, &latest_generation) ||
-                latest_generation != generation) {
-                continue;
-            }
-            memcpy(capped, trial_capped, sizeof(capped));
-            if (!frequency_apply_domains(
-                    rollback, false, &actual_mhz)) {
-                blocked_generation = generation;
-                frequency_task_set_active(false);
-            }
-        }
+        (void)frequency_task_wait_for_work_replacement(generation);
     }
 }
 
