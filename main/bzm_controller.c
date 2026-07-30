@@ -46,6 +46,7 @@
 #define BZM_ASIC_RESULT_TASK_PRIORITY 15U
 #define BZM_SAFETY_TASK_PRIORITY 18U
 #define BZM_TUNING_TASK_PRIORITY 16U
+#define BZM_FREQUENCY_TRANSITION_PROOF_TIMEOUT_MS 30000U
 
 _Static_assert(BZM_TUNING_TASK_PRIORITY > BZM_ASIC_RESULT_TASK_PRIORITY,
                "live tuning must not be starved by ASIC result processing");
@@ -99,6 +100,7 @@ typedef struct
     bzm_running_stats_t running_evidence_baseline;
     bzm_running_evidence_lifecycle_t running_evidence_lifecycle;
     bzm_running_evidence_result_t running_evidence;
+    bool running_evidence_frequency_transition;
     float frequency_target_mhz;
     float voltage_target_v;
     uint32_t frequency_target_generation;
@@ -139,6 +141,7 @@ static void reset_running_evidence_locked(bool requested)
     RUNTIME.running_evidence_monitoring = false;
     RUNTIME.running_evidence_started_at_ms = 0;
     RUNTIME.running_evidence_baseline = (bzm_running_stats_t){0};
+    RUNTIME.running_evidence_frequency_transition = false;
     bzm_running_evidence_lifecycle_init(&RUNTIME.running_evidence_lifecycle);
     RUNTIME.running_evidence = (bzm_running_evidence_result_t){
         .status = BZM_RUNNING_EVIDENCE_PENDING,
@@ -164,12 +167,32 @@ static bzm_running_evidence_result_t evaluate_running_evidence_locked(uint64_t c
         return RUNTIME.running_evidence;
     }
     bzm_running_evidence_config_t config = running_evidence_config();
+    if (RUNTIME.running_evidence_frequency_transition) {
+        config.recovery_timeout_ms =
+            BZM_FREQUENCY_TRANSITION_PROOF_TIMEOUT_MS;
+    }
     RUNTIME.running_evidence =
         bzm_running_evidence_track(&RUNTIME.running_evidence_lifecycle,
                                    &RUNTIME.running_evidence_baseline,
                                    &current, &config,
                                    RUNTIME.running_evidence_started_at_ms,
                                    current_ms);
+    if (RUNTIME.running_evidence_frequency_transition &&
+        RUNTIME.running_evidence.status == BZM_RUNNING_EVIDENCE_GOOD &&
+        RUNTIME.running_evidence.observed.dispatch_batches != 0 &&
+        RUNTIME.running_evidence.observed.dispatched_chip_engines >=
+            config.required_chip_engine_writes &&
+        RUNTIME.running_evidence.observed.mapped_results >=
+            config.minimum_valid_results &&
+        RUNTIME.running_evidence.observed.locally_valid_results >=
+            config.minimum_valid_results &&
+        !RUNTIME.running_evidence.observed.mapping_recovery_pending &&
+        !RUNTIME.running_evidence.observed.local_recovery_pending) {
+        RUNTIME.running_evidence_frequency_transition = false;
+        ESP_LOGI(TAG,
+                 "BZM live frequency transition established a full "
+                 "replacement dispatch and local nonce proof");
+    }
     if (RUNTIME.running_evidence.status == BZM_RUNNING_EVIDENCE_GOOD && RUNTIME.parser_realign_valid &&
         RUNTIME.parser_realign.recovering) {
         snprintf(RUNTIME.running_evidence.detail, sizeof(RUNTIME.running_evidence.detail),
@@ -1289,6 +1312,7 @@ static bool frequency_task_restart_running_evidence(void)
         &RUNTIME.running_evidence_lifecycle);
     RUNTIME.running_evidence_lifecycle.completed_once = true;
     RUNTIME.running_evidence_started_at_ms = now_ms();
+    RUNTIME.running_evidence_frequency_transition = true;
     RUNTIME.running_evidence = (bzm_running_evidence_result_t){
         .status = BZM_RUNNING_EVIDENCE_PENDING,
         .fault = BZM_RUNNING_EVIDENCE_FAULT_NONE,
