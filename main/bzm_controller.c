@@ -38,7 +38,6 @@
 #define BZM_CONTROLLER_WATCHDOG_MS 300000U
 #define BZM_FREQUENCY_TASK_POLL_MS 100U
 #define BZM_FREQUENCY_THERMAL_STABILIZE_MS 90000U
-#define BZM_FREQUENCY_WORK_REFRESH_SETTLE_MS 4000U
 #define BZM_FREQUENCY_QUALIFICATION_MIN_RESULTS 8U
 #define BZM_FREQUENCY_QUALIFICATION_MIN_EXPECTED_RATE 0.50f
 #define BZM_FREQUENCY_QUALIFICATION_MIN_CORRECT_RATIO 0.90f
@@ -1344,6 +1343,31 @@ static bool frequency_task_wait(uint32_t duration_ms, uint32_t generation)
     }
 }
 
+static bool frequency_task_wait_for_work_replacement(uint32_t generation)
+{
+    bool pending = false;
+    uint32_t replacement_generation = 0;
+    if (!BZM_work_replacement_snapshot(
+            &replacement_generation, &pending)) {
+        return false;
+    }
+    if (pending) {
+        ESP_LOGI(TAG,
+                 "Waiting for BZM work replacement generation %lu "
+                 "before frequency qualification",
+                 (unsigned long)replacement_generation);
+    }
+    while (pending) {
+        if (!frequency_task_wait(
+                BZM_FREQUENCY_TASK_POLL_MS, generation) ||
+            !BZM_work_replacement_snapshot(
+                &replacement_generation, &pending)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool frequency_domains_all_at(const bzm_bringup_state_t *state,
                                      float target_mhz)
 {
@@ -1453,31 +1477,57 @@ static bool frequency_qualify_window(
     bool capped[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
     float rollback_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT])
 {
-    bzm_frequency_domain_stats_t baseline = {0};
-    bzm_running_stats_t running_baseline = {0};
-    if (!BZM_frequency_domain_stats_snapshot(&baseline) ||
-        !BZM_running_stats_snapshot(&running_baseline)) {
-        ESP_LOGE(TAG, "BZM frequency qualification baseline unavailable");
-        return false;
-    }
-
     const uint32_t window_ms = bzm_frequency_qualification_window_ms(
         frequency_domains_minimum(frequency_mhz));
     if (window_ms == 0) return false;
-    ESP_LOGI(TAG, "Qualifying live clocks for %lu ms at %.3f MHz minimum",
-             (unsigned long)window_ms,
-             frequency_domains_minimum(frequency_mhz));
-    const uint64_t started_ms = now_ms();
-    if (!frequency_task_wait(window_ms, generation)) return false;
-    const uint32_t elapsed_ms = (uint32_t)(now_ms() - started_ms);
 
+    bzm_frequency_domain_stats_t baseline = {0};
     bzm_frequency_domain_stats_t current = {0};
+    bzm_running_stats_t running_baseline = {0};
     bzm_running_stats_t running_current = {0};
-    if (!BZM_frequency_domain_stats_snapshot(&current) ||
-        !BZM_running_stats_snapshot(&running_current) ||
-        running_current.mapping_rejections <
-            running_baseline.mapping_rejections) {
-        return false;
+    uint32_t replacement_generation = 0;
+    uint32_t replacement_generation_after = 0;
+    bool replacement_pending = false;
+    bool replacement_pending_after = false;
+    uint32_t elapsed_ms = 0;
+    for (;;) {
+        if (!frequency_task_wait_for_work_replacement(generation) ||
+            !BZM_work_replacement_snapshot(
+                &replacement_generation, &replacement_pending) ||
+            replacement_pending ||
+            !BZM_frequency_domain_stats_snapshot(&baseline) ||
+            !BZM_running_stats_snapshot(&running_baseline)) {
+            ESP_LOGE(TAG,
+                     "BZM frequency qualification baseline unavailable");
+            return false;
+        }
+
+        ESP_LOGI(TAG,
+                 "Qualifying live clocks for %lu ms at %.3f MHz minimum",
+                 (unsigned long)window_ms,
+                 frequency_domains_minimum(frequency_mhz));
+        const uint64_t started_ms = now_ms();
+        if (!frequency_task_wait(window_ms, generation)) return false;
+        elapsed_ms = (uint32_t)(now_ms() - started_ms);
+
+        if (!BZM_frequency_domain_stats_snapshot(&current) ||
+            !BZM_running_stats_snapshot(&running_current) ||
+            !BZM_work_replacement_snapshot(
+                &replacement_generation_after,
+                &replacement_pending_after) ||
+            running_current.mapping_rejections <
+                running_baseline.mapping_rejections) {
+            return false;
+        }
+        if (replacement_pending_after ||
+            replacement_generation_after != replacement_generation) {
+            ESP_LOGW(TAG,
+                     "BZM work replacement interrupted frequency "
+                     "qualification; retrying after generation %lu",
+                     (unsigned long)replacement_generation_after);
+            continue;
+        }
+        break;
     }
     const bool mapping_rejected =
         running_current.mapping_rejections !=
@@ -1655,8 +1705,7 @@ static void runtime_frequency_task(void *parameter)
             if (!frequency_apply_domains(next, false, &actual_mhz)) {
                 blocked_generation = generation;
                 frequency_task_set_active(false);
-            } else if (!frequency_task_wait(
-                           BZM_FREQUENCY_WORK_REFRESH_SETTLE_MS,
+            } else if (!frequency_task_wait_for_work_replacement(
                            generation)) {
                 qualify_current = false;
             }
@@ -1733,8 +1782,7 @@ static void runtime_frequency_task(void *parameter)
             frequency_task_set_active(false);
             continue;
         }
-        if (!frequency_task_wait(
-                BZM_FREQUENCY_WORK_REFRESH_SETTLE_MS, generation)) {
+        if (!frequency_task_wait_for_work_replacement(generation)) {
             qualify_current = false;
             continue;
         }

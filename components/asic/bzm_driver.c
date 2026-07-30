@@ -69,6 +69,7 @@ static atomic_uint_fast64_t
     FREQUENCY_DOMAIN_REJECTED[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
 static atomic_uint_fast32_t RUNNING_LOCAL_REJECTION_STREAK;
 static atomic_bool RUNNING_LOCAL_RECOVERY_PENDING;
+static atomic_uint_fast32_t WORK_REPLACEMENT_GENERATION;
 static asic_driver_health_t DRIVER_HEALTH;
 static uint16_t FAST_DISPATCH_REMAINING;
 
@@ -103,6 +104,15 @@ static void reset_result_dedup(void)
 {
     memset(RESULT_DEDUP, 0, sizeof(RESULT_DEDUP));
     RESULT_DEDUP_NEXT = 0;
+}
+
+static void start_fast_dispatch_locked(uint16_t remaining)
+{
+    FAST_DISPATCH_REMAINING = remaining;
+    if (remaining != 0) {
+        atomic_fetch_add_explicit(
+            &WORK_REPLACEMENT_GENERATION, 1, memory_order_relaxed);
+    }
 }
 
 static bool result_is_duplicate(const asic_result_t *result)
@@ -193,6 +203,8 @@ uint8_t BZM_init(GlobalState * state)
     }
     atomic_store_explicit(&RUNNING_LOCAL_REJECTION_STREAK, 0, memory_order_seq_cst);
     atomic_store_explicit(&RUNNING_LOCAL_RECOVERY_PENDING, false, memory_order_seq_cst);
+    atomic_store_explicit(
+        &WORK_REPLACEMENT_GENERATION, 0, memory_order_relaxed);
     reset_result_dedup();
 
     uint16_t engine_count = state->DEVICE_CONFIG.family.asic.core_count;
@@ -240,7 +252,7 @@ uint8_t BZM_init(GlobalState * state)
 
     pthread_mutex_lock(&REACTOR_LOCK);
     INITIALIZED = bzm_reactor_init(&REACTOR, &state->asic_job_store, &config, &BZM_SERIAL_TRANSPORT_OPS, &TRANSPORT);
-    FAST_DISPATCH_REMAINING = INITIALIZED ? engine_count : 0;
+    start_fast_dispatch_locked(INITIALIZED ? engine_count : 0);
     pthread_mutex_unlock(&REACTOR_LOCK);
     if (!INITIALIZED)
         return 0;
@@ -275,7 +287,7 @@ bool BZM_send_work(GlobalState * state, const mining_template_t * template)
             return false;
         }
         reset_result_dedup();
-        FAST_DISPATCH_REMAINING = REACTOR.config.engine_count;
+        start_fast_dispatch_locked(REACTOR.config.engine_count);
         ESP_LOGI(TAG,
                  "BZM independent engine rotation starting; dispatch interval %.0f ms",
                  BZM_FAST_JOB_INTERVAL_MS);
@@ -339,8 +351,8 @@ bool BZM_clear_work(GlobalState * state)
     bool cleared = !INITIALIZED || bzm_reactor_clear_work(&REACTOR);
     if (cleared) {
         reset_result_dedup();
-        FAST_DISPATCH_REMAINING = INITIALIZED
-            ? REACTOR.config.engine_count : 0;
+        start_fast_dispatch_locked(
+            INITIALIZED ? REACTOR.config.engine_count : 0);
     }
     pthread_mutex_unlock(&REACTOR_LOCK);
     if (!cleared) {
@@ -549,6 +561,17 @@ bool BZM_frequency_domain_stats_snapshot(
                 memory_order_relaxed);
         }
     }
+    return true;
+}
+
+bool BZM_work_replacement_snapshot(uint32_t *generation, bool *pending)
+{
+    if (generation == NULL || pending == NULL) return false;
+    pthread_mutex_lock(&REACTOR_LOCK);
+    *pending = INITIALIZED && FAST_DISPATCH_REMAINING != 0;
+    pthread_mutex_unlock(&REACTOR_LOCK);
+    *generation = (uint32_t)atomic_load_explicit(
+        &WORK_REPLACEMENT_GENERATION, memory_order_relaxed);
     return true;
 }
 
@@ -1397,7 +1420,7 @@ bzm_bringup_outcome_t BZM_staged_frequency_domains_step_live(
         /* Keep mining live; replace work that crossed the PLL transition. */
         bzm_serial_discard_pending_results(&TRANSPORT);
         reset_result_dedup();
-        FAST_DISPATCH_REMAINING = REACTOR.config.engine_count;
+        start_fast_dispatch_locked(REACTOR.config.engine_count);
     }
     if (actual_mhz != NULL) *actual_mhz = STAGED_BRINGUP.clock_mhz;
     pthread_mutex_unlock(&REACTOR_LOCK);

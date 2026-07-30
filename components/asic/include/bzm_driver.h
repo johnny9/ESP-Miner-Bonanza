@@ -41,6 +41,7 @@ void BZM_record_local_result(GlobalState *state, uint8_t asic_index,
                              double nonce_difficulty);
 bool BZM_frequency_domain_stats_snapshot(
     bzm_frequency_domain_stats_t *stats);
+bool BZM_work_replacement_snapshot(uint32_t *generation, bool *pending);
 
 /* Thread-safe copies of the singleton transport's receive diagnostics. */
 bool BZM_get_telemetry(uint8_t asic_id, bzm_telemetry_sample_t * sample);
