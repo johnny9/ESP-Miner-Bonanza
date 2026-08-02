@@ -853,7 +853,7 @@ static bzm_bringup_outcome_t program_live_broadcast_shortcut(
     return BZM_BRINGUP_GOOD;
 }
 
-bzm_bringup_outcome_t bzm_bringup_live_frequency_domains_step(
+static bzm_bringup_outcome_t live_frequency_domains_step_once(
     bzm_bringup_state_t *state, const bzm_bringup_ops_t *ops,
     void *ops_context,
     const float
@@ -962,6 +962,42 @@ bzm_bringup_outcome_t bzm_bringup_live_frequency_domains_step(
         (uint32_t)lroundf(state->clock_mhz),
         (uint32_t)lroundf(state->clock_mhz),
         BZM_BRINGUP_ASIC_COUNT * BZM_BRINGUP_PLL_COUNT);
+}
+
+bzm_bringup_outcome_t bzm_bringup_live_frequency_domains_step(
+    bzm_bringup_state_t *state, const bzm_bringup_ops_t *ops,
+    void *ops_context,
+    const float
+        target_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
+    bool allow_initial_jump, bzm_bringup_report_t *report)
+{
+    enum {
+        LIVE_FREQUENCY_TRANSIENT_ATTEMPTS = 3,
+        LIVE_FREQUENCY_RETRY_DELAY_MS = 10,
+    };
+    bzm_bringup_report_t local_report = {0};
+    bzm_bringup_report_t *attempt_report =
+        report == NULL ? &local_report : report;
+
+    for (uint8_t attempt = 0;
+         attempt < LIVE_FREQUENCY_TRANSIENT_ATTEMPTS; ++attempt) {
+        bzm_bringup_outcome_t outcome =
+            live_frequency_domains_step_once(
+                state, ops, ops_context, target_mhz, allow_initial_jump,
+                attempt_report);
+        const bool transient = outcome == BZM_BRINGUP_BAD &&
+            (attempt_report->reason == BZM_BRINGUP_REASON_IO ||
+             attempt_report->reason ==
+                 BZM_BRINGUP_REASON_REGISTER_READBACK);
+        if (!transient ||
+            attempt + 1 == LIVE_FREQUENCY_TRANSIENT_ATTEMPTS) {
+            return outcome;
+        }
+        if (ops != NULL && ops->delay_ms != NULL) {
+            ops->delay_ms(ops_context, LIVE_FREQUENCY_RETRY_DELAY_MS);
+        }
+    }
+    return BZM_BRINGUP_BAD;
 }
 
 static bool topology_is_exact(void)

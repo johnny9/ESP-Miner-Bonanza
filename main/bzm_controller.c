@@ -12,6 +12,7 @@
 #include "bzm_driver.h"
 #include "bzm_frequency.h"
 #include "bzm_lease_guard.h"
+#include "bzm_overheat_recovery.h"
 #include "bzm_power.h"
 #include "bzm_running_evidence.h"
 #include "bzm_runtime_health.h"
@@ -70,6 +71,7 @@ typedef struct
     TaskHandle_t statistics_task_handle;
     TaskHandle_t protocol_task_handle;
     TaskHandle_t frequency_task_handle;
+    atomic_bool pause_requested;
     atomic_bool dispatch_enabled;
     atomic_uint_fast64_t dispatch_deadline_ms;
     atomic_uint_fast64_t execution_deadline_ms;
@@ -101,6 +103,13 @@ typedef struct
     bool frequency_ramp_active;
     float rail_command_v;
     uint16_t fan_rpm;
+    bzm_overheat_recovery_t overheat_recovery;
+    bzm_overheat_recovery_status_t overheat_recovery_status;
+    uint64_t overheat_last_sampled_at_ms;
+    bool overheat_settings_queued;
+    bool overheat_recovery_failed;
+    uint16_t overheat_reduced_voltage_mv;
+    float overheat_reduced_frequency_mhz;
 } bzm_runtime_state_t;
 
 static const char * TAG = "bzm_controller";
@@ -115,6 +124,12 @@ static void runtime_frequency_task(void *parameter);
 static bool runtime_is_holding_locked(void);
 static bzm_runtime_health_result_t sample_runtime_health_locked(void);
 static void publish_driver_health_locked(asic_driver_lifecycle_t lifecycle);
+static bool recoverable_overheat_fault(
+    bzm_runtime_health_fault_t fault);
+static void begin_overheat_recovery_locked(
+    bzm_runtime_health_fault_t fault, const char *detail,
+    uint64_t current_ms);
+static void process_overheat_recovery_locked(uint64_t current_ms);
 
 static bzm_running_evidence_config_t running_evidence_config(void)
 {
@@ -302,7 +317,17 @@ static void publish_driver_health_locked(asic_driver_lifecycle_t lifecycle)
         snprintf(health.bridge_version, sizeof(health.bridge_version), "%s",
                  RUNTIME.bridge_info.version);
     }
-    if (RUNTIME.supervisor.fault_latched) {
+    if (RUNTIME.overheat_recovery.active) {
+        health.last_fault_code = RUNTIME.supervisor.fault_code;
+        snprintf(health.last_fault, sizeof(health.last_fault), "%s",
+                 RUNTIME.supervisor.fault_detail);
+        health.user_action_required = false;
+        snprintf(health.recommended_action,
+                 sizeof(health.recommended_action),
+                 "Cooling at 100%% fan; automatic reduced-setting recovery is %s",
+                 bzm_overheat_recovery_status_name(
+                     RUNTIME.overheat_recovery_status));
+    } else if (RUNTIME.supervisor.fault_latched) {
         health.last_fault_code = RUNTIME.supervisor.fault_code;
         snprintf(health.last_fault, sizeof(health.last_fault), "%s",
                  RUNTIME.supervisor.fault_detail);
@@ -327,7 +352,11 @@ static void close_dispatch_locked(void)
 static bool runtime_dispatch_authorizer(void * context)
 {
     bzm_runtime_state_t * runtime = context;
-    if (runtime == NULL || !atomic_load_explicit(&runtime->dispatch_enabled, memory_order_acquire)) {
+    if (runtime == NULL ||
+        atomic_load_explicit(&runtime->pause_requested,
+                             memory_order_acquire) ||
+        !atomic_load_explicit(&runtime->dispatch_enabled,
+                              memory_order_acquire)) {
         return false;
     }
     uint64_t deadline = atomic_load_explicit(&runtime->dispatch_deadline_ms, memory_order_acquire);
@@ -436,8 +465,14 @@ static bool start_production_mining_locked(void)
         bzm_runtime_health_result_t health = sample_runtime_health_locked();
         if (health.status == BZM_RUNTIME_HEALTH_BAD) {
             close_dispatch_locked();
-            (void)bzm_supervisor_latch_fault(
-                &RUNTIME.supervisor, (uint32_t)health.fault, health.detail);
+            if (recoverable_overheat_fault(health.fault)) {
+                begin_overheat_recovery_locked(
+                    health.fault, health.detail, now_ms());
+            } else {
+                (void)bzm_supervisor_latch_fault(
+                    &RUNTIME.supervisor, (uint32_t)health.fault,
+                    health.detail);
+            }
             completed = false;
         }
     }
@@ -479,6 +514,8 @@ static bzm_runtime_health_result_t sample_runtime_health_locked(void)
             RUNTIME.supervisor.config.production_mode && !RUNTIME.supervisor.config.board_managed_safety &&
             RUNTIME.supervisor.report.reached_stage >= BZM_STAGE_POWER_RAIL,
         .fan_min_rpm = CONFIG_BZM_1002_FAN_MIN_RPM,
+        .require_fan_full =
+            RUNTIME.supervisor.report.reached_stage < BZM_STAGE_RUNNING,
         .tps_bounds =
             {
                 .vin_min_v = BZM_TPS546_BIRDS_PROFILE.vin_off,
@@ -494,7 +531,8 @@ static bzm_runtime_health_result_t sample_runtime_health_locked(void)
                 .iout_min_a = -1.0f,
                 .iout_max_a = BZM_TPS546_BIRDS_PROFILE.iout_oc_warn_limit,
                 .temperature_min_c = -40.0f,
-                .temperature_max_c = (float) BZM_TPS546_BIRDS_PROFILE.ot_warn_limit - 0.1f,
+                .temperature_max_c =
+                    (float)BZM_TPS546_BIRDS_PROFILE.ot_warn_limit,
             },
         .telemetry_bounds = telemetry_policy().bounds,
         .telemetry_now_us = (uint64_t) esp_timer_get_time(),
@@ -512,12 +550,21 @@ static bzm_runtime_health_result_t sample_runtime_health_locked(void)
             input.bridge_status = status;
             RUNTIME.bridge_status = status;
             RUNTIME.bridge_status_valid = true;
+            if (RUNTIME.global_state != NULL) {
+                RUNTIME.global_state->POWER_MANAGEMENT_MODULE.fan_perc =
+                    status.fan_percent;
+            }
         } else {
             RUNTIME.bridge_status_valid = false;
         }
         input.fan_tach_available = BZM_bridge_get_fan_rpm(&input.fan_rpm) == ESP_OK;
-        if (input.fan_tach_available)
+        if (input.fan_tach_available) {
             RUNTIME.fan_rpm = input.fan_rpm;
+            if (RUNTIME.global_state != NULL) {
+                RUNTIME.global_state->POWER_MANAGEMENT_MODULE.fan_rpm =
+                    input.fan_rpm;
+            }
+        }
         bzm_bridge_rx_stats_t rx_stats;
         RUNTIME.bridge_rx_stats_valid =
             BZM_bridge_get_rx_stats(&rx_stats) == ESP_OK && rx_stats.valid;
@@ -708,7 +755,8 @@ static bool bridge_control_contract_compatible(
     const uint16_t required = BZM_BRIDGE_SAFETY_CAP_5V_CONTROL |
                               BZM_BRIDGE_SAFETY_CAP_ASIC_RESET_CONTROL |
                               BZM_BRIDGE_SAFETY_CAP_FAN_FORCE_FULL |
-                              BZM_BRIDGE_SAFETY_CAP_TRIP_INPUT_SAMPLED;
+                              BZM_BRIDGE_SAFETY_CAP_TRIP_INPUT_SAMPLED |
+                              BZM_BRIDGE_SAFETY_CAP_FAN_CONTROLLED_SPEED;
     return bridge_status_runtime_good(status) &&
            status->stage == BZM_BRIDGE_SAFETY_STAGE_TRIP_LATCH &&
            (status->capabilities & required) == required;
@@ -899,7 +947,7 @@ static bzm_stage_result_t run_power_rail(GlobalState * state)
         !isfinite(power.read_vin) || !isfinite(power.read_vout) || !isfinite(power.read_iout) ||
         power.read_vin < BZM_TPS546_BIRDS_PROFILE.vin_off || power.read_vout < 2.65f || power.read_vout > 2.95f ||
         power.read_iout < -1.0f || power.read_iout > BZM_TPS546_BIRDS_PROFILE.iout_oc_warn_limit ||
-        power.read_temp1 >= BZM_TPS546_BIRDS_PROFILE.ot_warn_limit || power.status_word != 0) {
+        power.read_temp1 > BZM_TPS546_BIRDS_PROFILE.ot_warn_limit || power.status_word != 0) {
         char detail[BZM_VALIDATION_DETAIL_LENGTH];
         snprintf(detail, sizeof(detail),
                  "TPS stage-2 bad: PGOOD=%u OP=0x%02x STATUS=0x%04x CMD=%.3fV RAW=0x%04x EXACT=%u VIN=%.2fV VOUT=%.3fV IOUT=%.2fA TEMP=%dC",
@@ -1136,24 +1184,30 @@ static float expected_bzm_hashrate_ghs(const GlobalState *state,
            state->DEVICE_CONFIG.family.asic_count * 4.0f / 3.0f / 1000.0f;
 }
 
+static bool configured_tuning_target(
+    bzm_frequency_target_t *frequency_target, float *voltage_target_v)
+{
+    if (frequency_target == NULL || voltage_target_v == NULL) return false;
+
+    const float requested_mhz =
+        nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
+    const uint16_t requested_voltage_mv =
+        nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
+    return bzm_frequency_request_is_valid(requested_mhz) &&
+           bzm_frequency_resolve_target(requested_mhz, frequency_target) &&
+           bzm_power_resolve_user_voltage(requested_voltage_mv,
+                                          voltage_target_v);
+}
+
 static bool frequency_task_snapshot(float *target_mhz,
                                     float *target_voltage_v,
                                     uint32_t *generation)
 {
     pthread_mutex_lock(&RUNTIME.lock);
     bzm_frequency_target_t frequency_target;
-    const float requested_mhz =
-        nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
-    const uint16_t requested_voltage_mv =
-        nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
     float requested_voltage_v = 0.0f;
-    const bool frequency_valid =
-        bzm_frequency_request_is_valid(requested_mhz) &&
-        bzm_frequency_resolve_target(requested_mhz, &frequency_target);
-    const bool voltage_valid =
-        bzm_power_resolve_user_voltage(
-            requested_voltage_mv, &requested_voltage_v);
-    const bool target_valid = frequency_valid && voltage_valid;
+    const bool target_valid = configured_tuning_target(
+        &frequency_target, &requested_voltage_v);
     const bool target_changed =
         target_valid &&
         (fabsf(RUNTIME.frequency_target_mhz -
@@ -1188,6 +1242,8 @@ static bool frequency_task_snapshot(float *target_mhz,
         RUNTIME.running_evidence.status == BZM_RUNNING_EVIDENCE_GOOD;
     const bool ready =
         target_valid && RUNTIME.initialized && RUNTIME.global_state != NULL &&
+        !atomic_load_explicit(&RUNTIME.pause_requested,
+                              memory_order_acquire) &&
         RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_MINING &&
         RUNTIME.supervisor.report.state == BZM_VALIDATION_HOLDING &&
         !RUNTIME.supervisor.fault_latched && evidence_ready &&
@@ -1204,10 +1260,12 @@ static bool frequency_task_snapshot(float *target_mhz,
     return ready;
 }
 
-static void frequency_task_set_active(bool active)
+static void frequency_task_set_active(bool active, uint32_t generation)
 {
     pthread_mutex_lock(&RUNTIME.lock);
-    RUNTIME.frequency_ramp_active = active;
+    if (RUNTIME.frequency_target_generation == generation) {
+        RUNTIME.frequency_ramp_active = active;
+    }
     pthread_mutex_unlock(&RUNTIME.lock);
 }
 
@@ -1224,6 +1282,8 @@ static bool frequency_apply_voltage(float target_v, uint32_t generation)
     pthread_mutex_lock(&RUNTIME.lock);
     const bool authorized =
         RUNTIME.initialized && RUNTIME.global_state != NULL &&
+        !atomic_load_explicit(&RUNTIME.pause_requested,
+                              memory_order_acquire) &&
         RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_MINING &&
         RUNTIME.supervisor.report.state == BZM_VALIDATION_HOLDING &&
         !RUNTIME.supervisor.fault_latched &&
@@ -1249,6 +1309,14 @@ static bool frequency_apply_voltage(float target_v, uint32_t generation)
     const bool applied =
         VCORE_bzm_set_runtime_voltage(RUNTIME.global_state, target_v) ==
         ESP_OK;
+    if (atomic_load_explicit(&RUNTIME.pause_requested,
+                             memory_order_acquire)) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        ESP_LOGI(TAG,
+                 "BZM live voltage generation %lu was cancelled",
+                 (unsigned long)generation);
+        return false;
+    }
     if (!applied) {
         char detail[BZM_VALIDATION_DETAIL_LENGTH];
         snprintf(detail, sizeof(detail),
@@ -1272,49 +1340,6 @@ static bool frequency_apply_voltage(float target_v, uint32_t generation)
              "BZM live mining rail reached user target %.3f V "
              "for generation %lu",
              target_v, (unsigned long)generation);
-    return true;
-}
-
-static void frequency_task_publish_actual(float actual_mhz)
-{
-    pthread_mutex_lock(&RUNTIME.lock);
-    if (RUNTIME.global_state != NULL) {
-        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.actual_frequency =
-            actual_mhz;
-        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate =
-            expected_bzm_hashrate_ghs(
-                RUNTIME.global_state, RUNTIME.frequency_target_mhz);
-    }
-    bzm_pll_lock_confirmation_init(&RUNTIME.pll_lock_confirmation);
-    RUNTIME.health_sampled_at_ms = 0;
-    pthread_mutex_unlock(&RUNTIME.lock);
-}
-
-static bool frequency_task_restart_running_evidence(void)
-{
-    bzm_running_stats_t baseline = {0};
-    if (!BZM_running_stats_snapshot(&baseline)) return false;
-
-    pthread_mutex_lock(&RUNTIME.lock);
-    if (!RUNTIME.running_evidence_monitoring ||
-        !RUNTIME.frequency_ramp_active) {
-        pthread_mutex_unlock(&RUNTIME.lock);
-        return false;
-    }
-    RUNTIME.running_evidence_baseline = baseline;
-    bzm_running_evidence_lifecycle_init(
-        &RUNTIME.running_evidence_lifecycle);
-    RUNTIME.running_evidence_lifecycle.completed_once = true;
-    RUNTIME.running_evidence_started_at_ms = now_ms();
-    RUNTIME.running_evidence_frequency_transition = true;
-    RUNTIME.running_evidence = (bzm_running_evidence_result_t){
-        .status = BZM_RUNNING_EVIDENCE_PENDING,
-        .fault = BZM_RUNNING_EVIDENCE_FAULT_NONE,
-    };
-    snprintf(RUNTIME.running_evidence.detail,
-             sizeof(RUNTIME.running_evidence.detail),
-             "frequency transition: replacing engine work at the new PLL rate");
-    pthread_mutex_unlock(&RUNTIME.lock);
     return true;
 }
 
@@ -1387,26 +1412,48 @@ static void frequency_domains_copy(
                BZM_BRINGUP_PLL_COUNT);
 }
 
-static void frequency_task_latch_fault(const char *detail)
+static bool frequency_transition_authorized_locked(uint32_t generation)
 {
-    pthread_mutex_lock(&RUNTIME.lock);
-    close_dispatch_locked();
-    (void)bzm_supervisor_latch_fault(
-        &RUNTIME.supervisor, 0x100a,
-        detail != NULL ? detail : "BZM live frequency transition failed");
-    sync_dispatch_locked();
-    pthread_mutex_unlock(&RUNTIME.lock);
+    return RUNTIME.initialized && RUNTIME.global_state != NULL &&
+           !atomic_load_explicit(&RUNTIME.pause_requested,
+                                 memory_order_acquire) &&
+           RUNTIME.running_evidence_monitoring &&
+           RUNTIME.frequency_ramp_active &&
+           RUNTIME.frequency_target_generation == generation &&
+           RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_MINING &&
+           RUNTIME.supervisor.report.state == BZM_VALIDATION_HOLDING &&
+           !RUNTIME.supervisor.fault_latched &&
+           bzm_supervisor_dispatch_allowed(&RUNTIME.supervisor, now_ms());
 }
 
 static bool frequency_apply_domains(
     const float
         frequency_mhz[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT],
-    bool allow_initial_jump, float *actual_mhz)
+    bool allow_initial_jump, uint32_t generation, float *actual_mhz)
 {
     bzm_bringup_report_t report = {0};
     const bzm_bringup_outcome_t outcome =
         BZM_staged_frequency_domains_step_live(
             frequency_mhz, allow_initial_jump, &report, actual_mhz);
+
+    bzm_running_stats_t baseline = {0};
+    const bool baseline_valid =
+        outcome != BZM_BRINGUP_GOOD ||
+        BZM_running_stats_snapshot(&baseline);
+
+    /* A pause can arrive while the bounded PLL operation owns the driver
+     * reactor. It then waits for that operation and forces safe-off. Commit
+     * no stale clock/evidence state, and latch no false transition fault,
+     * unless this exact tuning generation still owns a healthy mining lease. */
+    pthread_mutex_lock(&RUNTIME.lock);
+    if (!frequency_transition_authorized_locked(generation)) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        ESP_LOGI(TAG,
+                 "BZM live frequency generation %lu was cancelled",
+                 (unsigned long)generation);
+        return false;
+    }
+
     if (outcome != BZM_BRINGUP_GOOD) {
         ESP_LOGE(TAG,
                  "Live domain-frequency transaction failed: reason=%s "
@@ -1419,18 +1466,47 @@ static bool frequency_apply_domains(
             "live PLL transaction failed: %s ASIC=0x%02x PLL=%u",
             bzm_bringup_reason_name(report.reason), report.asic_id,
             report.pll_index);
-        frequency_task_latch_fault(detail);
+        close_dispatch_locked();
+        (void)bzm_supervisor_latch_fault(
+            &RUNTIME.supervisor, 0x100a, detail);
+        sync_dispatch_locked();
+        pthread_mutex_unlock(&RUNTIME.lock);
         return false;
     }
-    frequency_task_publish_actual(
-        actual_mhz == NULL ? 0.0f : *actual_mhz);
-    if (!frequency_task_restart_running_evidence()) {
+
+    if (!baseline_valid) {
         ESP_LOGE(TAG,
                  "Unable to restart RUNNING evidence after work refresh");
-        frequency_task_latch_fault(
+        close_dispatch_locked();
+        (void)bzm_supervisor_latch_fault(
+            &RUNTIME.supervisor, 0x100a,
             "live PLL transition could not restart mining evidence");
+        sync_dispatch_locked();
+        pthread_mutex_unlock(&RUNTIME.lock);
         return false;
     }
+
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.actual_frequency =
+        actual_mhz == NULL ? 0.0f : *actual_mhz;
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate =
+        expected_bzm_hashrate_ghs(
+            RUNTIME.global_state, RUNTIME.frequency_target_mhz);
+    bzm_pll_lock_confirmation_init(&RUNTIME.pll_lock_confirmation);
+    RUNTIME.health_sampled_at_ms = 0;
+    RUNTIME.running_evidence_baseline = baseline;
+    bzm_running_evidence_lifecycle_init(
+        &RUNTIME.running_evidence_lifecycle);
+    RUNTIME.running_evidence_lifecycle.completed_once = true;
+    RUNTIME.running_evidence_started_at_ms = now_ms();
+    RUNTIME.running_evidence_frequency_transition = true;
+    RUNTIME.running_evidence = (bzm_running_evidence_result_t){
+        .status = BZM_RUNNING_EVIDENCE_PENDING,
+        .fault = BZM_RUNNING_EVIDENCE_FAULT_NONE,
+    };
+    snprintf(RUNTIME.running_evidence.detail,
+             sizeof(RUNTIME.running_evidence.detail),
+             "frequency transition: replacing engine work at the new PLL rate");
+    pthread_mutex_unlock(&RUNTIME.lock);
     return true;
 }
 
@@ -1461,10 +1537,10 @@ static void runtime_frequency_task(void *parameter)
         const float rail_command_v = frequency_task_rail_command();
         if (target_voltage_v >
             rail_command_v + BZM_TPS546_VOUT_READBACK_TOLERANCE_V) {
-            frequency_task_set_active(true);
+            frequency_task_set_active(true, generation);
             if (!frequency_apply_voltage(target_voltage_v, generation)) {
                 blocked_generation = generation;
-                frequency_task_set_active(false);
+                frequency_task_set_active(false, generation);
             }
             continue;
         }
@@ -1474,17 +1550,17 @@ static void runtime_frequency_task(void *parameter)
                 rail_command_v -
                     BZM_TPS546_VOUT_READBACK_TOLERANCE_V) {
                 /* Lower the rail only after the lower clock is reached. */
-                frequency_task_set_active(true);
+                frequency_task_set_active(true, generation);
                 if (!frequency_apply_voltage(target_voltage_v, generation)) {
                     blocked_generation = generation;
-                    frequency_task_set_active(false);
+                    frequency_task_set_active(false, generation);
                 }
                 continue;
             }
-            frequency_task_set_active(false);
+            frequency_task_set_active(false, generation);
             continue;
         }
-        frequency_task_set_active(true);
+        frequency_task_set_active(true, generation);
 
         if (target_mhz > BZM_FREQUENCY_POWER_ON_MHZ + 0.001f &&
             frequency_domains_all_at(
@@ -1504,9 +1580,9 @@ static void runtime_frequency_task(void *parameter)
                 }
                 float actual_mhz = state.clock_mhz;
                 if (!frequency_apply_domains(
-                        initial, true, &actual_mhz)) {
+                        initial, true, generation, &actual_mhz)) {
                     blocked_generation = generation;
-                    frequency_task_set_active(false);
+                    frequency_task_set_active(false, generation);
                     continue;
                 }
                 ESP_LOGI(TAG,
@@ -1538,18 +1614,284 @@ static void runtime_frequency_task(void *parameter)
             }
         }
         if (!changing) {
-            frequency_task_set_active(false);
+            frequency_task_set_active(false, generation);
             continue;
         }
 
         float actual_mhz = state.clock_mhz;
-        if (!frequency_apply_domains(next, false, &actual_mhz)) {
+        if (!frequency_apply_domains(
+                next, false, generation, &actual_mhz)) {
             blocked_generation = generation;
-            frequency_task_set_active(false);
+            frequency_task_set_active(false, generation);
             continue;
         }
         (void)frequency_task_wait_for_work_replacement(generation);
     }
+}
+
+static bool recoverable_overheat_fault(bzm_runtime_health_fault_t fault)
+{
+    return fault == BZM_RUNTIME_HEALTH_FAULT_ASIC_OVERHEAT ||
+           fault == BZM_RUNTIME_HEALTH_FAULT_TPS_OVERHEAT;
+}
+
+static void begin_overheat_recovery_locked(
+    bzm_runtime_health_fault_t fault, const char *detail,
+    uint64_t current_ms)
+{
+    if (RUNTIME.overheat_recovery.active ||
+        !recoverable_overheat_fault(fault) ||
+        RUNTIME.global_state == NULL) {
+        return;
+    }
+
+    const uint16_t original_voltage_mv = (uint16_t)lroundf(
+        RUNTIME.voltage_target_v * 1000.0f);
+    if (!bzm_overheat_recovery_begin(
+            &RUNTIME.overheat_recovery, current_ms,
+            original_voltage_mv, RUNTIME.frequency_target_mhz)) {
+        ESP_LOGE(TAG,
+                 "Overheat recovery could not capture the active tuning target");
+        return;
+    }
+
+    RUNTIME.overheat_recovery_status =
+        BZM_OVERHEAT_RECOVERY_WAIT_OFF_SAFE;
+    RUNTIME.overheat_last_sampled_at_ms = 0;
+    RUNTIME.overheat_settings_queued = false;
+    RUNTIME.overheat_recovery_failed = false;
+    atomic_store_explicit(&RUNTIME.pause_requested, true,
+                          memory_order_release);
+    close_dispatch_locked();
+    RUNTIME.frequency_ramp_active = false;
+    ++RUNTIME.frequency_target_generation;
+    reset_running_evidence_locked(false);
+
+    /* These are the same persistent fan and mode changes made by upstream.
+     * The Bonanza fan is also forced by the bridge-safe state, so an NVS task
+     * delay cannot weaken cooling. */
+    nvs_config_set_bool(NVS_CONFIG_AUTO_FAN_SPEED, false);
+    nvs_config_set_u16(NVS_CONFIG_MANUAL_FAN_SPEED, 100);
+    nvs_config_set_bool(NVS_CONFIG_OVERHEAT_MODE, true);
+    RUNTIME.global_state->SYSTEM_MODULE.overheat_mode = true;
+    RUNTIME.global_state->SYSTEM_MODULE.mining_paused = true;
+    RUNTIME.global_state->ASIC_initalized = false;
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate = 0.0f;
+
+    ESP_LOGE(TAG,
+             "OVERHEAT: %s; forcing OFF_SAFE and beginning automatic recovery",
+             detail != NULL ? detail : "thermal threshold exceeded");
+    (void)bzm_supervisor_latch_fault(
+        &RUNTIME.supervisor, (uint32_t)fault,
+        detail != NULL ? detail : "Bonanza overheat threshold exceeded");
+    RUNTIME.rail_command_v = BZM_TPS546_FIXED_VOUT_V;
+}
+
+static void fail_overheat_recovery_locked(const char *detail)
+{
+    RUNTIME.overheat_recovery.active = false;
+    RUNTIME.overheat_recovery_failed = true;
+    RUNTIME.overheat_recovery_status = BZM_OVERHEAT_RECOVERY_INVALID;
+    atomic_store_explicit(&RUNTIME.pause_requested, true,
+                          memory_order_release);
+    if (RUNTIME.global_state != NULL) {
+        RUNTIME.global_state->SYSTEM_MODULE.overheat_mode = true;
+        RUNTIME.global_state->SYSTEM_MODULE.mining_paused = true;
+        RUNTIME.global_state->ASIC_initalized = false;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate =
+            0.0f;
+    }
+    nvs_config_set_bool(NVS_CONFIG_OVERHEAT_MODE, true);
+    if (!RUNTIME.supervisor.fault_latched) {
+        (void)bzm_supervisor_latch_fault(
+            &RUNTIME.supervisor, 0x100b,
+            detail != NULL ? detail : "Bonanza overheat recovery failed");
+    }
+    ESP_LOGE(TAG, "Overheat recovery failed closed: %s",
+             detail != NULL ? detail : "invalid recovery state");
+}
+
+static void process_overheat_recovery_locked(uint64_t current_ms)
+{
+    if (!RUNTIME.overheat_recovery.active ||
+        RUNTIME.global_state == NULL) {
+        return;
+    }
+
+    RUNTIME.global_state->SYSTEM_MODULE.overheat_mode = true;
+    RUNTIME.global_state->SYSTEM_MODULE.mining_paused = true;
+    RUNTIME.global_state->ASIC_initalized = false;
+    close_dispatch_locked();
+    if (!nvs_config_get_bool(NVS_CONFIG_OVERHEAT_MODE)) {
+        nvs_config_set_bool(NVS_CONFIG_OVERHEAT_MODE, true);
+    }
+
+    if (RUNTIME.overheat_settings_queued) {
+        /* A persisted overheat marker is processed before Wi-Fi/Stratum boot
+         * finishes. Cooling and NVS reduction may complete early, but the
+         * production task stack cannot be restarted until main declares it
+         * ready. */
+        if (!RUNTIME.mining_stack_ready) {
+            return;
+        }
+        const uint16_t saved_voltage_mv =
+            nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
+        const float saved_frequency_mhz =
+            nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
+        if (saved_voltage_mv != RUNTIME.overheat_reduced_voltage_mv ||
+            fabsf(saved_frequency_mhz -
+                  RUNTIME.overheat_reduced_frequency_mhz) >= 0.001f) {
+            return;
+        }
+
+        /* Clearing a supervisor latch requires a new, explicit OFF_SAFE run,
+         * even though fault latching already forced the hardware safe. */
+        if (!bzm_supervisor_safe_off_verified(&RUNTIME.supervisor) ||
+            RUNTIME.supervisor.report.requested_stage !=
+                BZM_STAGE_OFF_SAFE) {
+            if (!bzm_supervisor_request_validation(
+                    &RUNTIME.supervisor, BZM_STAGE_OFF_SAFE,
+                    false, false, 0, current_ms)) {
+                return;
+            }
+        }
+        if (RUNTIME.supervisor.fault_latched &&
+            !bzm_supervisor_clear_fault(&RUNTIME.supervisor)) {
+            return;
+        }
+
+        bzm_frequency_target_t reduced_frequency;
+        float reduced_voltage_v = 0.0f;
+        if (!bzm_frequency_resolve_target(
+                RUNTIME.overheat_reduced_frequency_mhz,
+                &reduced_frequency) ||
+            !bzm_power_resolve_user_voltage(
+                RUNTIME.overheat_reduced_voltage_mv,
+                &reduced_voltage_v)) {
+            fail_overheat_recovery_locked(
+                "reduced Bonanza target is outside qualified limits");
+            return;
+        }
+
+        RUNTIME.frequency_target_mhz = reduced_frequency.actual_mhz;
+        RUNTIME.voltage_target_v = reduced_voltage_v;
+        ++RUNTIME.frequency_target_generation;
+        RUNTIME.frequency_ramp_active =
+            fabsf(reduced_frequency.actual_mhz -
+                  BZM_FREQUENCY_POWER_ON_MHZ) >= 0.001f ||
+            fabsf(reduced_voltage_v - BZM_TPS546_FIXED_VOUT_V) >=
+                0.001f;
+        RUNTIME.rail_command_v = BZM_TPS546_FIXED_VOUT_V;
+        RUNTIME.health_sampled_at_ms = 0;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.frequency_value =
+            reduced_frequency.actual_mhz;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.actual_frequency =
+            0.0f;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate =
+            expected_bzm_hashrate_ghs(
+                RUNTIME.global_state, reduced_frequency.actual_mhz);
+        atomic_store_explicit(&RUNTIME.pause_requested, false,
+                              memory_order_release);
+
+        if (!start_production_mining_locked()) {
+            fail_overheat_recovery_locked(
+                "full reduced-setting production startup did not validate");
+            return;
+        }
+
+        RUNTIME.overheat_recovery.active = false;
+        RUNTIME.overheat_recovery_status =
+            BZM_OVERHEAT_RECOVERY_INACTIVE;
+        RUNTIME.overheat_settings_queued = false;
+        RUNTIME.global_state->SYSTEM_MODULE.overheat_mode = false;
+        nvs_config_set_bool(NVS_CONFIG_OVERHEAT_MODE, false);
+        ESP_LOGI(TAG,
+                 "Overheat recovery complete: mining restarted at the "
+                 "800 MHz / 2.8 V baseline with reduced target %u mV / "
+                 "%.3f MHz",
+                 (unsigned)RUNTIME.overheat_reduced_voltage_mv,
+                 RUNTIME.overheat_reduced_frequency_mhz);
+        if (RUNTIME.frequency_task_handle != NULL) {
+            xTaskNotifyGive(RUNTIME.frequency_task_handle);
+        }
+        return;
+    }
+
+    if (RUNTIME.overheat_last_sampled_at_ms != 0 &&
+        current_ms - RUNTIME.overheat_last_sampled_at_ms <
+            BZM_OVERHEAT_SAMPLE_PERIOD_MS) {
+        return;
+    }
+    RUNTIME.overheat_last_sampled_at_ms = current_ms;
+
+    if (!bzm_supervisor_safe_off_verified(&RUNTIME.supervisor) ||
+        RUNTIME.supervisor.report.requested_stage != BZM_STAGE_OFF_SAFE) {
+        (void)bzm_supervisor_request_validation(
+            &RUNTIME.supervisor, BZM_STAGE_OFF_SAFE,
+            false, false, 0, current_ms);
+    }
+
+    TPS546_StatusSnapshot power = {0};
+    bool pgood = true;
+    const bool vreg_available =
+        VCORE_bzm_snapshot(&power, &pgood) == ESP_OK;
+    if (vreg_available) {
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.vr_temp =
+            power.read_temp1;
+    }
+    /* Board 1002 reads ASIC temperature from powered ASIC TDM telemetry, so
+     * it is intentionally unavailable after OFF_SAFE. This follows
+     * upstream's 600-series assumption: enforce VR temperature plus time. */
+    RUNTIME.overheat_recovery_status =
+        bzm_overheat_recovery_evaluate(
+            &RUNTIME.overheat_recovery, current_ms,
+            bzm_supervisor_safe_off_verified(&RUNTIME.supervisor) && !pgood,
+            vreg_available, (float)power.read_temp1, false, 0.0f);
+
+    if (RUNTIME.overheat_recovery_status !=
+        BZM_OVERHEAT_RECOVERY_READY) {
+        ESP_LOGW(TAG,
+                 "Overheat recovery %s: elapsed=%llu ms VR=%s%.1f C "
+                 "fan=100%%",
+                 bzm_overheat_recovery_status_name(
+                     RUNTIME.overheat_recovery_status),
+                 (unsigned long long)(current_ms -
+                     RUNTIME.overheat_recovery.started_at_ms),
+                 vreg_available ? "" : "unavailable/",
+                 vreg_available ? (float)power.read_temp1 : 0.0f);
+        return;
+    }
+
+    if (!bzm_overheat_recovery_reduced_targets(
+            &RUNTIME.overheat_recovery,
+            (uint16_t)lroundf(BZM_TPS546_MIN_VOUT_V * 1000.0f),
+            BZM_FREQUENCY_TARGET_MIN_MHZ,
+            &RUNTIME.overheat_reduced_voltage_mv,
+            &RUNTIME.overheat_reduced_frequency_mhz)) {
+        fail_overheat_recovery_locked(
+            "unable to derive reduced Bonanza frequency and voltage");
+        return;
+    }
+    bzm_frequency_target_t reduced_frequency;
+    if (!bzm_frequency_resolve_target(
+            RUNTIME.overheat_reduced_frequency_mhz,
+            &reduced_frequency)) {
+        fail_overheat_recovery_locked(
+            "reduced Bonanza frequency could not be represented");
+        return;
+    }
+    RUNTIME.overheat_reduced_frequency_mhz =
+        reduced_frequency.actual_mhz;
+    nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE,
+                       RUNTIME.overheat_reduced_voltage_mv);
+    nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY,
+                         RUNTIME.overheat_reduced_frequency_mhz);
+    RUNTIME.overheat_settings_queued = true;
+    ESP_LOGI(TAG,
+             "Temperatures normalized; persisting reduced target %u mV / "
+             "%.3f MHz before restart",
+             (unsigned)RUNTIME.overheat_reduced_voltage_mv,
+             RUNTIME.overheat_reduced_frequency_mhz);
 }
 
 static void runtime_monitor_task(void * parameter)
@@ -1575,6 +1917,13 @@ static void runtime_monitor_task(void * parameter)
         }
         if (!bzm_supervisor_tick(&RUNTIME.supervisor, current_ms)) {
             ESP_LOGE(TAG, "local controller watchdog expired; safe-off requested");
+        }
+
+        if (RUNTIME.overheat_recovery.active) {
+            process_overheat_recovery_locked(current_ms);
+            sync_dispatch_locked();
+            pthread_mutex_unlock(&RUNTIME.lock);
+            continue;
         }
 
         bool holding = runtime_is_holding_locked();
@@ -1622,7 +1971,14 @@ static void runtime_monitor_task(void * parameter)
                 ESP_LOGE(TAG, "runtime health BAD fault=%s(%u): %s",
                          bzm_runtime_health_fault_name(health.fault),
                          (unsigned)health.fault, health.detail);
-                (void) bzm_supervisor_latch_fault(&RUNTIME.supervisor, (uint32_t) health.fault, health.detail);
+                if (recoverable_overheat_fault(health.fault)) {
+                    begin_overheat_recovery_locked(
+                        health.fault, health.detail, current_ms);
+                } else {
+                    (void)bzm_supervisor_latch_fault(
+                        &RUNTIME.supervisor, (uint32_t)health.fault,
+                        health.detail);
+                }
             }
         }
         if (RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_MINING && RUNTIME.running_evidence_monitoring) {
@@ -1699,8 +2055,30 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
     bzm_ch2_confirmation_init(&RUNTIME.ch2_confirmation);
     bzm_pll_lock_confirmation_init(&RUNTIME.pll_lock_confirmation);
     atomic_init(&RUNTIME.dispatch_enabled, false);
+    const bool persisted_overheat =
+        nvs_config_get_bool(NVS_CONFIG_OVERHEAT_MODE);
+    atomic_init(&RUNTIME.pause_requested, persisted_overheat);
     atomic_init(&RUNTIME.dispatch_deadline_ms, 0);
     atomic_init(&RUNTIME.execution_deadline_ms, 0);
+    if (persisted_overheat) {
+        const uint16_t voltage_mv = (uint16_t)lroundf(
+            RUNTIME.voltage_target_v * 1000.0f);
+        if (!bzm_overheat_recovery_begin(
+                &RUNTIME.overheat_recovery, now_ms(), voltage_mv,
+                RUNTIME.frequency_target_mhz)) {
+            pthread_mutex_unlock(&RUNTIME.lock);
+            return ESP_ERR_INVALID_STATE;
+        }
+        RUNTIME.overheat_recovery_status =
+            BZM_OVERHEAT_RECOVERY_WAIT_OFF_SAFE;
+        global_state->SYSTEM_MODULE.overheat_mode = true;
+        global_state->SYSTEM_MODULE.mining_paused = true;
+        nvs_config_set_bool(NVS_CONFIG_AUTO_FAN_SPEED, false);
+        nvs_config_set_u16(NVS_CONFIG_MANUAL_FAN_SPEED, 100);
+        ESP_LOGW(TAG,
+                 "Persisted overheat mode found; boot will remain OFF_SAFE "
+                 "through the complete cooling and reduced-setting recovery");
+    }
     BZM_staged_set_operation_authorizer(runtime_execution_authorizer, &RUNTIME);
 
     bzm_validation_ops_t ops = {
@@ -1767,12 +2145,20 @@ bool bzm_controller_mining_stack_ready(void)
 {
     pthread_mutex_lock(&RUNTIME.lock);
     bool started = false;
+    bool cooling = false;
     if (RUNTIME.active && RUNTIME.initialized) {
         RUNTIME.mining_stack_ready = true;
-        started = start_production_mining_locked();
+        cooling = RUNTIME.overheat_recovery.active;
+        started = cooling || start_production_mining_locked();
+        cooling = RUNTIME.overheat_recovery.active;
+        started = started || cooling;
     }
     pthread_mutex_unlock(&RUNTIME.lock);
-    if (started) {
+    if (cooling) {
+        ESP_LOGW(TAG,
+                 "Bonanza mining stack is ready but startup remains OFF_SAFE "
+                 "for overheat recovery");
+    } else if (started) {
         ESP_LOGI(TAG,
                  "Bonanza reached MINING at 800 MHz; live target %.3f MHz",
                  RUNTIME.frequency_target_mhz);
@@ -1795,6 +2181,166 @@ bool bzm_controller_dispatch_allowed(void)
     return runtime_dispatch_authorizer(&RUNTIME);
 }
 
+bool bzm_controller_fan_control_allowed(void)
+{
+    if (atomic_load_explicit(&RUNTIME.pause_requested,
+                             memory_order_acquire)) {
+        return false;
+    }
+    pthread_mutex_lock(&RUNTIME.lock);
+    bool allowed = RUNTIME.active && RUNTIME.initialized &&
+                   !atomic_load_explicit(&RUNTIME.pause_requested,
+                                         memory_order_acquire) &&
+                   RUNTIME.supervisor.owner ==
+                       BZM_SUPERVISOR_OWNER_MINING &&
+                   RUNTIME.supervisor.report.reached_stage ==
+                       BZM_STAGE_RUNNING &&
+                   !RUNTIME.supervisor.fault_latched;
+    pthread_mutex_unlock(&RUNTIME.lock);
+    return allowed;
+}
+
+bool bzm_controller_pause(void)
+{
+    /* Publish intent before waiting for either the controller lock or the
+     * BZM reactor. A live PLL/rail transaction that completes concurrently
+     * must yield to pause instead of latching its cancellation as a fault. */
+    atomic_store_explicit(&RUNTIME.pause_requested, true,
+                          memory_order_release);
+    pthread_mutex_lock(&RUNTIME.lock);
+    if (!RUNTIME.active) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        return true;
+    }
+    if (!RUNTIME.initialized || RUNTIME.global_state == NULL ||
+        bzm_supervisor_owner_is_maintenance(RUNTIME.supervisor.owner)) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        return false;
+    }
+
+    close_dispatch_locked();
+    RUNTIME.frequency_ramp_active = false;
+    ++RUNTIME.frequency_target_generation;
+    reset_running_evidence_locked(false);
+
+    bool safe = bzm_supervisor_safe_off_verified(&RUNTIME.supervisor) &&
+                RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_NONE;
+    if (!safe) {
+        safe = RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_NONE
+                   ? bzm_supervisor_request_validation(
+                         &RUNTIME.supervisor, BZM_STAGE_OFF_SAFE,
+                         false, false, 0, now_ms())
+                   : bzm_supervisor_stop(
+                         &RUNTIME.supervisor, "operator paused mining");
+        safe = safe &&
+               bzm_supervisor_safe_off_verified(&RUNTIME.supervisor);
+    }
+
+    RUNTIME.global_state->SYSTEM_MODULE.mining_paused = true;
+    RUNTIME.global_state->ASIC_initalized = false;
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.actual_frequency = 0.0f;
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate = 0.0f;
+    if (safe) {
+        RUNTIME.rail_command_v = BZM_TPS546_FIXED_VOUT_V;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.core_voltage = 0.0f;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.current = 0.0f;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.power = 0.0f;
+    }
+    sync_dispatch_locked();
+    TaskHandle_t frequency_task = RUNTIME.frequency_task_handle;
+    pthread_mutex_unlock(&RUNTIME.lock);
+
+    if (frequency_task != NULL) xTaskNotifyGive(frequency_task);
+    if (safe) {
+        ESP_LOGI(TAG, "Bonanza mining paused at verified OFF_SAFE");
+    } else {
+        ESP_LOGE(TAG,
+                 "Bonanza mining pause failed closed without verified OFF_SAFE");
+    }
+    return safe;
+}
+
+bool bzm_controller_resume(void)
+{
+    pthread_mutex_lock(&RUNTIME.lock);
+    if (!RUNTIME.active) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        return true;
+    }
+    if (!RUNTIME.initialized || RUNTIME.global_state == NULL ||
+        !RUNTIME.mining_stack_ready ||
+        bzm_supervisor_owner_is_maintenance(RUNTIME.supervisor.owner) ||
+        RUNTIME.supervisor.fault_latched) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        return false;
+    }
+
+    if (RUNTIME.supervisor.owner == BZM_SUPERVISOR_OWNER_MINING &&
+        !RUNTIME.global_state->SYSTEM_MODULE.mining_paused &&
+        bzm_supervisor_dispatch_allowed(&RUNTIME.supervisor, now_ms())) {
+        atomic_store_explicit(&RUNTIME.pause_requested, false,
+                              memory_order_release);
+        pthread_mutex_unlock(&RUNTIME.lock);
+        return true;
+    }
+    if (RUNTIME.supervisor.owner != BZM_SUPERVISOR_OWNER_NONE ||
+        !bzm_supervisor_safe_off_verified(&RUNTIME.supervisor)) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        return false;
+    }
+
+    bzm_frequency_target_t frequency_target;
+    float voltage_target_v = 0.0f;
+    if (!configured_tuning_target(
+            &frequency_target, &voltage_target_v)) {
+        pthread_mutex_unlock(&RUNTIME.lock);
+        ESP_LOGE(TAG,
+                 "Bonanza resume rejected invalid saved frequency or voltage");
+        return false;
+    }
+
+    RUNTIME.frequency_target_mhz = frequency_target.actual_mhz;
+    RUNTIME.voltage_target_v = voltage_target_v;
+    ++RUNTIME.frequency_target_generation;
+    RUNTIME.frequency_ramp_active =
+        fabsf(frequency_target.actual_mhz -
+              BZM_FREQUENCY_POWER_ON_MHZ) >= 0.001f ||
+        fabsf(voltage_target_v - BZM_TPS546_FIXED_VOUT_V) >= 0.001f;
+    RUNTIME.rail_command_v = BZM_TPS546_FIXED_VOUT_V;
+    RUNTIME.health_sampled_at_ms = 0;
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.frequency_value =
+        frequency_target.actual_mhz;
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.actual_frequency = 0.0f;
+    RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate =
+        expected_bzm_hashrate_ghs(
+            RUNTIME.global_state, frequency_target.actual_mhz);
+
+    atomic_store_explicit(&RUNTIME.pause_requested, false,
+                          memory_order_release);
+    const bool started = start_production_mining_locked();
+    if (!started) {
+        atomic_store_explicit(&RUNTIME.pause_requested, true,
+                              memory_order_release);
+        RUNTIME.frequency_ramp_active = false;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.actual_frequency =
+            0.0f;
+        RUNTIME.global_state->POWER_MANAGEMENT_MODULE.expected_hashrate =
+            0.0f;
+    }
+    TaskHandle_t frequency_task = RUNTIME.frequency_task_handle;
+    pthread_mutex_unlock(&RUNTIME.lock);
+
+    if (started && frequency_task != NULL) xTaskNotifyGive(frequency_task);
+    if (started) {
+        ESP_LOGI(TAG,
+                 "Bonanza mining resumed at 800 MHz; live target %.3f MHz",
+                 frequency_target.actual_mhz);
+    } else {
+        ESP_LOGE(TAG, "Bonanza mining resume failed closed");
+    }
+    return started;
+}
+
 void bzm_controller_tuning_settings_changed(void)
 {
     pthread_mutex_lock(&RUNTIME.lock);
@@ -1807,8 +2353,40 @@ void bzm_controller_tuning_settings_changed(void)
     }
 }
 
+void bzm_controller_overheat_mode_changed(bool enabled)
+{
+    pthread_mutex_lock(&RUNTIME.lock);
+    if (RUNTIME.active && RUNTIME.initialized &&
+        RUNTIME.global_state != NULL) {
+        if (RUNTIME.overheat_recovery.active) {
+            /* A settings click is a request to recover, never permission to
+             * skip time/temperature/OFF_SAFE gates. Sample promptly and keep
+             * the persistent mode asserted until restart succeeds. */
+            RUNTIME.overheat_last_sampled_at_ms = 0;
+            RUNTIME.global_state->SYSTEM_MODULE.overheat_mode = true;
+            ESP_LOGI(TAG,
+                     "Overheat reset requested; automatic recovery remains "
+                     "active until every safety gate passes");
+        } else {
+            RUNTIME.global_state->SYSTEM_MODULE.overheat_mode = enabled;
+        }
+    }
+    pthread_mutex_unlock(&RUNTIME.lock);
+}
+
+bool bzm_controller_overheat_recovery_active(void)
+{
+    pthread_mutex_lock(&RUNTIME.lock);
+    const bool active = RUNTIME.active && RUNTIME.initialized &&
+                        RUNTIME.overheat_recovery.active;
+    pthread_mutex_unlock(&RUNTIME.lock);
+    return active;
+}
+
 bool bzm_controller_acquire_maintenance(bzm_supervisor_owner_t owner)
 {
+    atomic_store_explicit(&RUNTIME.pause_requested, true,
+                          memory_order_release);
     pthread_mutex_lock(&RUNTIME.lock);
     close_dispatch_locked();
     bool ok = RUNTIME.initialized && bzm_supervisor_acquire_maintenance(&RUNTIME.supervisor, owner, now_ms());
@@ -1819,6 +2397,8 @@ bool bzm_controller_acquire_maintenance(bzm_supervisor_owner_t owner)
 
 bool bzm_controller_acquire_bridge_recovery(void)
 {
+    atomic_store_explicit(&RUNTIME.pause_requested, true,
+                          memory_order_release);
     pthread_mutex_lock(&RUNTIME.lock);
     close_dispatch_locked();
 
@@ -1888,6 +2468,8 @@ bool bzm_controller_release_maintenance(bzm_supervisor_owner_t owner)
 
 bool bzm_controller_prepare_restart(void)
 {
+    atomic_store_explicit(&RUNTIME.pause_requested, true,
+                          memory_order_release);
     pthread_mutex_lock(&RUNTIME.lock);
     if (!RUNTIME.active) {
         pthread_mutex_unlock(&RUNTIME.lock);

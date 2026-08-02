@@ -1,8 +1,11 @@
+#include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "bzm_controller.h"
 #include "global_state.h"
 #include "fan_controller_task.h"
 #include "nvs_config.h"
@@ -20,10 +23,32 @@
 static const char * TAG = "fan_controller";
 static const char * prev_context = "";
 
+static bool bonanza_asic_overheated(const GlobalState *global_state)
+{
+    if (global_state == NULL ||
+        !global_state->DEVICE_CONFIG.bonanza_bridge) {
+        return false;
+    }
+
+    const PowerManagementModule *power_management =
+        &global_state->POWER_MANAGEMENT_MODULE;
+    return (isfinite(power_management->chip_temp_avg) &&
+            power_management->chip_temp_avg >
+                (float)CONFIG_BZM_1002_TEMP_MAX_C) ||
+           (isfinite(power_management->chip_temp2_avg) &&
+            power_management->chip_temp2_avg >
+                (float)CONFIG_BZM_1002_TEMP_MAX_C);
+}
+
 static void update_fan_speed(GlobalState * GLOBAL_STATE, float target_perc, const char * context)
 {
     if (target_perc > 100.0f) target_perc = 100.0f;
     if (target_perc < 0.0f) target_perc = 0.0f;
+    uint16_t fan_min_percent =
+        Thermal_get_fan_min_percent(&GLOBAL_STATE->DEVICE_CONFIG);
+    if (target_perc < (float) fan_min_percent) {
+        target_perc = (float) fan_min_percent;
+    }
 
     bool target_changed = fabs(GLOBAL_STATE->POWER_MANAGEMENT_MODULE.fan_perc - target_perc) > EPSILON;
     if (strcmp(context, prev_context) != 0) {
@@ -35,11 +60,12 @@ static void update_fan_speed(GlobalState * GLOBAL_STATE, float target_perc, cons
         }
     }
     if (target_changed) {
-        GLOBAL_STATE->POWER_MANAGEMENT_MODULE.fan_perc = target_perc;
         if (Thermal_set_fan_percent(&GLOBAL_STATE->DEVICE_CONFIG, target_perc / 100.0f) != ESP_OK) {
             ESP_LOGE(TAG, "FATAL: Fan Control Failed (%s). Flagging hardware fault.", context);
             GLOBAL_STATE->SYSTEM_MODULE.hardware_fault = true;
             snprintf(GLOBAL_STATE->SYSTEM_MODULE.hardware_fault_msg, sizeof(GLOBAL_STATE->SYSTEM_MODULE.hardware_fault_msg), "Fan Control Failed (%s)", context);
+        } else {
+            GLOBAL_STATE->POWER_MANAGEMENT_MODULE.fan_perc = target_perc;
         }
     }
 }
@@ -68,7 +94,12 @@ void FAN_CONTROLLER_task(void * pvParameters)
     TickType_t taskWakeTime = xTaskGetTickCount();
 
     while (1) {
-        if (nvs_config_get_bool(NVS_CONFIG_OVERHEAT_MODE)) {
+        if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge &&
+            !bzm_controller_fan_control_allowed()) {
+            update_fan_speed(GLOBAL_STATE, 100.0f, "Bonanza safe");
+        } else if (bonanza_asic_overheated(GLOBAL_STATE)) {
+            update_fan_speed(GLOBAL_STATE, 100.0f, "Overheat");
+        } else if (nvs_config_get_bool(NVS_CONFIG_OVERHEAT_MODE)) {
             update_fan_speed(GLOBAL_STATE, 100.0f, "Overheat");
         } else if (GLOBAL_STATE->SYSTEM_MODULE.mining_paused) {
             update_fan_speed(GLOBAL_STATE, 30.0f, "Paused");
@@ -131,8 +162,10 @@ void FAN_CONTROLLER_task(void * pvParameters)
             }
         }
 
-        power_management->fan_rpm = Thermal_get_fan_speed(&GLOBAL_STATE->DEVICE_CONFIG);
-        power_management->fan2_rpm = Thermal_get_fan2_speed(&GLOBAL_STATE->DEVICE_CONFIG);
+        if (!GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
+            power_management->fan_rpm = Thermal_get_fan_speed(&GLOBAL_STATE->DEVICE_CONFIG);
+            power_management->fan2_rpm = Thermal_get_fan2_speed(&GLOBAL_STATE->DEVICE_CONFIG);
+        }
 
         vTaskDelayUntil(&taskWakeTime, POLL_TIME_MS / portTICK_PERIOD_MS);
     }

@@ -34,7 +34,9 @@
                             [href]="latestRelease.html_url">{{latestRelease.name}}</a>
                         </h3>
 
-                        <div class="text-orange-500 mb-3">Download both files for update!</div>
+                        <div class="text-orange-500 mb-3">
+                            Download esp-miner.bin and www.bin. Use the listed Bonanza bridge image when the release manifest requires it.
+                        </div>
 
                         <div *ngFor="let asset of latestRelease.assets">
                             <div *ngIf="asset.name == 'esp-miner.bin'">
@@ -44,6 +46,10 @@
                             <div *ngIf="asset.name == 'www.bin'">
                                 <a style="text-decoration: underline;" target="_blank"
                                     [href]="asset.browser_download_url">www.bin</a>
+                            </div>
+                            <div *ngIf="isBridgeFirmwareAsset(asset.name)">
+                                <a style="text-decoration: underline;" target="_blank"
+                                    [href]="asset.browser_download_url">{{asset.name}}</a>
                             </div>
                         </div>
 

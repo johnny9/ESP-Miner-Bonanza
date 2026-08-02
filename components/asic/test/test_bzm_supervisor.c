@@ -136,6 +136,32 @@ TEST_CASE("BZM supervisor only opens dispatch after the complete RUNNING stage",
     TEST_ASSERT_FALSE(bzm_supervisor_dispatch_allowed(&supervisor, 5100));
 }
 
+TEST_CASE("BZM supervisor pause closes dispatch and resume repeats startup",
+          "[asic][bzm][supervisor][pause-resume]")
+{
+    simulated_hardware_t hardware = {.fail_stage = BZM_STAGE_COUNT};
+    bzm_supervisor_t supervisor = supervisor_for(&hardware);
+
+    TEST_ASSERT_TRUE(bzm_supervisor_request_validation(
+        &supervisor, BZM_STAGE_RUNNING, true, true, 5000, 100));
+    const size_t first_start_stage_calls = hardware.stage_calls;
+    TEST_ASSERT_TRUE(bzm_supervisor_dispatch_allowed(&supervisor, 101));
+
+    TEST_ASSERT_TRUE(bzm_supervisor_stop(
+        &supervisor, "operator paused mining"));
+    TEST_ASSERT_EQUAL_UINT32(1, hardware.safe_off_calls);
+    TEST_ASSERT_EQUAL(BZM_SUPERVISOR_OWNER_NONE, supervisor.owner);
+    TEST_ASSERT_TRUE(bzm_supervisor_safe_off_verified(&supervisor));
+    TEST_ASSERT_FALSE(bzm_supervisor_dispatch_allowed(&supervisor, 102));
+
+    TEST_ASSERT_TRUE(bzm_supervisor_request_validation(
+        &supervisor, BZM_STAGE_RUNNING, true, true, 5000, 200));
+    TEST_ASSERT_EQUAL_UINT32(first_start_stage_calls * 2,
+                             hardware.stage_calls);
+    TEST_ASSERT_EQUAL(BZM_SUPERVISOR_OWNER_MINING, supervisor.owner);
+    TEST_ASSERT_TRUE(bzm_supervisor_dispatch_allowed(&supervisor, 201));
+}
+
 TEST_CASE("BZM supervisor latches stage BAD and rejects higher starts",
           "[asic][bzm][supervisor][fault]")
 {

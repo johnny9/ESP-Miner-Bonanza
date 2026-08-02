@@ -142,6 +142,18 @@ menu "Bitaxe Configuration"
                 Minimum fresh fan tach reading before and during mining. This is
                 provisional until the production fan is characterized.
 
+        config BZM_1002_FAN_MIN_PERCENT
+            int "Minimum commanded fan percentage while mining"
+            range 1 100
+            default 36
+            help
+                Clamp automatic and manual Bonanza fan requests to this
+                hardware-qualified floor. The production Bonanza fan remains
+                above the 1000 RPM live interlock at 36 percent. Safe-off,
+                startup, shutdown, maintenance, and faults always request 100
+                percent independently of this setting. The live tach threshold
+                remains authoritative if the fan stalls.
+
         config BZM_1002_SAFE_OFF_VCORE_MV
             int "Safe-off VCORE discharge threshold (mV)"
             range 0 1000
@@ -182,12 +194,15 @@ menu "Bitaxe Configuration"
             default -20
 
         config BZM_1002_TEMP_MAX_C
-            int "Provisional maximum ASIC temperature (C)"
+            int "Maximum ASIC temperature (C)"
             range 1 150
-            default 105
+            default 75
             help
-                Fresh on-die telemetry at or above this engineering ceiling
-                is BAD. Qualify this value on production hardware.
+                Match upstream ESP-Miner's ASIC overheat threshold. Fresh
+                Bonanza on-die telemetry above this ceiling is BAD: the
+                supervisor safe-offs the miner and the bridge fan is forced
+                to 100 percent. The TPS546 regulator retains its separate
+                105 C warning limit.
 
         config BZM_1002_STACK_MV_MIN
             int "Provisional minimum internal stack voltage (mV)"

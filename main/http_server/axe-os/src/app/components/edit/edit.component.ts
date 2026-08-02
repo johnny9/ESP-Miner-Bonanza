@@ -62,6 +62,8 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
   public voltageOptions: number[] = [];
   public frequencyTunable: boolean = true;
   public voltageTunable: boolean = true;
+  public fanSpeedMinimum: number = 0;
+  public isBonanza: boolean = false;
 
   private overclockUnlockRequested: boolean = false;
 
@@ -194,8 +196,16 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
           coreVoltage: [info.coreVoltage, [Validators.required]],
           frequency: [info.frequency, [Validators.required]],
           autofanspeed: [info.autofanspeed == 1, [Validators.required]],
-          minfanspeed: [info.minFanSpeed, [Validators.required]],
-          manualFanSpeed: [info.manualFanSpeed, [Validators.required]],
+          minFanSpeed: [Math.max(info.minFanSpeed, this.fanSpeedMinimum), [
+            Validators.required,
+            Validators.min(this.fanSpeedMinimum),
+            Validators.max(99)
+          ]],
+          manualFanSpeed: [Math.max(info.manualFanSpeed, this.fanSpeedMinimum), [
+            Validators.required,
+            Validators.min(this.fanSpeedMinimum),
+            Validators.max(100)
+          ]],
           temptarget: [info.temptarget, [Validators.required]],
           overheat_mode: [info.overheat_mode, [Validators.required]],
           statsFrequency: [info.statsFrequency, [
@@ -328,9 +338,13 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
 
   public applyAsicCapabilities(asic: ISystemASIC): void {
     // Missing fields preserve compatibility when editing older AxeOS peers.
+    this.isBonanza = asic.ASICModel === 'BZM';
     this.frequencyTunable = asic.frequencyTunable !== false;
     this.voltageTunable = asic.voltageTunable !== false;
+    this.fanSpeedMinimum = Math.max(0, Math.min(100,
+      asic.fanSpeedMinimum ?? 0));
     this.updateAsicControlState();
+    this.updateFanControlState();
   }
 
   private updateAsicControlState(): void {
@@ -346,6 +360,37 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
       this.form.controls['coreVoltage']?.enable();
     } else {
       this.form.controls['coreVoltage']?.disable();
+    }
+  }
+
+  private updateFanControlState(): void {
+    if (!this.form) {
+      return;
+    }
+
+    const minControl = this.form.controls['minFanSpeed'];
+    const manualControl = this.form.controls['manualFanSpeed'];
+    if (minControl) {
+      minControl.setValidators([
+        Validators.required,
+        Validators.min(this.fanSpeedMinimum),
+        Validators.max(99)
+      ]);
+      if (minControl.value < this.fanSpeedMinimum) {
+        minControl.setValue(this.fanSpeedMinimum);
+      }
+      minControl.updateValueAndValidity();
+    }
+    if (manualControl) {
+      manualControl.setValidators([
+        Validators.required,
+        Validators.min(this.fanSpeedMinimum),
+        Validators.max(100)
+      ]);
+      if (manualControl.value < this.fanSpeedMinimum) {
+        manualControl.setValue(this.fanSpeedMinimum);
+      }
+      manualControl.updateValueAndValidity();
     }
   }
 
@@ -401,6 +446,7 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
       'frequency',
       'autofanspeed',
       'manualFanSpeed',
+      'minFanSpeed',
       'temptarget',
       'overheat_mode',
       'statsFrequency'

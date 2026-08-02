@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "cJSON.h"
@@ -206,6 +207,19 @@ void app_main(void)
     if (GLOBAL_STATE.DEVICE_CONFIG.bonanza_bridge) {
         if (!bzm_controller_mining_stack_ready()) {
             ESP_LOGE(TAG, "Bonanza remained safe-off after automatic startup failure");
+        } else if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active &&
+                   xTaskCreateWithCaps(FAN_CONTROLLER_task, "fan_controller",
+                                       8192, (void *) &GLOBAL_STATE, 5, NULL,
+                                       MALLOC_CAP_SPIRAM) != pdPASS) {
+            /* The bridge is still holding the last safe full-speed command,
+             * so mining can remain thermally protected even when dynamic
+             * control could not start. Surface the degraded state instead of
+             * silently claiming that settings are being applied. */
+            ESP_LOGE(TAG, "Bonanza fan controller task could not start; fan remains at 100%%");
+            GLOBAL_STATE.SYSTEM_MODULE.hardware_fault = true;
+            snprintf(GLOBAL_STATE.SYSTEM_MODULE.hardware_fault_msg,
+                     sizeof(GLOBAL_STATE.SYSTEM_MODULE.hardware_fault_msg),
+                     "Fan controller task failed; fan held at 100%%");
         }
         return;
     }

@@ -448,21 +448,22 @@
                     <h4 class="text-center">Fan</h4>
 
                     <div class="mb-3">
-                        <h6 class="flex justify-content-between mb-1" tooltipPosition="top"
-                                pTooltip="{{info.fan2rpm > 0 ? 'Fan 1: ' : ''}}{{info.fanrpm}} RPM{{info.fan2rpm > 0 ? '<br>Fan 2: ' + info.fan2rpm + ' RPM' : ''}}">
-
-                            <ng-container *ngIf="info.fan2rpm > 0; else singleFan">
-                                Fan Speeds
-                            </ng-container>
-                            <ng-template #singleFan>
-                                Fan Speed
-                            </ng-template>
-
+                        <h6 class="flex justify-content-between mb-1">
+                            <span>Fan Output</span>
                             <span>{{info.fanspeed.toFixed(1)}} %</span>
                         </h6>
                         <p-progressbar [value]="info.fanspeed" [styleClass]="'p-progressbar--thin'">
                             <ng-template pTemplate="content" let-value></ng-template>
                         </p-progressbar>
+
+                        <h6 class="flex justify-content-between mt-3 mb-1">
+                            <span>{{info.fan2rpm > 0 ? 'Fan 1 Speed' : 'Fan Speed'}}</span>
+                            <span>{{info.fanrpm}} RPM</span>
+                        </h6>
+                        <h6 *ngIf="info.fan2rpm > 0" class="flex justify-content-between mb-1">
+                            <span>Fan 2 Speed</span>
+                            <span>{{info.fan2rpm}} RPM</span>
+                        </h6>
                     </div>
                 </div>
             </div>

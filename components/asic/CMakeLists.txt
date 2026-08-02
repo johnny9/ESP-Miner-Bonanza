@@ -24,6 +24,7 @@ SRCS
     "bzm_telemetry.c"
     "bzm_supervisor.c"
     "bzm_runtime_health.c"
+    "bzm_overheat_recovery.c"
     "bzm_running_evidence.c"
     "bzm_validation.c"
     "bzm_topology.c"

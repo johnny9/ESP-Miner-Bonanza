@@ -21,6 +21,7 @@ typedef struct
     uint8_t mismatch_offset;
     uint32_t mismatch_value;
     bool fail_reads_while_tdm_active;
+    uint8_t transient_live_read_failures;
     uint16_t reads_while_tdm_active;
     bool pll_locked[BZM_BRINGUP_ASIC_COUNT][2];
     uint64_t now_us;
@@ -119,6 +120,11 @@ static bool mock_read(void * context, uint8_t asic_id, uint16_t engine_id, uint8
     for (uint8_t item = 0; item < BZM_BRINGUP_ASIC_COUNT; ++item) {
         if ((mock->registers[item][BZM_LOCAL_REG_UART_TDM_CONTROL] & 1U) != 0) {
             ++mock->reads_while_tdm_active;
+            if (mock->transient_live_read_failures != 0 &&
+                offset != BZM_LOCAL_REG_UART_TDM_CONTROL) {
+                --mock->transient_live_read_failures;
+                return false;
+            }
             if (mock->fail_reads_while_tdm_active && offset != BZM_LOCAL_REG_UART_TDM_CONTROL) {
                 return false;
             }
@@ -1000,6 +1006,50 @@ TEST_CASE("bzm live ramp changes one PLL domain by 25 MHz",
     TEST_ASSERT_EQUAL_UINT16(
         BZM_BRINGUP_ASIC_COUNT * BZM_BRINGUP_PLL_COUNT,
         report.completed_items);
+}
+
+TEST_CASE("bzm live ramp retries a transient TDM register failure",
+          "[bzm_bringup][frequency]")
+{
+    bringup_mock_t mock = good_mock();
+    bzm_bringup_state_t state;
+    bzm_bringup_report_t report;
+    float targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
+    state_at_live_frequency(&state, &mock, 800.0f);
+    fill_live_frequency_targets(targets, 800.0f);
+    targets[0][0] = 825.0f;
+    mock.transient_live_read_failures = 1;
+
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_GOOD,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, false, &report));
+    TEST_ASSERT_EQUAL_UINT8(0, mock.transient_live_read_failures);
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, 825.0f, state.domain_clock_mhz[0][0]);
+    TEST_ASSERT_EQUAL(BZM_BRINGUP_REASON_NONE, report.reason);
+}
+
+TEST_CASE("bzm live ramp bounds persistent TDM register retries",
+          "[bzm_bringup][frequency]")
+{
+    bringup_mock_t mock = good_mock();
+    bzm_bringup_state_t state;
+    bzm_bringup_report_t report;
+    float targets[BZM_BRINGUP_ASIC_COUNT][BZM_BRINGUP_PLL_COUNT];
+    state_at_live_frequency(&state, &mock, 800.0f);
+    fill_live_frequency_targets(targets, 800.0f);
+    targets[0][0] = 825.0f;
+    mock.transient_live_read_failures = 4;
+
+    TEST_ASSERT_EQUAL(
+        BZM_BRINGUP_BAD,
+        bzm_bringup_live_frequency_domains_step(
+            &state, &MOCK_OPS, &mock, targets, false, &report));
+    TEST_ASSERT_EQUAL_UINT8(1, mock.transient_live_read_failures);
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, 800.0f, state.domain_clock_mhz[0][0]);
+    TEST_ASSERT_EQUAL(BZM_BRINGUP_REASON_IO, report.reason);
 }
 
 TEST_CASE("bzm live ramp rejects oversized and asymmetric shortcut steps",

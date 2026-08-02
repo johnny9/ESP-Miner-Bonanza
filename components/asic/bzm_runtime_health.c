@@ -55,7 +55,8 @@ static bzm_runtime_health_result_t check_bridge_and_fan(const bzm_runtime_health
 {
     const bzm_bridge_safety_status_t * status = &input->bridge_status;
     const uint16_t required_capabilities = BZM_BRIDGE_SAFETY_CAP_5V_CONTROL | BZM_BRIDGE_SAFETY_CAP_ASIC_RESET_CONTROL |
-                                           BZM_BRIDGE_SAFETY_CAP_FAN_FORCE_FULL | BZM_BRIDGE_SAFETY_CAP_TRIP_INPUT_SAMPLED;
+                                           BZM_BRIDGE_SAFETY_CAP_FAN_FORCE_FULL | BZM_BRIDGE_SAFETY_CAP_TRIP_INPUT_SAMPLED |
+                                           BZM_BRIDGE_SAFETY_CAP_FAN_CONTROLLED_SPEED;
     const uint16_t required_evidence =
         BZM_BRIDGE_SAFETY_EVIDENCE_LEASE_VALID | BZM_BRIDGE_SAFETY_EVIDENCE_TRIP_CLEAR | BZM_BRIDGE_SAFETY_EVIDENCE_FAULT_CLEAR;
 
@@ -106,7 +107,8 @@ static bzm_runtime_health_result_t check_bridge_and_fan(const bzm_runtime_health
     if (outputs_safe != outputs_safe_evidence) {
         return bad(BZM_RUNTIME_HEALTH_FAULT_BRIDGE_STATUS_INVALID, "bridge output-safe evidence contradicts output readback");
     }
-    if (!status->fan_full || status->fan_percent != 100) {
+    if (input->require_fan_full &&
+        (!status->fan_full || status->fan_percent != 100)) {
         return bad(BZM_RUNTIME_HEALTH_FAULT_FAN_NOT_FULL, "bridge fan full=%u percent=%u expected 100 percent",
                    (unsigned) status->fan_full, (unsigned) status->fan_percent);
     }
@@ -120,7 +122,9 @@ static bzm_runtime_health_result_t check_bridge_and_fan(const bzm_runtime_health
         return bad(BZM_RUNTIME_HEALTH_FAULT_FAN_TACH_LOW, "fan tach=%u RPM below minimum=%u RPM", (unsigned) input->fan_rpm,
                    (unsigned) input->fan_min_rpm);
     }
-    return good("bridge lease/status and full-speed fan tach are GOOD");
+    return good(input->require_fan_full
+                    ? "bridge lease/status and full-speed fan tach are GOOD"
+                    : "bridge lease/status and controlled fan tach are GOOD");
 }
 
 static bzm_runtime_health_result_t check_power(const bzm_runtime_health_input_t * input)
@@ -144,6 +148,17 @@ static bzm_runtime_health_result_t check_power(const bzm_runtime_health_input_t 
     }
     if (!input->tps.available) {
         return bad(BZM_RUNTIME_HEALTH_FAULT_TPS_UNAVAILABLE, "fresh TPS status and telemetry are unavailable");
+    }
+    /* Classify a finite high-temperature sample before the generic PMBus
+     * STATUS_WORD interlock. At the upstream 105 C warning threshold the TPS
+     * may assert its temperature summary bit in the same snapshot; it is the
+     * one regulator fault eligible for controlled thermal recovery. */
+    if (isfinite(input->tps.temperature_c) &&
+        input->tps.temperature_c > input->tps_bounds.temperature_max_c) {
+        return bad(BZM_RUNTIME_HEALTH_FAULT_TPS_OVERHEAT,
+                   "TPS temperature=%.1f C above %.1f C overheat threshold",
+                   input->tps.temperature_c,
+                   input->tps_bounds.temperature_max_c);
     }
     if (!input->tps.pgood) {
         return bad(BZM_RUNTIME_HEALTH_FAULT_TPS_PGOOD_LOW, "TPS PGOOD is low");
@@ -443,13 +458,24 @@ static bzm_runtime_health_result_t check_telemetry(const bzm_runtime_health_inpu
             return bad(BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_MISSING, "ASIC 0x%02x telemetry missing or misaddressed as 0x%02x",
                        (unsigned) expected_id, (unsigned) sample->asic_id);
         }
-        if (sample->trip || sample->thermal_trip || sample->voltage_trip) {
-            return bad(BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_TRIP, "ASIC 0x%02x telemetry trip is asserted", (unsigned) expected_id);
-        }
         if (!bzm_telemetry_sample_is_fresh(sample, input->telemetry_now_us, input->telemetry_max_age_us)) {
             return bad(BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_STALE, "ASIC 0x%02x telemetry timestamp=%llu now=%llu maxAge=%llu us",
                        (unsigned) expected_id, (unsigned long long) sample->timestamp_us,
                        (unsigned long long) input->telemetry_now_us, (unsigned long long) input->telemetry_max_age_us);
+        }
+        const bool finite_thermal_overheat =
+            sample->thermal_valid && isfinite(sample->temperature_c) &&
+            sample->temperature_c > input->telemetry_bounds.temperature_max_c;
+        if (!sample->voltage_trip &&
+            (sample->thermal_trip || finite_thermal_overheat)) {
+            return bad(BZM_RUNTIME_HEALTH_FAULT_ASIC_OVERHEAT,
+                       "ASIC 0x%02x temperature=%.1f C above %.1f C threshold thermalTrip=%u",
+                       (unsigned) expected_id, sample->temperature_c,
+                       input->telemetry_bounds.temperature_max_c,
+                       (unsigned) sample->thermal_trip);
+        }
+        if (sample->trip || sample->voltage_trip) {
+            return bad(BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_TRIP, "ASIC 0x%02x telemetry trip is asserted", (unsigned) expected_id);
         }
         bool safe_with_deferred_ch2 = input->defer_ch2_bounds && bzm_telemetry_sample_is_safe_except_ch2(
                                                                      sample, input->telemetry_now_us, input->telemetry_max_age_us,
@@ -569,6 +595,8 @@ const char * bzm_runtime_health_fault_name(bzm_runtime_health_fault_t fault)
         return "TPS_IOUT_RANGE";
     case BZM_RUNTIME_HEALTH_FAULT_TPS_VOUT_COMMAND:
         return "TPS_VOUT_COMMAND";
+    case BZM_RUNTIME_HEALTH_FAULT_TPS_OVERHEAT:
+        return "TPS_OVERHEAT";
     case BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_UNAVAILABLE:
         return "TELEMETRY_UNAVAILABLE";
     case BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_MISSING:
@@ -583,6 +611,8 @@ const char * bzm_runtime_health_fault_name(bzm_runtime_health_fault_t fault)
         return "TELEMETRY_BOUNDS";
     case BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_CLOCK_UNLOCKED:
         return "TELEMETRY_CLOCK_UNLOCKED";
+    case BZM_RUNTIME_HEALTH_FAULT_ASIC_OVERHEAT:
+        return "ASIC_OVERHEAT";
     case BZM_RUNTIME_HEALTH_FAULT_PARSER_UNAVAILABLE:
         return "PARSER_UNAVAILABLE";
     case BZM_RUNTIME_HEALTH_FAULT_PARSER_COUNTER_REGRESSED:

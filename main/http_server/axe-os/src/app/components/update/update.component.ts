@@ -86,6 +86,10 @@ export class UpdateComponent implements OnDestroy {
     return this.firmwareUpdateProgress;
   }
 
+  public isBridgeFirmwareAsset(name: string): boolean {
+    return /^bonanza-bridge-fw-.*\.bin$/i.test(name);
+  }
+
   otaUpdate(event: FileUploadHandlerEvent) {
     const file = event.files[0];
     this.firmwareUpload.clear(); // clear the file upload component

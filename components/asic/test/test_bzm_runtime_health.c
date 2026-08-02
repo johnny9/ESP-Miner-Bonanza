@@ -33,7 +33,8 @@ static bzm_runtime_health_input_t good_input(bzm_validation_stage_t stage)
         .runtime_verdict = BZM_BRIDGE_SAFETY_RUNTIME_GOOD_CONTROLLED,
         .production_verdict = BZM_BRIDGE_SAFETY_PRODUCTION_BAD_STAGE_DISABLED,
         .capabilities = BZM_BRIDGE_SAFETY_CAP_5V_CONTROL | BZM_BRIDGE_SAFETY_CAP_ASIC_RESET_CONTROL |
-                        BZM_BRIDGE_SAFETY_CAP_FAN_FORCE_FULL | BZM_BRIDGE_SAFETY_CAP_TRIP_INPUT_SAMPLED,
+                        BZM_BRIDGE_SAFETY_CAP_FAN_FORCE_FULL | BZM_BRIDGE_SAFETY_CAP_TRIP_INPUT_SAMPLED |
+                        BZM_BRIDGE_SAFETY_CAP_FAN_CONTROLLED_SPEED,
         .evidence =
             BZM_BRIDGE_SAFETY_EVIDENCE_LEASE_VALID | BZM_BRIDGE_SAFETY_EVIDENCE_TRIP_CLEAR | BZM_BRIDGE_SAFETY_EVIDENCE_FAULT_CLEAR,
         .lease_remaining_ms = 5000,
@@ -43,6 +44,7 @@ static bzm_runtime_health_input_t good_input(bzm_validation_stage_t stage)
     input.fan_tach_available = true;
     input.fan_rpm = 2200;
     input.fan_min_rpm = 1000;
+    input.require_fan_full = stage < BZM_STAGE_RUNNING;
 
     input.tps = (bzm_runtime_health_tps_sample_t){
         .available = true,
@@ -72,7 +74,7 @@ static bzm_runtime_health_input_t good_input(bzm_validation_stage_t stage)
     input.telemetry_available = true;
     input.telemetry_bounds = (bzm_telemetry_bounds_t){
         .temperature_min_c = -20.0f,
-        .temperature_max_c = 105.0f,
+        .temperature_max_c = 75.0f,
         .ch0_min_mv = 300.0f,
         .ch0_max_mv = 800.0f,
         .ch1_min_mv = 300.0f,
@@ -196,6 +198,11 @@ TEST_CASE("BZM runtime health fails closed on bridge safety evidence", "[asic][b
     assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_BRIDGE_CAPABILITY_MISSING);
 
     input = good_input(BZM_STAGE_CLOCKS);
+    input.bridge_status.capabilities &=
+        (uint16_t) ~BZM_BRIDGE_SAFETY_CAP_FAN_CONTROLLED_SPEED;
+    assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_BRIDGE_CAPABILITY_MISSING);
+
+    input = good_input(BZM_STAGE_CLOCKS);
     input.bridge_status.state = BZM_BRIDGE_SAFETY_STATE_SAFE_OFF;
     assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_BRIDGE_STATE);
 
@@ -250,6 +257,15 @@ TEST_CASE("BZM runtime health enforces fan command and tach threshold", "[asic][
 
     input.fan_rpm = input.fan_min_rpm;
     TEST_ASSERT_EQUAL(BZM_RUNTIME_HEALTH_GOOD, bzm_runtime_health_evaluate(&input).status);
+
+    input = good_input(BZM_STAGE_RUNNING);
+    input.bridge_status.fan_full = false;
+    input.bridge_status.fan_percent = 35;
+    TEST_ASSERT_EQUAL(BZM_RUNTIME_HEALTH_GOOD,
+                      bzm_runtime_health_evaluate(&input).status);
+
+    input.fan_rpm = input.fan_min_rpm - 1;
+    assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_FAN_TACH_LOW);
 }
 
 TEST_CASE("BZM runtime health derives exact bridge outputs from stage", "[asic][bzm][runtime-health]")
@@ -330,6 +346,15 @@ TEST_CASE("BZM runtime health validates every TPS runtime invariant", "[asic][bz
 
     input = good_input(BZM_STAGE_POWER_RAIL);
     input.tps.temperature_c = input.tps_bounds.temperature_max_c + 1.0f;
+    assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_TPS_OVERHEAT);
+
+    input = good_input(BZM_STAGE_POWER_RAIL);
+    input.tps.temperature_c = input.tps_bounds.temperature_max_c + 1.0f;
+    input.tps.status_word = 0x0004;
+    assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_TPS_OVERHEAT);
+
+    input = good_input(BZM_STAGE_POWER_RAIL);
+    input.tps.temperature_c = NAN;
     assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_TPS_TEMPERATURE_RANGE);
 
     input = good_input(BZM_STAGE_POWER_RAIL);
@@ -747,6 +772,27 @@ TEST_CASE("BZM runtime health requires four fresh valid bounded ASIC samples", "
     input = good_input(BZM_STAGE_SENSORS);
     input.telemetry.samples[2].temperature_c = NAN;
     assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_BOUNDS);
+
+    input = good_input(BZM_STAGE_SENSORS);
+    input.telemetry.samples[2].temperature_c =
+        input.telemetry_bounds.temperature_max_c;
+    TEST_ASSERT_EQUAL(BZM_RUNTIME_HEALTH_GOOD,
+                      bzm_runtime_health_evaluate(&input).status);
+
+    input.telemetry.samples[2].temperature_c =
+        input.telemetry_bounds.temperature_max_c + 0.1f;
+    assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_ASIC_OVERHEAT);
+
+    input = good_input(BZM_STAGE_SENSORS);
+    input.telemetry.samples[2].thermal_trip = true;
+    input.telemetry.samples[2].trip = true;
+    assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_ASIC_OVERHEAT);
+
+    input = good_input(BZM_STAGE_SENSORS);
+    input.telemetry.samples[2].thermal_trip = true;
+    input.telemetry.samples[2].voltage_trip = true;
+    input.telemetry.samples[2].trip = true;
+    assert_fault(&input, BZM_RUNTIME_HEALTH_FAULT_TELEMETRY_TRIP);
 
     input = good_input(BZM_STAGE_SENSORS);
     input.telemetry_bounds.ch1_min_mv = input.telemetry_bounds.ch1_max_mv + 1.0f;

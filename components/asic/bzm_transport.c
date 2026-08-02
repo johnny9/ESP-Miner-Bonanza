@@ -9,6 +9,7 @@
 
 enum
 {
+    BZM_REGISTER_REPLY_TIMEOUT_US = 1000000,
     BZM_REG_MIDSTATE = 0x10,
     BZM_REG_MERKLE_RESIDUE = 0x30,
     BZM_REG_START_TIMESTAMP = 0x34,
@@ -606,7 +607,11 @@ static bool serial_read_register_op(void * context, uint8_t asic_id, uint16_t en
         return false;
     }
 
-    int64_t deadline = esp_timer_get_time() + 500000;
+    /* Match the BIRDS TDM synchronous-register contract. A reply may take a
+     * full second to surface while ordinary telemetry and results remain
+     * active on the same stream. */
+    int64_t deadline =
+        esp_timer_get_time() + BZM_REGISTER_REPLY_TIMEOUT_US;
     bool received = false;
     while (!(received = bzm_serial_take_register_reply(transport, asic_id, data, data_len))) {
         uint16_t wait_ms = remaining_ms(deadline);

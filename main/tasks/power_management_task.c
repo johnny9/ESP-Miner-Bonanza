@@ -14,7 +14,6 @@
 
 #define POLL_RATE 100
 #define MAX_TEMP 90.0
-#define THROTTLE_TEMP 75.0
 #define SAFE_TEMP 45.0
 
 #define VOLTAGE_START_THROTTLE 4900
@@ -163,8 +162,10 @@ void POWER_MANAGEMENT_task(void * pvParameters)
         }
 
         bool asic_overheat =
-            power_management->chip_temp_avg > THROTTLE_TEMP
-            || power_management->chip_temp2_avg > THROTTLE_TEMP;
+            power_management->chip_temp_avg >
+                THERMAL_ASIC_THROTTLE_TEMP_C ||
+            power_management->chip_temp2_avg >
+                THERMAL_ASIC_THROTTLE_TEMP_C;
 
         if ((power_management->vr_temp > TPS546_THROTTLE_TEMP || asic_overheat) && (power_management->frequency_value > 50 || power_management->voltage > 1000)) {
             if (power_management->chip_temp2_avg > 0) {

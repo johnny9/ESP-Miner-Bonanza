@@ -501,7 +501,8 @@ export class SystemApiService {
       frequencyTunable: true,
       defaultVoltage: 1200,
       voltageOptions: [1100, 1150, 1200, 1250, 1300],
-      voltageTunable: true
+      voltageTunable: true,
+      fanSpeedMinimum: 0
     }).pipe(delay(1000));
   }
 

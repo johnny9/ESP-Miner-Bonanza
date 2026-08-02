@@ -324,9 +324,22 @@ bool BZM_send_work(GlobalState * state, const mining_template_t * template)
          * before normal attribution resumes. */
         bzm_serial_discard_pending_results(&TRANSPORT);
     }
+    /* Pause and other supervisor transitions withdraw dispatch permission
+     * asynchronously so a long engine rotation stops at its next checkpoint.
+     * The reactor reports that deliberate cancellation as a transport error;
+     * keep returning false to stop the caller, but do not turn the requested
+     * safe-off transition into a runtime hardware fault. */
+    bool dispatch_cancelled = status != BZM_ASSIGN_OK &&
+        STAGED_TRANSPORT_READY &&
+        !bzm_dispatch_gate_is_authorized(&STAGED_DISPATCH_GATE);
     pthread_mutex_unlock(&REACTOR_LOCK);
 
     if (status != BZM_ASSIGN_OK) {
+        if (dispatch_cancelled) {
+            ESP_LOGI(TAG,
+                     "BZM work assignment cancelled after dispatch authorization was withdrawn");
+            return false;
+        }
         atomic_fetch_add_explicit(&RUNNING_DISPATCH_FAILURES, 1, memory_order_relaxed);
         ESP_LOGE(TAG, "BZM work assignment failed (%d)", status);
         return false;
@@ -713,7 +726,7 @@ static bool staged_live_mining_check(void)
     if (!STAGED_LEASE_IO_OK || !STAGED_TRANSPORT_READY ||
         !STAGED_BRINGUP.running_verified ||
         !bzm_dispatch_gate_is_authorized(&STAGED_DISPATCH_GATE) ||
-        !staged_mining_lease_renew(NULL)) {
+        !staged_mining_lease_service_due()) {
         STAGED_LEASE_IO_OK = false;
         return false;
     }
@@ -753,10 +766,14 @@ static bool staged_live_read_u32(void *context, uint8_t asic_id,
 static void staged_live_delay_ms(void *context, uint32_t delay_ms)
 {
     (void)context;
-    if (!STAGED_LEASE_IO_OK ||
-        !bzm_lease_guard_delay(
-            delay_ms, staged_mining_lease_renew, staged_sleep, NULL)) {
-        STAGED_LEASE_IO_OK = false;
+    while (delay_ms != 0) {
+        if (!staged_live_mining_check()) return;
+        const uint32_t chunk =
+            delay_ms > BZM_LEASE_GUARD_MAX_DELAY_CHUNK_MS
+                ? BZM_LEASE_GUARD_MAX_DELAY_CHUNK_MS
+                : delay_ms;
+        staged_sleep(NULL, chunk);
+        delay_ms -= chunk;
     }
 }
 

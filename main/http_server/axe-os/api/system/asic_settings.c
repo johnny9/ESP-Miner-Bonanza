@@ -5,6 +5,7 @@
 #include "global_state.h"
 #include "asic.h"
 #include "http_server.h"
+#include "thermal.h"
 
 static int system_asic_prebuffer_len = 256;
 
@@ -45,6 +46,8 @@ esp_err_t GET_system_asic(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "hashDomains", GLOBAL_STATE->DEVICE_CONFIG.family.asic.hash_domains);
     cJSON_AddBoolToObject(root, "frequencyTunable", GLOBAL_STATE->DEVICE_CONFIG.family.asic.frequency_tunable);
     cJSON_AddBoolToObject(root, "voltageTunable", GLOBAL_STATE->DEVICE_CONFIG.family.voltage_tunable);
+    cJSON_AddNumberToObject(root, "fanSpeedMinimum",
+                            Thermal_get_fan_min_percent(&GLOBAL_STATE->DEVICE_CONFIG));
 
     cJSON_AddNumberToObject(root, "defaultFrequency", GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_frequency_mhz);
 

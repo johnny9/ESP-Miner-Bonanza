@@ -216,6 +216,119 @@ def wait_for_device(base_url: str, timeout: float) -> dict[str, Any]:
     raise RuntimeError(f"device did not answer within {timeout:.0f}s: {error}")
 
 
+def wait_for_lifecycle(base_url: str, expected: set[str],
+                       timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last = "unavailable"
+    while time.monotonic() < deadline:
+        try:
+            info = get_info(base_url)
+            last = str((info.get("asicHealth") or {}).get("lifecycle"))
+            if last in expected:
+                return info
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            last = str(exc)
+        time.sleep(1)
+    raise RuntimeError(
+        f"lifecycle did not reach {sorted(expected)} within {timeout:.0f}s; "
+        f"last={last}")
+
+
+def pause_resume_check(report: Report, base_url: str,
+                       transition_timeout: float) -> dict[str, Any]:
+    paused = False
+    resumed = False
+    try:
+        body, _ = request_bytes(
+            base_url, "/api/system/pause", data=b"{}",
+            timeout=transition_timeout)
+        paused = True
+        report.check("pause request", True,
+                     body.decode("utf-8", "replace").strip())
+        info = wait_for_lifecycle(base_url, {"SAFE_OFF", "FAULT"},
+                                  transition_timeout)
+        health = info.get("asicHealth") or {}
+        report.check("pause reaches verified safe off",
+                     health.get("lifecycle") == "SAFE_OFF" and
+                     info.get("miningPaused") is True and
+                     not health.get("lastFault"),
+                     f"lifecycle={health.get('lifecycle')} "
+                     f"paused={info.get('miningPaused')} "
+                     f"fault={health.get('lastFault') or 'none'}")
+        report.check("paused mining telemetry",
+                     float(info.get("actualFrequency") or 0) == 0 and
+                     float(info.get("expectedHashrate") or 0) == 0 and
+                     health.get("fanPercent") == 100,
+                     f"frequency={info.get('actualFrequency')} MHz "
+                     f"expected={info.get('expectedHashrate')} GH/s "
+                     f"fan={health.get('fanPercent')}%")
+
+        body, _ = request_bytes(
+            base_url, "/api/system/pause", data=b"{}",
+            timeout=transition_timeout)
+        report.check("repeated pause is idempotent", True,
+                     body.decode("utf-8", "replace").strip())
+    except (OSError, RuntimeError, ValueError, urllib.error.URLError) as exc:
+        report.check("pause transition", False, str(exc))
+    finally:
+        if paused:
+            try:
+                body, _ = request_bytes(
+                    base_url, "/api/system/resume", data=b"{}",
+                    timeout=transition_timeout)
+                resumed = True
+                report.check("resume request", True,
+                             body.decode("utf-8", "replace").strip())
+            except (OSError, ValueError, urllib.error.URLError) as exc:
+                report.check("resume request", False, str(exc))
+
+    if not resumed:
+        return get_info(base_url)
+
+    try:
+        info = wait_for_lifecycle(base_url, {"MINING", "FAULT"},
+                                  transition_timeout)
+    except RuntimeError as exc:
+        report.check("resume transition", False, str(exc))
+        return get_info(base_url)
+    health = info.get("asicHealth") or {}
+    report.check("resume repeats validated startup",
+                 health.get("lifecycle") == "MINING" and
+                 info.get("miningPaused") is False and
+                 health.get("asicCount") == 4 and
+                 health.get("activeEngineCount") == 944 and
+                 not health.get("lastFault"),
+                 f"lifecycle={health.get('lifecycle')} "
+                 f"paused={info.get('miningPaused')} "
+                 f"ASICs={health.get('asicCount')} "
+                 f"engines={health.get('activeEngineCount')} "
+                 f"fault={health.get('lastFault') or 'none'}")
+    try:
+        body, _ = request_bytes(
+            base_url, "/api/system/resume", data=b"{}",
+            timeout=transition_timeout)
+        report.check("repeated resume is idempotent", True,
+                     body.decode("utf-8", "replace").strip())
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        report.check("repeated resume is idempotent", False, str(exc))
+
+    # The generic AxeOS fan target and the bridge's measured fan status are
+    # published by separate tasks. After SAFE_OFF releases its forced 100%
+    # command, require the two views to converge instead of sampling between
+    # those task updates and reporting a false projection failure.
+    projection_deadline = time.monotonic() + min(30.0, transition_timeout)
+    while time.monotonic() < projection_deadline:
+        health = info.get("asicHealth") or {}
+        if (info.get("fanspeed") == health.get("fanPercent") and
+                info.get("fanrpm") == health.get("fanRPM")):
+            break
+        time.sleep(0.5)
+        info = get_info(base_url)
+        if (info.get("asicHealth") or {}).get("lifecycle") == "FAULT":
+            break
+    return info
+
+
 def ota_upload(report: Report, base_url: str, firmware: Path, web: Path,
                boot_timeout: float) -> dict[str, Any]:
     for name, path, endpoint in (
@@ -253,6 +366,13 @@ def health_check(report: Report, info: dict[str, Any], *, require_mining: bool,
                  f"version={health.get('bridgeVersion')} protocol={health.get('bridgeProtocolMajor')}.{health.get('bridgeProtocolMinor')}")
     report.check("fan telemetry", (health.get("fanRPM") or 0) > 0,
                  f"{health.get('fanPercent')}%, {health.get('fanRPM')} RPM")
+    report.check(
+        "AxeOS fan telemetry projection",
+        info.get("fanspeed") == health.get("fanPercent")
+        and info.get("fanrpm") == health.get("fanRPM"),
+        f"AxeOS={info.get('fanspeed')}%, {info.get('fanrpm')} RPM; "
+        f"health={health.get('fanPercent')}%, {health.get('fanRPM')} RPM",
+    )
     work_age = float(info.get("currentWorkAgeSeconds", -1))
     report.check("fresh pool work", 0 <= work_age <= max_work_age,
                  f"age={work_age:.1f}s connection={info.get('poolConnectionInfo')}")
@@ -418,7 +538,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report", type=Path, default=Path("build-mvo/bzm-regression.json"))
     parser.add_argument("--junit", type=Path)
     parser.add_argument("--bridge-repo", type=Path,
-                        default=Path(__file__).resolve().parents[2] / "bonanza-bridge-fw-mvo")
+                        default=Path(__file__).resolve().parents[2] / "bonanza-bridge-fw")
     parser.add_argument("--skip-local", action="store_true")
     parser.add_argument("--local-only", action="store_true")
     parser.add_argument("--ota", action="store_true",
@@ -427,6 +547,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--web", type=Path)
     parser.add_argument("--restart-check", action="store_true",
                         help="explicitly request a safe production restart after sampling")
+    parser.add_argument("--pause-resume-check", action="store_true",
+                        help="explicitly exercise guarded Bonanza pause and resume")
     return parser.parse_args()
 
 
@@ -439,6 +561,7 @@ def main() -> int:
         "interface": args.interface,
         "serial": args.serial,
         "soakSeconds": args.soak_seconds,
+        "pauseResumeCheck": args.pause_resume_check,
         "espRepo": str(repo),
         "bridgeRepo": str(args.bridge_repo.resolve()),
     }
@@ -484,6 +607,8 @@ def main() -> int:
                 info = get_info(base_url)
             except (OSError, ValueError, urllib.error.URLError):
                 continue
+        if args.pause_resume_check:
+            info = pause_resume_check(report, base_url, args.boot_timeout)
         health_check(report, info, require_mining=True, max_work_age=args.max_work_age)
         try:
             check_ui(report, base_url)

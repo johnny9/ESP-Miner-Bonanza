@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -551,14 +552,13 @@ esp_err_t BZM_bridge_update_start(GlobalState *global_state,
     }
     pthread_mutex_unlock(&UPDATE_LOCK);
 
-    /*
-     * Board 1002 has a 7680-byte largest internal heap block after normal
-     * startup. Keep this worker below that bound; its image buffer is staged
-     * separately in PSRAM.
-     */
-    if (xTaskCreate(update_task, "bridge_update",
-                    BZM_BRIDGE_UPDATE_TASK_STACK_BYTES,
-                    update, 8, NULL) !=
+    /* Normal mining can fragment internal RAM below this worker's 6144-byte
+     * stack even while several MiB of PSRAM remain free. The update image is
+     * already staged in PSRAM, and all board-1002 bridge-update products
+     * require PSRAM, so allocate the worker there as well. */
+    if (xTaskCreateWithCaps(update_task, "bridge_update",
+                            BZM_BRIDGE_UPDATE_TASK_STACK_BYTES,
+                            update, 8, NULL, MALLOC_CAP_SPIRAM) !=
         pdPASS) {
         pthread_mutex_lock(&UPDATE_LOCK);
         UPDATE_STATUS.running = false;

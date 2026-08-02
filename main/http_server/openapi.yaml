@@ -864,6 +864,11 @@ components:
         voltageTunable:
           type: boolean
           description: Whether the hardware supports changing the ASIC supply voltage
+        fanSpeedMinimum:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Hardware-enforced minimum fan output percentage
 
     SystemStatistics:
       type: object
@@ -1078,13 +1083,20 @@ components:
           enum: [0, 1]
           examples:
             - 1
-        fanspeed:
+        manualFanSpeed:
           type: integer
           description: Manual fan speed percentage when autofanspeed is disabled
           minimum: 0
           maximum: 100
           examples:
             - 80
+        minFanSpeed:
+          type: integer
+          description: Minimum fan output percentage when autofanspeed is enabled
+          minimum: 0
+          maximum: 99
+          examples:
+            - 25
         temptarget:
           type: integer
           description: Manual Temperature Target in °C when autofanspeed is enabled
@@ -1264,6 +1276,8 @@ paths:
                 $ref: '#/components/schemas/GenericResponse'
         '401':
           description: Unauthorized - Client not in allowed network range
+        '409':
+          description: Bonanza could not obtain verified OFF_SAFE ownership
         '500':
           description: Internal server error
 
@@ -1283,6 +1297,8 @@ paths:
                 $ref: '#/components/schemas/GenericResponse'
         '401':
           description: Unauthorized - Client not in allowed network range
+        '409':
+          description: Bonanza startup ownership was unavailable or validation failed
         '500':
           description: Internal server error
 

@@ -14,9 +14,26 @@ esp_err_t bzm_controller_init(GlobalState *global_state);
 bool bzm_controller_active(void);
 bool bzm_controller_mining_stack_ready(void);
 bool bzm_controller_dispatch_allowed(void);
+/* True only while the production controller owns a healthy RUNNING stage.
+ * The fan task uses this to keep the bridge fan at its fail-safe 100 percent
+ * during startup, shutdown, faults, and maintenance. */
+bool bzm_controller_fan_control_allowed(void);
+
+/* Pause revokes dispatch and proves the complete Bonanza OFF_SAFE contract.
+ * Resume repeats the production startup at the known-good 2.8 V / 800 MHz
+ * baseline before live tuning restores the saved target. Non-BZM products
+ * return true without changing their generic pause state. */
+bool bzm_controller_pause(void);
+bool bzm_controller_resume(void);
 
 /* Wake the live tuning worker after frequency or voltage NVS changes. */
 void bzm_controller_tuning_settings_changed(void);
+
+/* Synchronize the settings-page overheat reset. An active automatic recovery
+ * retains overheat mode until its cool-down and full restart succeed; a stale
+ * completed/failed mode may still be cleared like upstream. */
+void bzm_controller_overheat_mode_changed(bool enabled);
+bool bzm_controller_overheat_recovery_active(void);
 
 /* Exclusive verified-safe-off ownership for production maintenance. */
 bool bzm_controller_acquire_maintenance(

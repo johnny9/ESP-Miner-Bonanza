@@ -134,6 +134,8 @@ describe('HomeComponent', () => {
       hashRate: 710,
       hashRate_1m: 700,
       fanspeed: 100,
+      fanrpm: 5200,
+      fan2rpm: 0,
       asicHealth: {
         lifecycle: 'MINING',
         stateAgeSeconds: 125,
@@ -186,6 +188,11 @@ describe('HomeComponent', () => {
     expect(text).not.toContain('validation stage');
     expect(text).not.toContain('operator lease');
     expect(text).not.toContain('manual arm');
+
+    const fanCard = fixture.nativeElement.querySelector('[gs-id="fan"]') as HTMLElement;
+    const fanText = fanCard.textContent?.replace(/\s+/g, ' ') ?? '';
+    expect(fanText).toContain('Fan Output100.0 %');
+    expect(fanText).toContain('Fan Speed5200 RPM');
   });
 
   describe('stale data and visibility state', () => {

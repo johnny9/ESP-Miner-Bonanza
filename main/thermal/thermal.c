@@ -71,6 +71,14 @@ esp_err_t Thermal_set_fan_percent(DeviceConfig * DEVICE_CONFIG, float percent)
     return ESP_OK;
 }
 
+uint16_t Thermal_get_fan_min_percent(const DeviceConfig * DEVICE_CONFIG)
+{
+    if (DEVICE_CONFIG != NULL && DEVICE_CONFIG->bonanza_bridge) {
+        return CONFIG_BZM_1002_FAN_MIN_PERCENT;
+    }
+    return 0;
+}
+
 uint16_t Thermal_get_fan_speed(DeviceConfig * DEVICE_CONFIG) 
 {
     if (DEVICE_CONFIG->bonanza_bridge) {

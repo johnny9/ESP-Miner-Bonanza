@@ -49,6 +49,7 @@
 #include "bzm_bridge_update.h"
 #include "bzm_ota_guard.h"
 #include "bzm_controller.h"
+#include "thermal.h"
 
 static const char * TAG = "http_server";
 static const char * CORS_TAG = "CORS";
@@ -797,6 +798,18 @@ bool check_settings_and_update(const cJSON * const root, char **redirect_url)
                      GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_voltage_mv);
             result = false;
         }
+        if (GLOBAL_STATE && cJSON_IsNumber(item) &&
+            (key == NVS_CONFIG_MANUAL_FAN_SPEED ||
+             key == NVS_CONFIG_MIN_FAN_SPEED)) {
+            const uint16_t minimum = Thermal_get_fan_min_percent(
+                &GLOBAL_STATE->DEVICE_CONFIG);
+            if (item->valueint < minimum) {
+                ESP_LOGW(TAG,
+                         "%s cannot be below this hardware's %u%% fan floor",
+                         setting->rest_name, (unsigned) minimum);
+                result = false;
+            }
+        }
     }
 
     if (result) {
@@ -905,6 +918,23 @@ static esp_err_t PATCH_update_settings(httpd_req_t * req)
     const bool tuning_settings_changed =
         cJSON_GetObjectItem(root, "frequency") != NULL ||
         cJSON_GetObjectItem(root, "coreVoltage") != NULL;
+    cJSON *overheat_mode_item =
+        cJSON_GetObjectItem(root, "overheat_mode");
+    const bool overheat_mode_changed =
+        overheat_mode_item != NULL &&
+        (cJSON_IsNumber(overheat_mode_item) ||
+         cJSON_IsBool(overheat_mode_item));
+    const bool requested_overheat_mode =
+        overheat_mode_changed &&
+        (overheat_mode_item->valueint != 0 ||
+         cJSON_IsTrue(overheat_mode_item));
+    if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge &&
+        overheat_mode_changed && !requested_overheat_mode &&
+        bzm_controller_overheat_recovery_active()) {
+        /* Treat the upstream settings action as a request to run recovery,
+         * not permission to clear its persistent marker while still hot. */
+        cJSON_DeleteItemFromObject(root, "overheat_mode");
+    }
 
     cJSON *hostname_item = cJSON_GetObjectItem(root, "hostname");
     char *current_hostname = cJSON_IsString(hostname_item) ? nvs_config_get_string(NVS_CONFIG_HOSTNAME) : NULL;
@@ -930,6 +960,9 @@ static esp_err_t PATCH_update_settings(httpd_req_t * req)
     }
     if (tuning_settings_changed) {
         bzm_controller_tuning_settings_changed();
+    }
+    if (overheat_mode_changed) {
+        bzm_controller_overheat_mode_changed(requested_overheat_mode);
     }
 
     // Create response JSON
@@ -1074,7 +1107,16 @@ static esp_err_t POST_mining_pause(httpd_req_t * req)
         return ESP_OK;
     }
 
-    GLOBAL_STATE->SYSTEM_MODULE.mining_paused = true;
+    if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
+        if (!bzm_controller_pause()) {
+            httpd_resp_set_status(req, "409 Conflict");
+            return httpd_resp_sendstr(
+                req,
+                "Bonanza pause blocked: verified OFF_SAFE unavailable");
+        }
+    } else {
+        GLOBAL_STATE->SYSTEM_MODULE.mining_paused = true;
+    }
     ESP_LOGI(TAG, "Mining paused by API request");
 
     httpd_resp_set_type(req, "application/json");
@@ -1100,7 +1142,16 @@ static esp_err_t POST_mining_resume(httpd_req_t * req)
         return ESP_OK;
     }
 
-    GLOBAL_STATE->SYSTEM_MODULE.mining_paused = false;
+    if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
+        if (!bzm_controller_resume()) {
+            httpd_resp_set_status(req, "409 Conflict");
+            return httpd_resp_sendstr(
+                req,
+                "Bonanza resume blocked: startup ownership or validation unavailable");
+        }
+    } else {
+        GLOBAL_STATE->SYSTEM_MODULE.mining_paused = false;
+    }
     ESP_LOGI(TAG, "Mining resumed by API request");
 
     httpd_resp_set_type(req, "application/json");

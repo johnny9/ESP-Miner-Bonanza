@@ -62,6 +62,13 @@ describe('UpdateComponent', () => {
     expect(component).toBeTruthy();
   });
 
+  it('recognizes only manifested Bonanza bridge release assets', () => {
+    expect(component.isBridgeFirmwareAsset(
+      'bonanza-bridge-fw-0.0.1-beta.1.bin')).toBeTrue();
+    expect(component.isBridgeFirmwareAsset('esp-miner.bin')).toBeFalse();
+    expect(component.isBridgeFirmwareAsset('bridge.uf2')).toBeFalse();
+  });
+
   it('shows bridge version and uploader for BZM products', () => {
     fixture.detectChanges();
     const text = fixture.nativeElement.textContent;

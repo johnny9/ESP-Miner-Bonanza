@@ -61,12 +61,16 @@
         </div>
 
         <div *ngIf="form.get('overheat_mode')?.value === 1" class="mt-4">
-            <button pButton type="button" label="Disable Overheat Mode"
+            <button pButton type="button"
+                    [label]="isBonanza ? 'Request Safe Overheat Recovery' : 'Disable Overheat Mode'"
                     class="p-button-danger w-full"
                     (click)="disableOverheatMode()">
             </button>
-            <small class="block mt-1 text-center text-primary">
+            <small *ngIf="!isBonanza" class="block mt-1 text-center text-primary">
                 Make sure to reset Frequency and Voltage before clicking this button.
+            </small>
+            <small *ngIf="isBonanza" class="block mt-1 text-center text-primary">
+                Fan stays at 100%. Recovery waits at least 30 seconds, verifies safe temperatures, reduces frequency and voltage, then repeats full startup validation.
             </small>
         </div>
 
@@ -91,9 +95,9 @@
             <label class="hidden md:flex md:col-2 md:m-0 hover-next-input">Minimum Fan Speed</label>
             <div class="col-12 md:col-10">
                 <label class="block mb-1">
-                    <span class="md:hidden mr-1">Minimum Fan Speed:</span>{{form.controls['minfanspeed'].value}} %
+                    <span class="md:hidden mr-1">Minimum Fan Speed:</span>{{form.controls['minFanSpeed'].value}} %
                 </label>
-                <p-slider [min]="0" [max]="99" formControlName="minfanspeed"></p-slider>
+                <p-slider [min]="fanSpeedMinimum" [max]="99" formControlName="minFanSpeed"></p-slider>
             </div>
         </div>
 
@@ -109,9 +113,13 @@
                         S19 Simulator
                     </b>
                 </label>
-                <p-slider formControlName="manualFanSpeed"></p-slider>
+                <p-slider [min]="fanSpeedMinimum" [max]="100" formControlName="manualFanSpeed"></p-slider>
             </div>
         </div>
+
+        <small *ngIf="fanSpeedMinimum > 0" class="block mt-2 text-color-secondary">
+            This hardware enforces a {{fanSpeedMinimum}}% minimum fan output.
+        </small>
     </div>
 
     <h3 class="mt-5">Display</h3>

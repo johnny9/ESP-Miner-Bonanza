@@ -43,12 +43,31 @@ describe('EditComponent', () => {
       defaultVoltage: 2800,
       voltageOptions: [2800, 2850, 2900, 3200],
       voltageTunable: true,
+      fanSpeedMinimum: 36,
     } as ISystemASIC);
 
     expect(component.hasTunableAsicSettings).toBeTrue();
+    expect(component.isBonanza).toBeTrue();
     expect(component.form.controls['frequency'].enabled).toBeTrue();
     expect(component.form.controls['coreVoltage'].enabled).toBeTrue();
     expect(component.noRestartFields).toContain('frequency');
     expect(component.noRestartFields).toContain('coreVoltage');
+  });
+
+  it('applies the hardware fan floor to live fan settings', () => {
+    const fb = TestBed.inject(FormBuilder);
+    component.form = fb.group({
+      minFanSpeed: [0],
+      manualFanSpeed: [10],
+    });
+
+    component.applyAsicCapabilities({
+      fanSpeedMinimum: 36,
+    } as ISystemASIC);
+
+    expect(component.fanSpeedMinimum).toBe(36);
+    expect(component.form.controls['minFanSpeed'].value).toBe(36);
+    expect(component.form.controls['manualFanSpeed'].value).toBe(36);
+    expect(component.noRestartFields).toContain('minFanSpeed');
   });
 });
