@@ -4,8 +4,9 @@ import { EditComponent } from './edit.component';
 import { provideHttpClient } from '@angular/common/http';
 import { provideToastr } from 'ngx-toastr';
 import { provideRouter } from '@angular/router';
-import { FormBuilder } from '@angular/forms';
+import { FormBuilder, FormControl, FormGroup } from '@angular/forms';
 import { SystemAsic as ISystemASIC } from 'src/app/generated/models';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
 
 describe('EditComponent', () => {
   let component: EditComponent;
@@ -14,7 +15,7 @@ describe('EditComponent', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({
       imports: [EditComponent],
-      providers: [provideHttpClient(), provideToastr(), provideRouter([])]
+      providers: [provideHttpClient(), provideToastr(), provideRouter([]), provideNoopAnimations()]
     });
     fixture = TestBed.createComponent(EditComponent);
     component = fixture.componentInstance;
@@ -69,5 +70,28 @@ describe('EditComponent', () => {
     expect(component.form.controls['minFanSpeed'].value).toBe(36);
     expect(component.form.controls['manualFanSpeed'].value).toBe(36);
     expect(component.noRestartFields).toContain('minFanSpeed');
+  });
+
+  it('shows external display information instead of local panel controls', () => {
+    component.form = new FormGroup({
+      frequency: new FormControl(800),
+      coreVoltage: new FormControl(2800),
+      autofanspeed: new FormControl(true),
+      minFanSpeed: new FormControl(36),
+      manualFanSpeed: new FormControl(70),
+      temptarget: new FormControl(60),
+      display: new FormControl('SSD1306 (128x32)'),
+      rotation: new FormControl(0),
+      displayTimeout: new FormControl(-1),
+      invertscreen: new FormControl(false),
+      statsFrequency: new FormControl(30),
+    });
+    component.externalDisplay = true;
+
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('external bonanzaDisplay');
+    expect(text).not.toContain('Invert Display Colors');
   });
 });

@@ -7,6 +7,7 @@ SRCS
     "log_buffer.c"
     "nvs_config.c"
     "display.c"
+    "bonanza_display.c"
     "screen.c"
     "input.c"
     "filesystem.c"
