@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "button_input.h"
 #include "input.h"
 
 #define GPIO_BUTTON_BOOT CONFIG_GPIO_BUTTON_BOOT
@@ -30,38 +31,23 @@ static void button_task(void * pvParameters)
 {
     (void) pvParameters;
 
-    bool raw_pressed = button_is_pressed();
-    bool stable_pressed = raw_pressed;
-    bool long_press_fired = false;
-    TickType_t raw_changed_at = xTaskGetTickCount();
-    TickType_t pressed_at = raw_changed_at;
-    TickType_t task_wake_time = raw_changed_at;
+    TickType_t task_wake_time = xTaskGetTickCount();
+    button_input_state_t state;
+    button_input_state_init(
+        &state, button_is_pressed(), pdTICKS_TO_MS(task_wake_time));
 
     while (true) {
-        TickType_t now = xTaskGetTickCount();
-        bool new_raw_pressed = button_is_pressed();
+        uint32_t now_ms = pdTICKS_TO_MS(xTaskGetTickCount());
+        button_input_event_t event = button_input_state_update(
+            &state, button_is_pressed(), now_ms,
+            BUTTON_DEBOUNCE_MS, LONG_PRESS_DURATION_MS);
 
-        if (new_raw_pressed != raw_pressed) {
-            raw_pressed = new_raw_pressed;
-            raw_changed_at = now;
-        }
-
-        if (raw_pressed != stable_pressed &&
-            now - raw_changed_at >= pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS)) {
-            stable_pressed = raw_pressed;
-
-            if (stable_pressed) {
-                pressed_at = now;
-                long_press_fired = false;
-            } else if (!long_press_fired && button_short_clicked_fn != NULL) {
+        if (event == BUTTON_INPUT_EVENT_SHORT_PRESS) {
+            if (button_short_clicked_fn != NULL) {
                 ESP_LOGI(TAG, "Short button click detected");
                 button_short_clicked_fn();
             }
-        }
-
-        if (stable_pressed && !long_press_fired &&
-            now - pressed_at >= pdMS_TO_TICKS(LONG_PRESS_DURATION_MS)) {
-            long_press_fired = true;
+        } else if (event == BUTTON_INPUT_EVENT_LONG_PRESS) {
             if (button_long_pressed_fn != NULL) {
                 ESP_LOGI(TAG, "Long button press detected");
                 button_long_pressed_fn();

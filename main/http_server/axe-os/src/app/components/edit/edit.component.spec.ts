@@ -12,6 +12,20 @@ describe('EditComponent', () => {
   let component: EditComponent;
   let fixture: ComponentFixture<EditComponent>;
 
+  const createDisplayForm = () => new FormGroup({
+    frequency: new FormControl(800),
+    coreVoltage: new FormControl(2800),
+    autofanspeed: new FormControl(true),
+    minFanSpeed: new FormControl(36),
+    manualFanSpeed: new FormControl(70),
+    temptarget: new FormControl(60),
+    display: new FormControl('SSD1306 (128x32)'),
+    rotation: new FormControl(0),
+    displayTimeout: new FormControl(-1),
+    invertscreen: new FormControl(false),
+    statsFrequency: new FormControl(30),
+  });
+
   beforeEach(() => {
     TestBed.configureTestingModule({
       imports: [EditComponent],
@@ -73,25 +87,25 @@ describe('EditComponent', () => {
   });
 
   it('shows external display information instead of local panel controls', () => {
-    component.form = new FormGroup({
-      frequency: new FormControl(800),
-      coreVoltage: new FormControl(2800),
-      autofanspeed: new FormControl(true),
-      minFanSpeed: new FormControl(36),
-      manualFanSpeed: new FormControl(70),
-      temptarget: new FormControl(60),
-      display: new FormControl('SSD1306 (128x32)'),
-      rotation: new FormControl(0),
-      displayTimeout: new FormControl(-1),
-      invertscreen: new FormControl(false),
-      statsFrequency: new FormControl(30),
-    });
+    component.form = createDisplayForm();
     component.externalDisplay = true;
+    component.externalDisplayConnected = true;
 
     fixture.detectChanges();
 
     const text = fixture.nativeElement.textContent;
-    expect(text).toContain('external bonanzaDisplay');
+    expect(text).toContain('External bonanzaDisplay: connected');
     expect(text).not.toContain('Invert Display Colors');
+  });
+
+  it('reports when the external display is not connected', () => {
+    component.form = createDisplayForm();
+    component.externalDisplay = true;
+    component.externalDisplayConnected = false;
+
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent)
+      .toContain('External bonanzaDisplay: not connected');
   });
 });

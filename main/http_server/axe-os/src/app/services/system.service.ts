@@ -134,6 +134,7 @@ export class SystemApiService {
         boardVersion: "602",
         display: "SSD1306 (128x32)",
         displayBackend: "lvgl" as const,
+        displayConnected: true,
         rotation: 0,
         invertscreen: 0,
         displayTimeout: -1,

@@ -329,6 +329,45 @@ def pause_resume_check(report: Report, base_url: str,
     return info
 
 
+def identify_check(report: Report, base_url: str) -> None:
+    """Verify the 30-second identify deadline and leave identify disabled."""
+    second_enabled = False
+    try:
+        body, _ = request_bytes(
+            base_url, "/api/system/identify", data=b"{}", timeout=10)
+        first_message = json.loads(body).get("message", "")
+        first_enabled = "for 30 seconds" in first_message
+        report.check("identify request", first_enabled, first_message)
+        if not first_enabled:
+            return
+
+        time.sleep(31)
+        body, _ = request_bytes(
+            base_url, "/api/system/identify", data=b"{}", timeout=10)
+        second_message = json.loads(body).get("message", "")
+        second_enabled = "for 30 seconds" in second_message
+        report.check(
+            "identify expires independently of LVGL",
+            second_enabled,
+            second_message,
+        )
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        report.check("identify behavior", False, str(exc))
+    finally:
+        if second_enabled:
+            try:
+                body, _ = request_bytes(
+                    base_url, "/api/system/identify", data=b"{}", timeout=10)
+                message = json.loads(body).get("message", "")
+                report.check(
+                    "identify cleanup",
+                    "no longer" in message,
+                    message,
+                )
+            except (OSError, ValueError, urllib.error.URLError) as exc:
+                report.check("identify cleanup", False, str(exc))
+
+
 def ota_upload(report: Report, base_url: str, firmware: Path, web: Path,
                boot_timeout: float) -> dict[str, Any]:
     for name, path, endpoint in (
@@ -345,6 +384,12 @@ def health_check(report: Report, info: dict[str, Any], *, require_mining: bool,
     health = info.get("asicHealth")
     report.check("board identity", info.get("boardVersion") == "1002",
                  f"boardVersion={info.get('boardVersion')!r}")
+    report.check("external display backend",
+                 info.get("displayBackend") == "bonanza-i2c",
+                 f"displayBackend={info.get('displayBackend')!r}")
+    report.check("external display connection",
+                 info.get("displayConnected") is True,
+                 f"displayConnected={info.get('displayConnected')!r}")
     if not isinstance(health, dict):
         report.check("generic ASIC health", False, "asicHealth missing")
         return
@@ -549,6 +594,8 @@ def parse_args() -> argparse.Namespace:
                         help="explicitly request a safe production restart after sampling")
     parser.add_argument("--pause-resume-check", action="store_true",
                         help="explicitly exercise guarded Bonanza pause and resume")
+    parser.add_argument("--identify-check", action="store_true",
+                        help="exercise and clean up the 30-second display identify mode")
     return parser.parse_args()
 
 
@@ -562,6 +609,7 @@ def main() -> int:
         "serial": args.serial,
         "soakSeconds": args.soak_seconds,
         "pauseResumeCheck": args.pause_resume_check,
+        "identifyCheck": args.identify_check,
         "espRepo": str(repo),
         "bridgeRepo": str(args.bridge_repo.resolve()),
     }
@@ -610,6 +658,8 @@ def main() -> int:
         if args.pause_resume_check:
             info = pause_resume_check(report, base_url, args.boot_timeout)
         health_check(report, info, require_mining=True, max_work_age=args.max_work_age)
+        if args.identify_check:
+            identify_check(report, base_url)
         try:
             check_ui(report, base_url)
         except (OSError, ValueError, urllib.error.URLError) as exc:

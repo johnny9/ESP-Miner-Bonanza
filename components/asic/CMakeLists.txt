@@ -51,6 +51,7 @@ REQUIRES
     "stratum_v2"
     "tcp_transport"
     "esp_timer"
+    "identify_mode"
 )
 
 

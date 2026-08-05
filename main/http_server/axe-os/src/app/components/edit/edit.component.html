@@ -125,8 +125,9 @@
     <h3 class="mt-5">Display</h3>
 
     <div *ngIf="externalDisplay" class="card">
-        <p-message severity="info" icon="pi pi-desktop" styleClass="w-full">
-            This board uses an external bonanzaDisplay. Its layout, rotation, colors, and sleep behavior are controlled by the display firmware.
+        <p-message [severity]="externalDisplayConnected ? 'success' : 'warn'" icon="pi pi-desktop" styleClass="w-full">
+            External bonanzaDisplay: {{externalDisplayConnected ? 'connected' : 'not connected'}}.
+            Its layout, rotation, colors, and sleep behavior are controlled by the display firmware.
         </p-message>
     </div>
 

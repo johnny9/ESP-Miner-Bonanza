@@ -1010,12 +1010,13 @@ static esp_err_t POST_identify(httpd_req_t * req)
         return ESP_OK;
     }
 
-    if (GLOBAL_STATE->SYSTEM_MODULE.identify_mode_time_ms > 0) {
-        GLOBAL_STATE->SYSTEM_MODULE.identify_mode_time_ms = 0;
+    const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    bool enabled = identify_mode_toggle(
+        &GLOBAL_STATE->SYSTEM_MODULE.identify_mode, now_ms, 30000U);
+    if (!enabled) {
         cJSON_AddStringToObject(root, "message", "The device no longer says \"Hi!\".");
     } else {
-        GLOBAL_STATE->SYSTEM_MODULE.identify_mode_time_ms = 30000;
-         cJSON_AddStringToObject(root, "message", "The device says \"Hi!\" for 30 seconds.");
+        cJSON_AddStringToObject(root, "message", "The device says \"Hi!\" for 30 seconds.");
     }
 
     esp_err_t res = HTTP_send_json(req, root, &api_common_prebuffer_len);

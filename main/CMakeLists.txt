@@ -90,6 +90,9 @@ PRIV_REQUIRES
     "tcp_transport"
     "stratum_v2"
     "esp_mm"
+    "bonanza_display_protocol"
+    "button_input"
+    "identify_mode"
 
 EMBED_FILES "http_server/recovery_page.html"
 )

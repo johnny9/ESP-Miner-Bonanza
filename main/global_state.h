@@ -16,6 +16,7 @@
 #include "scoreboard.h"
 #include "esp_transport.h"
 #include "asic_job_store.h"
+#include "identify_mode.h"
 
 typedef enum {
     STRATUM_PROTOCOL_UNKNOWN = 0,
@@ -71,7 +72,7 @@ typedef struct
     char ap_ssid[12];
     bool ap_enabled;
     bool is_connected;
-    int identify_mode_time_ms;
+    identify_mode_t identify_mode;
     char * pool_url;
     char * fallback_pool_url;
     uint16_t pool_port;
@@ -106,6 +107,7 @@ typedef struct
     uint16_t power_fault;
     uint32_t lastClockSync;
     bool is_screen_active;
+    bool external_display_connected;
     bool is_firmware_update;
     char firmware_update_filename[20];
     char firmware_update_status[20];

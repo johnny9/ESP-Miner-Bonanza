@@ -14,4 +14,5 @@ REQUIRES
     "esp_event"
     "stratum"
     "espressif__mdns"
+    "identify_mode"
 )

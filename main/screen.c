@@ -421,10 +421,9 @@ static void screen_update_cb(lv_timer_t * timer)
     uint32_t inactive_time = lv_display_get_inactive_time(NULL);
     screen_t current_screen = get_current_screen();
 
-    if (module->identify_mode_time_ms > 0) {
-        module->identify_mode_time_ms -= SCREEN_UPDATE_MS;
-    }
-    bool is_identify_mode = module->identify_mode_time_ms > 0;
+    bool is_identify_mode = identify_mode_is_active(
+        &module->identify_mode,
+        (uint32_t)(esp_timer_get_time() / 1000));
 
     bool enable_display = false;
     if (display_timeout_config < 0) {
@@ -651,8 +650,10 @@ static void screen_update_cb(lv_timer_t * timer)
 
 void screen_button_press() 
 {
-    if (GLOBAL_STATE->SYSTEM_MODULE.identify_mode_time_ms > 0) {
-        GLOBAL_STATE->SYSTEM_MODULE.identify_mode_time_ms = 0;
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (identify_mode_is_active(
+            &GLOBAL_STATE->SYSTEM_MODULE.identify_mode, now_ms)) {
+        identify_mode_cancel(&GLOBAL_STATE->SYSTEM_MODULE.identify_mode);
     } else {
         screen_next();
     }
