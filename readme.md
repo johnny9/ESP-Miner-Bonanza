@@ -23,7 +23,7 @@ The 1002x hardware is still described as a prototype by its hardware repository.
 | Frequency targeting | 🟢 Working | AxeOS accepts 800–2000 MHz without rebooting. The controller keeps mining through a bounded initial shortcut and then advances directly to the user target in 25 MHz steps, replacing work between steps. |
 | Direct voltage tuning | 🟢 Working | AxeOS accepts an aggregate TPS546 rail target from 2.1–3.2 V and applies it live with command, PGOOD, status, and telemetry readback validation. |
 | Automatic and manual fan control | 🟢 Working | The ESP PID/manual task drives the bridge after mining reaches `RUNNING`, with a hardware-qualified 36% command floor and a 1000 RPM live interlock. Safe/off, maintenance, and overheat states force 100%. The matching bridge image is included in Bonanza releases. |
-| On-device display | 🔴 Blocked by display firmware | The optional Bonanza display is a separate RP2354A/SSD1322 computer connected to ESP GPIO4–7, not an upstream passive I²C panel. Its repository publishes hardware only, with no RP2354 firmware or host protocol to implement against. Generic ESP-Miner display settings therefore do not control it. |
+| On-device display | 🟢 Working | Board 1002 publishes identity, network, share, hashrate, temperature, power, frequency, and fan metrics once per second to the RP2354A/SSD1322 bonanzaDisplay over its protocol-v1 I²C register interface on GPIO6/GPIO7. AxeOS reports live connection state; display layout and appearance remain owned by the display firmware. |
 | Bonanza-aware latest-release lookup | 🟢 Working | AxeOS queries the ESP-Miner-Bonanza feed, accepts its published beta releases, and links the ESP firmware, AxeOS filesystem, and matching bridge image. |
 
 ## AxeOS feature parity
@@ -49,7 +49,7 @@ This table tracks AxeOS feature parity for the Bitaxe Bonanza. 🟢 **Working** 
 | Swarm | Metrics and remote actions | 🟢 Working | Hashrate, ASIC-rail power, hottest ASIC temperature, shares, best difficulty, uptime, pool difficulty, version, remote settings, guarded pause/resume, restart, and identify work. |
 | Logs | Live and downloaded logs | 🟢 Working | Real-time WebSocket logs, filtering, scroll pause/resume, clear, and download are available. |
 | System | Device and runtime information | 🟢 Working | Shows Bonanza model/board/ASIC identity, uptime/reset reason, network state, CPU/heap usage, and firmware, AxeOS, and ESP-IDF versions. Bridge details are shown in Bonanza Miner Health. |
-| System | Identify device | 🟢 Working | Triggers the normal on-device identify display. |
+| System | Identify device | 🟢 Working | Shows `HI!` in the local LVGL identify view or in the external bonanzaDisplay device-name field for 30 seconds. |
 | Pool | Stratum V1 | 🟢 Working | Primary/fallback pools, suggested difficulty, extranonce subscribe, no TLS/system CA/custom CA, and coinbase decoding are implemented. |
 | Pool | Stratum V2 | 🟢 Working | Primary/fallback pools, Standard and Extended Channels, optional authority key validation, encrypted transport, and Extended Channel coinbase decoding are implemented. |
 | Pool | Automatic fallback and recovery | 🟢 Working | The protocol coordinator switches pools after bounded failures, stops requesting work when all configured pools are unavailable, and probes for recovery. |
@@ -61,14 +61,14 @@ This table tracks AxeOS feature parity for the Bitaxe Bonanza. 🟢 **Working** 
 | Settings | ASIC voltage | 🟢 Working | Presets cover 2.8–3.2 V and overclock mode accepts any bounded 2.1–3.2 V aggregate rail value. The user value is applied and verified live without rebooting. |
 | Settings | Automatic/manual fan control | 🟢 Working | Target temperature, automatic minimum, and manual speed settings drive the bridge during healthy `RUNNING`. AxeOS advertises and enforces the hardware-qualified 36% floor; startup, safe-off, maintenance, faults, shutdown, and overheat recovery force 100%. |
 | Settings | Overheat recovery and mode reset | 🟢 Working | ASIC >75 C or TPS546 >105 C enters persistent overheat mode and verified `OFF_SAFE`. The settings action requests recovery but cannot bypass the 30-second, 95 C regulator, full-fan, reduced-setting, and complete startup-validation gates; successful recovery clears the mode automatically. |
-| Settings | On-device display and display configuration | 🔴 Blocked by display firmware | The optional RP2354A/SSD1322 display board has no published firmware or ESP host protocol. Upstream's direct passive-panel driver cannot control that separate processor, so the generic settings remain nonfunctional for this accessory. |
+| Settings | On-device display and display configuration | 🟢 Working | AxeOS reports whether the external bonanzaDisplay is connected and hides settings that only apply to ESP-driven passive panels. Layout, rotation, colors, and sleep behavior are intentionally controlled by the external display firmware. |
 | Settings | Statistics/data logging | 🟢 Working | Logging and retention include Bonanza power, temperature, voltage, fan percentage, and fan RPM data. |
 | Update | Manual ESP firmware OTA | 🟢 Working | Uploading `esp-miner.bin` is guarded by a verified Bonanza safe-off transition before flash and restart. |
 | Update | Manual AxeOS OTA | 🟢 Working | Uploading `www.bin`, progress reporting, and recovery mode are available. |
 | Update | RP2040 bridge firmware over HTTP | 🟢 Working | AxeOS accepts a raw RP2040 `.bin` with the board-1002 BZM bridge identity manifest, moves an operating bridge to verified safe-off, or keeps the ESP-owned regulator verified off for factory-blank recovery, then programs and verifies the bridge over onboard SWD, resets it, and confirms the running protocol and version match the manifest. A query-only `force=true` bypass exists for destructive regression fixtures and is not exposed in AxeOS. |
 | Update | Latest-release lookup/download | 🟢 Working | AxeOS queries published ESP-Miner-Bonanza releases, including the prototype beta channel, and links `esp-miner.bin`, `www.bin`, and the versioned matching bridge image. |
 | Other | Bitcoin whitepaper | 🟢 Working | The bundled whitepaper link is a static AxeOS feature. |
-| API | REST and live WebSocket API | 🟢 Working | System, ASIC, statistics, scoreboard, logs, settings, live frequency/voltage/fan changes, guarded pause/resume and restart, identify, ESP/AxeOS OTA, and bridge firmware update paths are available. |
+| API | REST and live WebSocket API | 🟢 Working | System, ASIC, statistics, scoreboard, logs, settings, display backend/connection health, live frequency/voltage/fan changes, guarded pause/resume and restart, identify, ESP/AxeOS OTA, and bridge firmware update paths are available. |
 
 ## Community
 The upstream ESP-Miner firmware and AxeOS are maintained by OSMU, which hosts a [discussion forum](https://osmu.xyz).
