@@ -133,7 +133,7 @@ class Bitaxe1002ProductionDefaultsValidationTest(unittest.TestCase):
             "CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY"
         ]
         path = self.write_defaults({
-            "CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY": "16",
+            "CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY": "64",
         })
         with self.assertRaisesRegex(
             ValueError,
