@@ -5,6 +5,14 @@
 
 #include "esp_log.h"
 
+static const char *const mining_debug_tags[] = {
+    "asic_result",
+    "scoreboard",
+    "stratum_api",
+    "stratum_v1_task",
+    "stratum_v2_task",
+};
+
 bool log_level_config_parse(const char *name, esp_log_level_t *level)
 {
     if (name == NULL || level == NULL) {
@@ -33,7 +41,13 @@ bool log_level_config_apply(const char *name)
         return false;
     }
 
-    esp_log_level_set("*", level);
+    const esp_log_level_t default_level =
+        level == ESP_LOG_DEBUG ? ESP_LOG_INFO : level;
+    esp_log_level_set("*", default_level);
+
+    for (size_t i = 0; i < sizeof(mining_debug_tags) / sizeof(mining_debug_tags[0]); i++) {
+        esp_log_level_set(mining_debug_tags[i], level);
+    }
     return true;
 }
 
