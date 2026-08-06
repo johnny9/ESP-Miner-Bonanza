@@ -29,6 +29,10 @@ raw bridge-to-ESP UART runs at 2 Mbaud, more than twelve times its 160 kbit/s
 measured receive payload budget, to provide board-level signal margin without
 reducing ASIC work coverage. Cumulative PIO FIFO and DMA-ring overflow counters
 are read through the bridge control protocol.
+Thermal and voltage telemetry uses the maximum sensor TDM gap of 63, reducing
+the shared return stream to approximately 6.2 reports per second per ASIC.
+This is the lowest supported telemetry cadence and remains comfortably inside
+the two-second runtime freshness limit.
 
 ## Safety and recovery
 

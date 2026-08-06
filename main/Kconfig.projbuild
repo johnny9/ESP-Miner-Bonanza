@@ -181,14 +181,14 @@ menu "Bitaxe Configuration"
         config BZM_1002_SENSOR_TDM_GAP_COUNT
             int "Thermal/voltage TDM reporting interval gap"
             range 0 63
-            default 0
+            default 63
             help
-                Programs Bonanza local register 0x2d. Zero is the BIRDS
-                maximum-rate reference; larger values skip reporting
-                intervals and reduce shared TDM traffic. At the reference
-                5 Mbaud, 100-slot, 127-bit schedule, 63 is approximately
-                6.2 reports per second per ASIC and remains inside the
-                default two-second telemetry freshness requirement.
+                Programs Bonanza local register 0x2d. The production default
+                of 63 minimizes shared TDM traffic at approximately 6.2
+                reports per second per ASIC while remaining inside the
+                default two-second telemetry freshness requirement. Lower
+                values report more often; zero is the BIRDS maximum-rate
+                reference at approximately 394 reports per second per ASIC.
 
         config BZM_1002_TEMP_MIN_C
             int "Provisional minimum ASIC temperature (C)"
