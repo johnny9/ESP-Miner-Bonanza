@@ -164,7 +164,7 @@ int BZM_set_max_baud(void)
 uint8_t BZM_init(GlobalState * state)
 {
     if (state == NULL || SERIAL_set_baud(BZM_set_max_baud()) != ESP_OK) {
-        ESP_LOGE(TAG, "Could not select the 2 Mbaud raw BZM bridge link");
+        ESP_LOGE(TAG, "Could not select the 5 Mbaud raw BZM bridge link");
         return 0;
     }
 
@@ -1248,7 +1248,7 @@ static bool staged_mining_dispatch_checkpoint(void * context)
         return false;
     }
 
-    /* A full 236-engine dispatch keeps the 2 Mbaud ESP-to-bridge link busy
+    /* A full 236-engine dispatch keeps the 5 Mbaud ESP-to-bridge link busy
      * for a bounded interval. The bridge is also
      * forwarding addressed TDM telemetry/results in the other direction.
      * Give that receive path a bounded idle interval, then drain the ESP RX
