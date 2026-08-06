@@ -128,5 +128,18 @@ class Bitaxe1002ProductionDefaultsValidationTest(unittest.TestCase):
         ):
             validate_production_defaults(path)
 
+    def test_rejects_a_nonce_floor_that_does_not_match_the_asic_filter(self):
+        expected_floor = EXPECTED_PRODUCTION_DEFAULTS[
+            "CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY"
+        ]
+        path = self.write_defaults({
+            "CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY": "16",
+        })
+        with self.assertRaisesRegex(
+            ValueError,
+            f"expected {expected_floor}.*Bonanza nonce difficulty must equal",
+        ):
+            validate_production_defaults(path)
+
 if __name__ == "__main__":
     unittest.main()

@@ -77,6 +77,14 @@ static uint16_t FAST_DISPATCH_REMAINING;
 #define BZM_STEADY_JOB_INTERVAL_MS 100.0
 
 #define BZM_RESULT_DEDUP_CAPACITY 256U
+#define BZM_CONFIGURED_RESULT_DIFFICULTY \
+    (UINT64_C(1) << (CONFIG_BZM_1002_LEAD_ZEROS - 32))
+
+_Static_assert(
+    CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY ==
+        BZM_CONFIGURED_RESULT_DIFFICULTY,
+    "Bonanza local nonce difficulty must match the ASIC result filter");
+
 typedef struct {
     bool valid;
     asic_work_handle_t work_handle;
@@ -531,11 +539,11 @@ void BZM_record_local_result(GlobalState *state, uint8_t asic_index,
 {
     (void)state;
     const uint64_t difficulty_one_units =
-        UINT64_C(1) << (CONFIG_BZM_1002_LEAD_ZEROS - 32);
+        BZM_CONFIGURED_RESULT_DIFFICULTY;
     const bool proof =
         asic_index < BZM_MAX_ASIC_COUNT && valid &&
         bzm_running_result_meets_proof(nonce_difficulty,
-                                      (double)difficulty_one_units);
+            (double)CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY);
     bzm_engine_location_t engine;
     const bool attributed =
         asic_index < BZM_MAX_ASIC_COUNT &&

@@ -30,8 +30,8 @@ EXPECTED_PRODUCTION_DEFAULTS = {
     "CONFIG_BZM_1002_MIN_VALID_RESULTS": "1",
     "CONFIG_BZM_1002_MAX_LOCAL_REJECTIONS": "16",
     "CONFIG_BZM_1002_MAX_MAPPING_REJECTIONS": "16",
-    "CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY": "16",
-    "CONFIG_BZM_1002_LEAD_ZEROS": "36",
+    "CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY": "64",
+    "CONFIG_BZM_1002_LEAD_ZEROS": "38",
     "CONFIG_BZM_1002_PARSER_REALIGN_MAX_DISCARDS": "256",
     "CONFIG_BZM_1002_PARSER_REALIGN_CLEAN_WINDOWS": "2",
     "CONFIG_BZM_1002_PARSER_REALIGN_MAX_WINDOWS": "20",
@@ -117,6 +117,19 @@ def validate_production_defaults(path: Path) -> None:
             errors.append(
                 f"{key}: expected {rendered}, got {values[key]!r}"
             )
+    try:
+        lead_zeros = int(values["CONFIG_BZM_1002_LEAD_ZEROS"] or "")
+        minimum_difficulty = int(
+            values["CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY"] or ""
+        )
+        filter_difficulty = 1 << (lead_zeros - 32)
+        if minimum_difficulty != filter_difficulty:
+            errors.append(
+                "Bonanza nonce difficulty must equal "
+                "2^(BZM_1002_LEAD_ZEROS - 32)"
+            )
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        pass
     if errors:
         raise ValueError("; ".join(errors))
 
