@@ -24,11 +24,11 @@ The timestamp budget is 60, matching the BIRDS production scheduling model.
 Steady work advances every 100 ms, completing a measured full engine rotation
 in roughly 39 seconds so work is refreshed before that timestamp budget
 expires.
-The ASIC-facing PIO link and the raw bridge-to-ESP UART both run at 5 Mbaud.
-The bridge-to-ESP link has more than thirty times its 160 kbit/s measured
-receive payload budget, and both endpoints produce the rate with exact UART
-dividers. Cumulative PIO FIFO and DMA-ring overflow counters are read through
-the bridge control protocol.
+The ASIC-facing PIO link remains at the qualified 5 Mbaud rate. The separate
+raw bridge-to-ESP UART runs at 2 Mbaud, more than twelve times its 160 kbit/s
+measured receive payload budget, to provide board-level signal margin without
+reducing ASIC work coverage. Cumulative PIO FIFO and DMA-ring overflow counters
+are read through the bridge control protocol.
 
 ## Safety and recovery
 

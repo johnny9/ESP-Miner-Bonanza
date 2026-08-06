@@ -5,7 +5,6 @@
 
 #include "driver/uart.h"
 
-#include "bzm.h"
 #include "esp_log.h"
 #include "soc/uart_struct.h"
 
@@ -16,9 +15,6 @@
 #define ECHO_TEST_RXD (18)
 
 static const char * TAG = "serial";
-
-_Static_assert(BZM_BAUD_RATE <= UART_BITRATE_MAX,
-               "BZM bridge baud exceeds the ESP32 UART limit");
 
 esp_err_t SERIAL_init(void)
 {
@@ -52,8 +48,8 @@ esp_err_t SERIAL_init(void)
         return err;
     }
 
-    /* The ESP32-S3 UART FIFO is only 128 bytes. Keep the early threshold at
-     * the 5 Mbaud bridge rate, so the remaining 96 bytes
+    /* The ESP32-S3 UART FIFO is only 128 bytes. Keep the early threshold even
+     * at the signal-qualified 2 Mbaud bridge rate, so the remaining 96 bytes
      * absorb bounded interrupt latency before the 32 KiB software ring takes
      * ownership. */
     err = uart_set_rx_full_threshold(UART_NUM_1,

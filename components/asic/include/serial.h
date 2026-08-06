@@ -23,7 +23,7 @@ typedef enum
 #define SERIAL_RX_MAX_DISPATCH_BLACKOUT_MS 1250U
 #define SERIAL_HARDWARE_FIFO_BYTES 128U
 #define SERIAL_RX_FIFO_FULL_THRESHOLD 32U
-#define SERIAL_WIRE_BYTES_PER_SECOND 500000U
+#define SERIAL_WIRE_BYTES_PER_SECOND 200000U
 #define SERIAL_MAX_ISR_LATENCY_US 150U
 
 static inline bool SERIAL_buffer_capacity_covers(uint32_t buffer_bytes, uint32_t bytes_per_second,

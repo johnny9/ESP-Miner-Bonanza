@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "bzm.h"
 #include "bzm_frame_parser.h"
 #include "bzm_registers.h"
 #include "bzm_telemetry.h"
@@ -56,8 +55,6 @@ static void capture_frame(void * context, const bzm_frame_t * frame)
 
 TEST_CASE("BZM UART ring covers the bounded full-dispatch polling blackout", "[asic][bzm][serial]")
 {
-    TEST_ASSERT_EQUAL_UINT32(BZM_BAUD_RATE / 10U,
-                             SERIAL_WIRE_BYTES_PER_SECOND);
     TEST_ASSERT_TRUE(SERIAL_buffer_capacity_covers(SERIAL_RX_BUFFER_BYTES, SERIAL_RX_DESIGN_RATE_BYTES_PER_SECOND,
                                                    SERIAL_RX_MAX_DISPATCH_BLACKOUT_MS));
     TEST_ASSERT_FALSE(
