@@ -9,6 +9,7 @@ import gzip
 import hashlib
 import http.client
 import json
+import math
 import re
 import socket
 import struct
@@ -43,6 +44,7 @@ REQUIRED_UI_LABELS = (
 REQUEST_SOURCE_ADDRESS: tuple[str, int] | None = None
 REQUEST_CONNECTION: http.client.HTTPConnection | None = None
 REQUEST_CONNECTION_TARGET: tuple[str, int] | None = None
+RESTART_FRESH_UPTIME_MAX_SECONDS = 30.0
 
 
 def close_request_connection() -> None:
@@ -234,6 +236,133 @@ def wait_for_lifecycle(base_url: str, expected: set[str],
         f"last={last}")
 
 
+def configured_tuning_target_status(
+    info: dict[str, Any],
+) -> tuple[bool, str]:
+    health = info.get("asicHealth")
+    if not isinstance(health, dict):
+        return False, "asicHealth missing"
+
+    try:
+        configured_frequency = float(info["frequency"])
+        configured_voltage = float(info["coreVoltage"])
+        actual_frequency = float(health["fixedFrequencyMHz"])
+        actual_voltage = float(health["fixedVoltageMV"])
+    except (KeyError, TypeError, ValueError):
+        return False, "configured or active tuning target missing"
+
+    values = (
+        configured_frequency,
+        configured_voltage,
+        actual_frequency,
+        actual_voltage,
+    )
+    if not all(math.isfinite(value) for value in values):
+        return False, "configured or active tuning target is not finite"
+
+    matches = (
+        abs(actual_frequency - configured_frequency) < 0.001 and
+        abs(actual_voltage - configured_voltage) < 0.001
+    )
+    detail = (
+        f"active={actual_frequency:g} MHz/{actual_voltage:g} mV "
+        f"configured={configured_frequency:g} MHz/{configured_voltage:g} mV"
+    )
+    return matches, detail
+
+
+def fan_projection_status(info: dict[str, Any]) -> tuple[bool, str]:
+    health = info.get("asicHealth")
+    if not isinstance(health, dict):
+        return False, "asicHealth missing"
+    try:
+        requested_percent = float(info["fanspeed"])
+        applied_percent = int(health["fanPercent"])
+        reported_rpm = int(info["fanrpm"])
+        health_rpm = int(health["fanRPM"])
+    except (KeyError, TypeError, ValueError):
+        return False, "fan command or telemetry missing"
+    if not math.isfinite(requested_percent):
+        return False, "fan command is not finite"
+
+    # The RP2040 protocol carries the applied command as a whole percent and
+    # the bridge rounds the ESP PID target with lroundf before transmitting.
+    expected_percent = math.floor(requested_percent + 0.5)
+    matches = (
+        applied_percent == expected_percent and reported_rpm == health_rpm)
+    return matches, (
+        f"AxeOS={requested_percent:g}%/{reported_rpm} RPM "
+        f"bridge={applied_percent}%/{health_rpm} RPM "
+        f"roundedCommand={expected_percent}%"
+    )
+
+
+def wait_for_tuning_target(base_url: str, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last = "unavailable"
+    while time.monotonic() < deadline:
+        try:
+            info = get_info(base_url)
+            health = info.get("asicHealth") or {}
+            matches, last = configured_tuning_target_status(info)
+            if matches or health.get("lifecycle") == "FAULT":
+                return info
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            last = str(exc)
+        time.sleep(1)
+    raise RuntimeError(
+        f"configured tuning target was not reached within {timeout:.0f}s; "
+        f"last={last}")
+
+
+def wait_for_fan_projection(base_url: str, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last = "unavailable"
+    while time.monotonic() < deadline:
+        try:
+            info = get_info(base_url)
+            health = info.get("asicHealth") or {}
+            matches, last = fan_projection_status(info)
+            if matches or health.get("lifecycle") == "FAULT":
+                return info
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            last = str(exc)
+        time.sleep(0.2)
+    raise RuntimeError(
+        f"fan telemetry did not converge within {timeout:.0f}s; last={last}")
+
+
+def restart_observed(previous_uptime: float, info: dict[str, Any],
+                     saw_disconnect: bool) -> bool:
+    try:
+        current_uptime = float(info["uptimeSeconds"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return math.isfinite(current_uptime) and (
+        current_uptime < previous_uptime or
+        (saw_disconnect and
+         current_uptime <= RESTART_FRESH_UPTIME_MAX_SECONDS))
+
+
+def wait_for_restart(base_url: str, previous_uptime: float,
+                     timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    saw_disconnect = False
+    last = "device never stopped serving the pre-restart session"
+    while time.monotonic() < deadline:
+        try:
+            info = get_info(base_url, timeout=2)
+            if restart_observed(previous_uptime, info, saw_disconnect):
+                return info
+            last = f"uptimeSeconds={info.get('uptimeSeconds')!r}"
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            saw_disconnect = True
+            last = str(exc)
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"device restart was not observed within {timeout:.0f}s; last={last}")
+
+
 def pause_resume_check(report: Report, base_url: str,
                        transition_timeout: float) -> dict[str, Any]:
     paused = False
@@ -404,20 +533,14 @@ def health_check(report: Report, info: dict[str, Any], *, require_mining: bool,
     report.check("944 active engines",
                  health.get("activeEngineCount") == health.get("expectedEngineCount") == 944,
                  f"{health.get('activeEngineCount')}/{health.get('expectedEngineCount')}")
-    report.check("default startup target",
-                 health.get("fixedFrequencyMHz") == 800 and health.get("fixedVoltageMV") == 2800,
-                 f"{health.get('fixedFrequencyMHz')} MHz, {health.get('fixedVoltageMV')} mV")
+    tuning_matches, tuning_detail = configured_tuning_target_status(info)
+    report.check("configured tuning target", tuning_matches, tuning_detail)
     report.check("bridge compatibility", health.get("bridgeCompatible") is True,
                  f"version={health.get('bridgeVersion')} protocol={health.get('bridgeProtocolMajor')}.{health.get('bridgeProtocolMinor')}")
     report.check("fan telemetry", (health.get("fanRPM") or 0) > 0,
                  f"{health.get('fanPercent')}%, {health.get('fanRPM')} RPM")
-    report.check(
-        "AxeOS fan telemetry projection",
-        info.get("fanspeed") == health.get("fanPercent")
-        and info.get("fanrpm") == health.get("fanRPM"),
-        f"AxeOS={info.get('fanspeed')}%, {info.get('fanrpm')} RPM; "
-        f"health={health.get('fanPercent')}%, {health.get('fanRPM')} RPM",
-    )
+    fan_matches, fan_detail = fan_projection_status(info)
+    report.check("AxeOS fan telemetry projection", fan_matches, fan_detail)
     work_age = float(info.get("currentWorkAgeSeconds", -1))
     report.check("fresh pool work", 0 <= work_age <= max_work_age,
                  f"age={work_age:.1f}s connection={info.get('poolConnectionInfo')}")
@@ -657,6 +780,15 @@ def main() -> int:
                 continue
         if args.pause_resume_check:
             info = pause_resume_check(report, base_url, args.boot_timeout)
+        try:
+            info = wait_for_tuning_target(base_url, args.boot_timeout)
+        except RuntimeError as exc:
+            report.check("configured tuning target reached", False, str(exc))
+        try:
+            info = wait_for_fan_projection(
+                base_url, min(30.0, args.boot_timeout))
+        except RuntimeError as exc:
+            report.check("fan telemetry converged", False, str(exc))
         health_check(report, info, require_mining=True, max_work_age=args.max_work_age)
         if args.identify_check:
             identify_check(report, base_url)
@@ -672,9 +804,33 @@ def main() -> int:
                             args.sample_interval, args.request_timeout)
 
         if args.restart_check:
+            before_restart = get_info(base_url)
+            previous_uptime = float(before_restart.get("uptimeSeconds", 0))
             body, _ = request_bytes(base_url, "/api/system/restart", data=b"{}")
             report.check("safe restart request", True, body.decode("utf-8", "replace").strip())
-            wait_for_device(base_url, args.boot_timeout)
+            try:
+                info = wait_for_restart(
+                    base_url, previous_uptime, args.boot_timeout)
+                info = wait_for_lifecycle(
+                    base_url, {"MINING", "FAULT"}, args.boot_timeout)
+                info = wait_for_tuning_target(base_url, args.boot_timeout)
+                health = info.get("asicHealth") or {}
+                report.check(
+                    "safe restart completes validated mining",
+                    health.get("lifecycle") == "MINING" and
+                    not health.get("lastFault") and
+                    (health.get("locallyValidResults") or 0) > 0 and
+                    configured_tuning_target_status(info)[0],
+                    f"uptime={info.get('uptimeSeconds')}s "
+                    f"reset={info.get('resetReason')!r} "
+                    f"validResults={health.get('locallyValidResults')} "
+                    f"{configured_tuning_target_status(info)[1]}",
+                )
+            except (OSError, RuntimeError, ValueError,
+                    urllib.error.URLError) as exc:
+                report.check(
+                    "safe restart completes validated mining", False,
+                    str(exc))
 
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report.as_dict(), indent=2, sort_keys=True) + "\n")
