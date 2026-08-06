@@ -4,6 +4,8 @@
 #include "asic_common.h"
 #include <pthread.h>
 
+typedef struct hashrate_counter_window hashrate_counter_window_t;
+
 typedef struct {
     uint32_t value;
     uint64_t time_us;
@@ -14,6 +16,7 @@ typedef struct {
     measurement_t* total_measurement;
     measurement_t** domain_measurements;
     measurement_t* error_measurement;
+    hashrate_counter_window_t* driver_counter_windows;
 
     pthread_mutex_t lock;
     bool is_initialized;

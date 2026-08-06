@@ -7,6 +7,7 @@
 #include "system.h"
 #include "asic_common.h"
 #include "asic.h"
+#include "hashrate_counter_window.h"
 #include "utils.h"
 
 #define EPSILON 0.0001f
@@ -14,7 +15,7 @@
 #define HASHRATE_UNIT 0x100000uLL // Hashrate register unit (2^24 hashes)
 
 #define POLL_RATE 1000
-#define HASHRATE_1M_SIZE (60000 / POLL_RATE)  // 12
+#define HASHRATE_1M_SIZE (60000 / POLL_RATE)  // 60
 #define HASHRATE_10M_SIZE 10
 #define HASHRATE_1H_SIZE 6
 #define DIV_10M (HASHRATE_1M_SIZE)
@@ -56,6 +57,10 @@ void hashrate_monitor_reset_measurements(void *pvParameters)
     memset(HASHRATE_MONITOR_MODULE->total_measurement, 0, asic_count * sizeof(measurement_t));
     memset(HASHRATE_MONITOR_MODULE->domain_measurements[0], 0, asic_count * hash_domains * sizeof(measurement_t));
     memset(HASHRATE_MONITOR_MODULE->error_measurement, 0, asic_count * sizeof(measurement_t));
+    if (HASHRATE_MONITOR_MODULE->driver_counter_windows != NULL) {
+        memset(HASHRATE_MONITOR_MODULE->driver_counter_windows, 0,
+            asic_count * sizeof(hashrate_counter_window_t));
+    }
     pthread_mutex_unlock(&HASHRATE_MONITOR_MODULE->lock);
 }
 
@@ -157,6 +162,8 @@ void hashrate_monitor_task(void *pvParameters)
         HASHRATE_MONITOR_MODULE->domain_measurements[asic_nr] = data + (asic_nr * hash_domains);
     }
     HASHRATE_MONITOR_MODULE->error_measurement = heap_caps_malloc(asic_count * sizeof(measurement_t), MALLOC_CAP_SPIRAM);
+    HASHRATE_MONITOR_MODULE->driver_counter_windows = heap_caps_malloc(
+        asic_count * sizeof(hashrate_counter_window_t), MALLOC_CAP_SPIRAM);
     uint32_t *driver_hash_counters = heap_caps_malloc(
         asic_count * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
 
@@ -185,15 +192,31 @@ void hashrate_monitor_task(void *pvParameters)
             bool counter_snapshot = ASIC_get_hashrate_counters(
                 GLOBAL_STATE, driver_hash_counters, asic_count);
             if (counter_snapshot) {
+                /* Bonanza exposes nonce results rather than a hardware
+                 * hashrate register. Keep the one-second refresh cadence but
+                 * derive its displayed rate from a trailing 30-second slice
+                 * of the difficulty-weighted result counters. */
                 uint64_t timestamp_us = esp_timer_get_time();
                 pthread_mutex_lock(&HASHRATE_MONITOR_MODULE->lock);
                 for (int asic_nr = 0; asic_nr < asic_count; ++asic_nr) {
-                    update_hash_counter(
-                        &HASHRATE_MONITOR_MODULE->total_measurement[asic_nr],
-                        driver_hash_counters[asic_nr], timestamp_us);
-                    update_hash_counter(
-                        &HASHRATE_MONITOR_MODULE->domain_measurements[asic_nr][0],
-                        driver_hash_counters[asic_nr], timestamp_us);
+                    measurement_t *total =
+                        &HASHRATE_MONITOR_MODULE->total_measurement[asic_nr];
+                    measurement_t *domain =
+                        &HASHRATE_MONITOR_MODULE->domain_measurements[asic_nr][0];
+                    uint32_t counter_delta;
+                    uint64_t duration_us;
+                    if (hashrate_counter_window_update(
+                            &HASHRATE_MONITOR_MODULE->driver_counter_windows[asic_nr],
+                            driver_hash_counters[asic_nr], timestamp_us,
+                            &counter_delta, &duration_us)) {
+                        float hashrate = hashCounterToGhs(duration_us, counter_delta);
+                        total->hashrate = hashrate;
+                        domain->hashrate = hashrate;
+                    }
+                    total->value = driver_hash_counters[asic_nr];
+                    total->time_us = timestamp_us;
+                    domain->value = driver_hash_counters[asic_nr];
+                    domain->time_us = timestamp_us;
                 }
                 pthread_mutex_unlock(&HASHRATE_MONITOR_MODULE->lock);
             } else {

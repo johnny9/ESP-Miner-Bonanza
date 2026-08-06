@@ -94,6 +94,7 @@ PRIV_REQUIRES
     "button_input"
     "identify_mode"
     "log_level_config"
+    "hashrate_counter_window"
 
 EMBED_FILES "http_server/recovery_page.html"
 )
