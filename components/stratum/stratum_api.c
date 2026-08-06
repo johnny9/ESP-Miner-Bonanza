@@ -521,14 +521,14 @@ static bool parse_result(cJSON *json, StratumApiV1Message *message)
             message->response_success = false;
             if (message->error_str) free(message->error_str);
             message->error_str = strdup(error_msg->valuestring);
-            ESP_LOGI(TAG, "Result failed: %s", message->error_str);
+            ESP_LOGD(TAG, "Result failed: %s", message->error_str);
             return true;
         }
     } else if (error && cJSON_IsString(error)) {
         message->response_success = false;
         if (message->error_str) free(message->error_str);
         message->error_str = strdup(error->valuestring);
-        ESP_LOGI(TAG, "Result failed: %s", message->error_str);
+        ESP_LOGD(TAG, "Result failed: %s", message->error_str);
         return true;
     } else if (error && cJSON_IsObject(error)) {
         cJSON *error_msg = cJSON_GetObjectItem(error, "message");
@@ -536,7 +536,7 @@ static bool parse_result(cJSON *json, StratumApiV1Message *message)
             message->response_success = false;
             if (message->error_str) free(message->error_str);
             message->error_str = strdup(error_msg->valuestring);
-            ESP_LOGI(TAG, "Result failed: %s", message->error_str);
+            ESP_LOGD(TAG, "Result failed: %s", message->error_str);
             return true;
         }
     }
@@ -548,7 +548,7 @@ static bool parse_result(cJSON *json, StratumApiV1Message *message)
         message->error_str = reject_reason && cJSON_IsString(reject_reason)
             ? strdup(reject_reason->valuestring)
             : strdup("unknown");
-        ESP_LOGI(TAG, "Result failed: %s", message->error_str);
+        ESP_LOGD(TAG, "Result failed: %s", message->error_str);
         return true;
     }
 
@@ -560,9 +560,9 @@ static bool parse_result(cJSON *json, StratumApiV1Message *message)
             message->error_str = reject_reason && cJSON_IsString(reject_reason)
                 ? strdup(reject_reason->valuestring)
                 : strdup("unknown");
-            ESP_LOGI(TAG, "Result failed: %s", message->error_str);
+            ESP_LOGD(TAG, "Result failed: %s", message->error_str);
         } else {
-            ESP_LOGI(TAG, "Result success");
+            ESP_LOGD(TAG, "Result success");
         }
         return true;
     }
@@ -587,7 +587,7 @@ bool STRATUM_V1_parse(StratumApiV1Message *message, const char *stratum_json)
 {
     STRATUM_V1_reset_message(message);
 
-    ESP_LOGI(TAG, "rx: %s", stratum_json); // debug incoming stratum messages
+    ESP_LOGD(TAG, "rx: %s", stratum_json);
 
     cJSON *json = cJSON_Parse(stratum_json);
     if (!json) {
@@ -674,9 +674,9 @@ static void debug_stratum_tx(const char * msg)
 {
     char *newline = strchr(msg, '\n');
     if (newline) {
-        ESP_LOGI(TAG, "tx: %.*s", (int)(newline - msg), msg);
+        ESP_LOGD(TAG, "tx: %.*s", (int)(newline - msg), msg);
     } else {
-        ESP_LOGI(TAG, "tx: %s", msg);
+        ESP_LOGD(TAG, "tx: %s", msg);
     }
 }
 

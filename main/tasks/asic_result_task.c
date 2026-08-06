@@ -78,7 +78,7 @@ static int submit_sv1(void *context, const asic_share_submission_t *share)
 
     state->SYSTEM_MODULE.process_time =
         (sent_time_us - share->result->timestamp_us) / 1000.0f;
-    ESP_LOGI(TAG, "Processing time: %0.1f ms",
+    ESP_LOGD(TAG, "Processing time: %0.1f ms",
              state->SYSTEM_MODULE.process_time);
     return ret;
 }
@@ -116,7 +116,7 @@ static void account_share(void *context,
 {
     GlobalState *state = ((result_callback_context *)context)->state;
     const asic_result_t *result = share->result;
-    ESP_LOGI(TAG,
+    ESP_LOGD(TAG,
              "ID: %s, ASIC nr: %d, Core: %d/%d, ver: %08" PRIX32
              " Nonce %08" PRIX32 " diff %.1f of %g.",
              share->job_id, result->asic_index, result->core_id,

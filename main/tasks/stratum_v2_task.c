@@ -971,12 +971,12 @@ void stratum_v2_task(void *pvParameters)
                         int64_t submit_time_us = stratum_v2_submit_time_us[slot];
                         if (submit_time_us > 0) {
                             float response_time_ms = (float)(esp_timer_get_time() - submit_time_us) / 1000.0f;
-                            ESP_LOGI(TAG, "Shares accepted: %lu (%.1f ms)", accepted_count, response_time_ms);
+                            ESP_LOGD(TAG, "Shares accepted: %lu (%.1f ms)", accepted_count, response_time_ms);
                             GLOBAL_STATE->SYSTEM_MODULE.response_time = response_time_ms;
                             GLOBAL_STATE->SYSTEM_MODULE.response_share_batch = (uint16_t)accepted_count;
                             stratum_v2_submit_time_us[slot] = 0;
                         } else {
-                            ESP_LOGI(TAG, "Shares accepted: %lu", accepted_count);
+                            ESP_LOGD(TAG, "Shares accepted: %lu", accepted_count);
                         }
                         for (uint32_t i = 0; i < accepted_count; i++) {
                             SYSTEM_notify_accepted_share(GLOBAL_STATE);
