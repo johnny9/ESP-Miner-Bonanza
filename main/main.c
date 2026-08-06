@@ -25,6 +25,7 @@
 #include "i2c_bitaxe.h"
 #include "input.h"
 #include "log_buffer.h"
+#include "log_level_config.h"
 #include "nvs_config.h"
 #include "protocol_coordinator.h"
 #include "self_test.h"
@@ -97,6 +98,15 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to init NVS");
         return;
     }
+
+    char *configured_log_level = nvs_config_get_string(NVS_CONFIG_LOG_LEVEL);
+    if (!log_level_config_apply(configured_log_level)) {
+        ESP_LOGW(TAG, "Invalid configured log level; using %s",
+                 LOG_LEVEL_CONFIG_DEFAULT);
+        nvs_config_set_string(NVS_CONFIG_LOG_LEVEL, LOG_LEVEL_CONFIG_DEFAULT);
+        log_level_config_apply(LOG_LEVEL_CONFIG_DEFAULT);
+    }
+    free(configured_log_level);
 
     // Ensure SSID is initialized before any screen/self-test uses it.
     GLOBAL_STATE.SYSTEM_MODULE.ssid = nvs_config_get_string(NVS_CONFIG_WIFI_SSID);

@@ -43,6 +43,7 @@
 #include "websocket_api.h"
 #include "system_api_json.h"
 #include "log_buffer.h"
+#include "log_level_config.h"
 #include "cjson_utils.h"
 #include "utils.h"
 #include "bzm_bridge.h"
@@ -782,6 +783,11 @@ bool check_settings_and_update(const cJSON * const root, char **redirect_url)
                 result = false;
             }
         }
+        if (key == NVS_CONFIG_LOG_LEVEL && cJSON_IsString(item) &&
+            !log_level_config_is_valid(item->valuestring)) {
+            ESP_LOGW(TAG, "Invalid log level: '%s'", item->valuestring);
+            result = false;
+        }
         if (GLOBAL_STATE && cJSON_IsNumber(item) &&
             key == NVS_CONFIG_ASIC_FREQUENCY &&
             !device_config_accepts_frequency(
@@ -836,6 +842,9 @@ bool check_settings_and_update(const cJSON * const root, char **redirect_url)
                     else
                     {
                         nvs_config_set_string(key, item->valuestring);
+                        if (key == NVS_CONFIG_LOG_LEVEL) {
+                            log_level_config_apply(item->valuestring);
+                        }
                     }
 
                     break;

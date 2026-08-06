@@ -73,6 +73,7 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
 
   public displays = ["NONE", "SSD1306 (128x32)", "SSD1309 (128x64)", "SH1107 (64x128)", "SH1107 (128x128)"];
   public rotations = [0, 90, 180, 270];
+  public logLevels = ['ERROR', 'WARN', 'INFO', 'DEBUG'];
   public displayTimeoutControl: FormControl;
   public statsFrequencyControl: FormControl;
   public statsLimit: number = 720;
@@ -216,7 +217,8 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
             Validators.required,
             Validators.min(0),
             Validators.max(this.statsFrequencyMaxValue)
-          ]]
+          ]],
+          logLevel: [info.logLevel || 'INFO', [Validators.required]]
         });
 
         this.formSubject.next(this.form);
@@ -453,7 +455,8 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
       'minFanSpeed',
       'temptarget',
       'overheat_mode',
-      'statsFrequency'
+      'statsFrequency',
+      'logLevel'
     ];
   }
 

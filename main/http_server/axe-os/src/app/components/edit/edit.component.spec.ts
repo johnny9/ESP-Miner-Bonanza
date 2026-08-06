@@ -24,6 +24,7 @@ describe('EditComponent', () => {
     displayTimeout: new FormControl(-1),
     invertscreen: new FormControl(false),
     statsFrequency: new FormControl(30),
+    logLevel: new FormControl('INFO'),
   });
 
   beforeEach(() => {
@@ -107,5 +108,16 @@ describe('EditComponent', () => {
 
     expect(fixture.nativeElement.textContent)
       .toContain('External bonanzaDisplay: not connected');
+  });
+
+  it('offers safe firmware log levels without requiring a restart', () => {
+    component.form = createDisplayForm();
+
+    fixture.detectChanges();
+
+    expect(component.logLevels).toEqual(['ERROR', 'WARN', 'INFO', 'DEBUG']);
+    expect(component.noRestartFields).toContain('logLevel');
+    expect(fixture.nativeElement.textContent).toContain('INFO is recommended');
+    expect(fixture.nativeElement.textContent).toContain('Changes take effect immediately');
   });
 });

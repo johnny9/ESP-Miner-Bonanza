@@ -147,6 +147,7 @@ export class SystemApiService {
         manualFanSpeed: 70,
         temptarget: 60,
         statsFrequency: 30,
+        logLevel: "INFO" as const,
         fanrpm: 3583,
         fan2rpm: 4146,
 

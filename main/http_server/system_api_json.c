@@ -14,6 +14,7 @@
 #include "statistics_task.h"
 #include "stratum_v2_task.h"
 #include "asic.h"
+#include "log_level_config.h"
 
 
 static const char *get_reset_reason_str(esp_reset_reason_t reason)
@@ -303,6 +304,9 @@ static void system_api_add_config(cJSON *root, GlobalState *g) {
     cJSON_AddNumberToObject(root, "coreVoltage", nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE));
     cJSON_AddFloatToObject(root, "frequency", nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY));
     cJSON_AddNumberToObject(root, "statsFrequency", nvs_config_get_u16(NVS_CONFIG_STATISTICS_FREQUENCY));
+    char *log_level = nvs_config_get_string(NVS_CONFIG_LOG_LEVEL);
+    cJSON_AddStringToObject(root, "logLevel", log_level ? log_level : LOG_LEVEL_CONFIG_DEFAULT);
+    free(log_level);
     cJSON_AddNumberToObject(root, "statsLimit", MAX_STATISTICS_COUNT);
 }
 

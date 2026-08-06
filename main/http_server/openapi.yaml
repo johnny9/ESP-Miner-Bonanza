@@ -440,6 +440,7 @@ components:
         - wifiRSSI
         - displayTimeout
         - statsFrequency
+        - logLevel
         - blockHeight
         - scriptsig
         - networkDifficulty
@@ -746,6 +747,10 @@ components:
         statsFrequency:
           type: number
           description: Statistics frequency in seconds
+        logLevel:
+          type: string
+          enum: [ERROR, WARN, INFO, DEBUG]
+          description: Active firmware log level
         blockHeight:
           type: integer
           description: Current block height
@@ -1126,6 +1131,12 @@ components:
           minimum: 0
           examples:
             - 120
+        logLevel:
+          type: string
+          description: Set firmware logging verbosity without restarting
+          enum: [ERROR, WARN, INFO, DEBUG]
+          examples:
+            - "INFO"
       additionalProperties: true
 
   responses:

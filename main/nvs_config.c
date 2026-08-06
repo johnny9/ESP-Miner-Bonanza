@@ -17,6 +17,7 @@
 #include "scoreboard.h"
 #include "cJSON.h"
 #include "utils.h"
+#include "log_level_config.h"
 
 #define NVS_CONFIG_NAMESPACE "main"
 #define NVS_STR_LIMIT (4000 - 1) // See nvs_set_str
@@ -97,6 +98,7 @@ static Settings settings[NVS_CONFIG_COUNT] = {
     [NVS_CONFIG_OVERHEAT_MODE]                         = {.nvs_key_name = "overheat_mode",   .type = TYPE_BOOL,                                                                         .rest_name = "overheat_mode",                      .min = 0,  .max = 0},
 
     [NVS_CONFIG_STATISTICS_FREQUENCY]                  = {.nvs_key_name = "statsFrequency",  .type = TYPE_U16,                                                                          .rest_name = "statsFrequency",                     .min = 0,  .max = UINT16_MAX},
+    [NVS_CONFIG_LOG_LEVEL]                             = {.nvs_key_name = "loglevel",        .type = TYPE_STR,   .default_value = {.str = LOG_LEVEL_CONFIG_DEFAULT},                  .rest_name = "logLevel",                           .min = 4,  .max = 5},
 
     [NVS_CONFIG_BEST_DIFF]                             = {.nvs_key_name = "bestdiff",        .type = TYPE_U64},
     [NVS_CONFIG_SELF_TEST]                             = {.nvs_key_name = "selftest",        .type = TYPE_BOOL},

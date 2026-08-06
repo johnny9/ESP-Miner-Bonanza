@@ -197,6 +197,21 @@
         </div>
     </div>
 
+    <h3 class="mt-5">Firmware Logs</h3>
+
+    <div class="card">
+        <div class="field grid p-fluid mb-2">
+            <label (click)="logLevelSelect.show()" class="col-12 md:col-2 md:m-0 hover-next-input">Level</label>
+            <div class="col-12 md:col-10">
+                <p-select [options]="logLevels" formControlName="logLevel" #logLevelSelect></p-select>
+            </div>
+        </div>
+        <small class="block text-color-secondary">
+            INFO is recommended for normal mining. DEBUG restores frequent nonce and Stratum diagnostics;
+            WARN and ERROR keep only increasingly important events. Changes take effect immediately.
+        </small>
+    </div>
+
     <div class="flex mt-5 gap-3">
         <button pButton [disabled]="!form.dirty || form.invalid" (click)="updateSystem()"
             class="btn btn-primary">Save</button>

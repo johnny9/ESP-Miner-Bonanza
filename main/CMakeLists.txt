@@ -93,6 +93,7 @@ PRIV_REQUIRES
     "bonanza_display_protocol"
     "button_input"
     "identify_mode"
+    "log_level_config"
 
 EMBED_FILES "http_server/recovery_page.html"
 )
