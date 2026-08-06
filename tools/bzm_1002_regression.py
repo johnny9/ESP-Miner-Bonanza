@@ -332,6 +332,56 @@ def wait_for_fan_projection(base_url: str, timeout: float) -> dict[str, Any]:
         f"fan telemetry did not converge within {timeout:.0f}s; last={last}")
 
 
+def mining_proof_status(
+        info: dict[str, Any], baseline_valid_results: int,
+        max_work_age: float) -> tuple[bool, str]:
+    health = info.get("asicHealth") or {}
+    try:
+        valid_results = int(health["locallyValidResults"])
+        work_age = float(info["currentWorkAgeSeconds"])
+    except (KeyError, TypeError, ValueError):
+        return False, "local proof or pool work age is unavailable"
+    ready = (
+        health.get("lifecycle") == "MINING" and
+        not health.get("lastFault") and
+        health.get("asicCount") == health.get("expectedAsicCount") == 4 and
+        health.get("activeEngineCount") ==
+            health.get("expectedEngineCount") == 944 and
+        valid_results > baseline_valid_results and
+        math.isfinite(work_age) and 0 <= work_age <= max_work_age
+    )
+    return ready, (
+        f"lifecycle={health.get('lifecycle')} "
+        f"validResults={valid_results} baseline={baseline_valid_results} "
+        f"workAge={work_age:.1f}s fault={health.get('lastFault') or 'none'}"
+    )
+
+
+def wait_for_mining_proof(
+        base_url: str, timeout: float, baseline_valid_results: int,
+        max_work_age: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last = "unavailable"
+    while time.monotonic() < deadline:
+        try:
+            info = get_info(base_url)
+            health = info.get("asicHealth") or {}
+            if health.get("lifecycle") == "FAULT":
+                raise RuntimeError(
+                    "mining entered FAULT before fresh local proof: "
+                    f"{health.get('lastFault') or 'unknown fault'}")
+            ready, last = mining_proof_status(
+                info, baseline_valid_results, max_work_age)
+            if ready:
+                return info
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            last = str(exc)
+        time.sleep(1)
+    raise RuntimeError(
+        f"fresh local mining proof was not observed within {timeout:.0f}s; "
+        f"last={last}")
+
+
 def restart_observed(previous_uptime: float, info: dict[str, Any],
                      saw_disconnect: bool) -> bool:
     try:
@@ -364,9 +414,23 @@ def wait_for_restart(base_url: str, previous_uptime: float,
 
 
 def pause_resume_check(report: Report, base_url: str,
-                       transition_timeout: float) -> dict[str, Any]:
+                       transition_timeout: float,
+                       max_work_age: float) -> dict[str, Any]:
     paused = False
     resumed = False
+    proof_baseline = 0
+    try:
+        info = wait_for_mining_proof(
+            base_url, transition_timeout, 0, max_work_age)
+        ready, detail = mining_proof_status(info, 0, max_work_age)
+        report.check("pause precondition has local mining proof", ready,
+                     detail)
+    except (OSError, RuntimeError, ValueError,
+            urllib.error.URLError) as exc:
+        report.check("pause precondition has local mining proof", False,
+                     str(exc))
+        return get_info(base_url)
+
     try:
         body, _ = request_bytes(
             base_url, "/api/system/pause", data=b"{}",
@@ -377,6 +441,7 @@ def pause_resume_check(report: Report, base_url: str,
         info = wait_for_lifecycle(base_url, {"SAFE_OFF", "FAULT"},
                                   transition_timeout)
         health = info.get("asicHealth") or {}
+        proof_baseline = int(health.get("locallyValidResults") or 0)
         report.check("pause reaches verified safe off",
                      health.get("lifecycle") == "SAFE_OFF" and
                      info.get("miningPaused") is True and
@@ -415,23 +480,21 @@ def pause_resume_check(report: Report, base_url: str,
         return get_info(base_url)
 
     try:
-        info = wait_for_lifecycle(base_url, {"MINING", "FAULT"},
-                                  transition_timeout)
+        info = wait_for_mining_proof(
+            base_url, transition_timeout, proof_baseline, max_work_age)
     except RuntimeError as exc:
         report.check("resume transition", False, str(exc))
         return get_info(base_url)
     health = info.get("asicHealth") or {}
+    proof_ready, proof_detail = mining_proof_status(
+        info, proof_baseline, max_work_age)
     report.check("resume repeats validated startup",
                  health.get("lifecycle") == "MINING" and
                  info.get("miningPaused") is False and
                  health.get("asicCount") == 4 and
                  health.get("activeEngineCount") == 944 and
-                 not health.get("lastFault"),
-                 f"lifecycle={health.get('lifecycle')} "
-                 f"paused={info.get('miningPaused')} "
-                 f"ASICs={health.get('asicCount')} "
-                 f"engines={health.get('activeEngineCount')} "
-                 f"fault={health.get('lastFault') or 'none'}")
+                 proof_ready,
+                 f"paused={info.get('miningPaused')} {proof_detail}")
     try:
         body, _ = request_bytes(
             base_url, "/api/system/resume", data=b"{}",
@@ -779,7 +842,8 @@ def main() -> int:
             except (OSError, ValueError, urllib.error.URLError):
                 continue
         if args.pause_resume_check:
-            info = pause_resume_check(report, base_url, args.boot_timeout)
+            info = pause_resume_check(
+                report, base_url, args.boot_timeout, args.max_work_age)
         try:
             info = wait_for_tuning_target(base_url, args.boot_timeout)
         except RuntimeError as exc:

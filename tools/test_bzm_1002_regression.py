@@ -9,15 +9,23 @@ from tools import bzm_1002_regression as regression
 
 def system_info(*, configured_frequency=1200, configured_voltage=3000,
                 active_frequency=1200, active_voltage=3000,
-                lifecycle="MINING", uptime=100):
+                lifecycle="MINING", uptime=100, valid_results=10,
+                work_age=10, fault=""):
     return {
         "frequency": configured_frequency,
         "coreVoltage": configured_voltage,
         "uptimeSeconds": uptime,
+        "currentWorkAgeSeconds": work_age,
         "asicHealth": {
             "fixedFrequencyMHz": active_frequency,
             "fixedVoltageMV": active_voltage,
             "lifecycle": lifecycle,
+            "asicCount": 4,
+            "expectedAsicCount": 4,
+            "activeEngineCount": 944,
+            "expectedEngineCount": 944,
+            "locallyValidResults": valid_results,
+            "lastFault": fault,
         },
     }
 
@@ -93,6 +101,41 @@ class FanProjectionTests(unittest.TestCase):
                 "http://miner", 10)
 
         self.assertIs(result, converged)
+
+
+class MiningProofTests(unittest.TestCase):
+    def test_requires_a_new_proof_and_fresh_pool_work(self):
+        ready, detail = regression.mining_proof_status(
+            system_info(valid_results=11, work_age=20), 10, 90)
+        self.assertTrue(ready)
+        self.assertIn("validResults=11 baseline=10", detail)
+
+        self.assertFalse(regression.mining_proof_status(
+            system_info(valid_results=10), 10, 90)[0])
+        self.assertFalse(regression.mining_proof_status(
+            system_info(valid_results=11, work_age=-1), 10, 90)[0])
+        self.assertFalse(regression.mining_proof_status(
+            system_info(valid_results=11, work_age=91), 10, 90)[0])
+
+    def test_waits_through_transient_mining_until_a_new_proof_arrives(self):
+        no_proof = system_info(valid_results=10)
+        proven = system_info(valid_results=11)
+        with mock.patch.object(
+                regression, "get_info", side_effect=[no_proof, proven]), \
+             mock.patch.object(regression.time, "sleep"):
+            result = regression.wait_for_mining_proof(
+                "http://miner", 10, 10, 90)
+
+        self.assertIs(result, proven)
+
+    def test_fails_immediately_when_startup_latches_a_fault(self):
+        faulted = system_info(
+            lifecycle="FAULT", valid_results=10,
+            fault="initial dispatch and local nonce proof missed its deadline")
+        with mock.patch.object(regression, "get_info", return_value=faulted):
+            with self.assertRaisesRegex(RuntimeError, "entered FAULT"):
+                regression.wait_for_mining_proof(
+                    "http://miner", 10, 10, 90)
 
 
 class RestartObservationTests(unittest.TestCase):
