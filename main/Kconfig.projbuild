@@ -55,26 +55,27 @@ menu "Bitaxe Configuration"
         config BZM_1002_MIN_NONCE_DIFFICULTY
             int "Minimum locally verified nonce difficulty"
             range 1 1024
-            default 64
+            default 256
             help
                 Minimum locally calculated difficulty for each result counted
                 as mining-health evidence. A mapped result below this floor is a
                 local validation rejection, because the ASIC result filter is
                 configured to suppress it before transmission. The production
-                default therefore matches the 38-bit ASIC filter at
-                difficulty 64 instead of treating arbitrary difficulty-one
+                default therefore matches the 40-bit ASIC filter at
+                difficulty 256 instead of treating arbitrary difficulty-one
                 reconstructions as useful-hashrate evidence.
 
         config BZM_1002_LEAD_ZEROS
             int "ASIC result-filter leading-zero bits"
             range 32 64
-            default 38
+            default 40
             help
                 Program every Bonanza engine to report only hashes with at
                 least this many leading zero bits. The production BIRDS wire
-                encoding uses register value 6 for the 38-bit default. This
-                emits difficulty-64 results and reduces UART traffic, local
+                encoding uses register value 8 for the 40-bit default. This
+                emits difficulty-256 results and reduces UART traffic, local
                 nonce checks, and result logs by four times relative to the
+                38-bit/difficulty-64 setting and sixteen times relative to the
                 former 36-bit/difficulty-16 default. Raising this value reduces
                 traffic and proof rate; lowering it increases both. Parser
                 loss remains BAD.
