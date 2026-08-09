@@ -304,7 +304,7 @@ int BM1366_set_max_baud(void)
 
 static uint8_t id = 0;
 
-bool BM1366_send_work(void *pvParameters, const bm_job *next_bm_job,
+bool BM1366_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
                       const mining_template_t *template)
 {
     BM1366_job job;
@@ -361,8 +361,6 @@ task_result * BM1366_process_work(GlobalState * GLOBAL_STATE)
     uint8_t core_id = (uint8_t)((nonce_h >> 25) & 0x7f); // BM1366 has 112 cores, so it should be coded on 7 bits
     uint8_t small_core_id = asic_result.job.id & 0x07; // BM1366 has 8 small cores, so it should be coded on 3 bits
     uint32_t hardware_version_bits = (ntohs(asic_result.job.version) << 13); // shift the 16 bit value left 13
-
-    GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
 
     mining_template_t template;
     if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, job_id,

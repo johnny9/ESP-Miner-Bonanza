@@ -254,7 +254,7 @@ int BM1368_set_max_baud(void)
 
 static uint8_t id = 0;
 
-bool BM1368_send_work(void *pvParameters, const bm_job *next_bm_job,
+bool BM1368_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
                       const mining_template_t *template)
 {
     BM1368_job job;
@@ -310,8 +310,6 @@ task_result * BM1368_process_work(GlobalState * GLOBAL_STATE)
     uint8_t core_id = (uint8_t)((nonce_h >> 25) & 0x7f);
     uint8_t small_core_id = asic_result.job.id & 0x0f;
     uint32_t hardware_version_bits = (ntohs(asic_result.job.version) << 13);
-
-    GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
 
     mining_template_t template;
     if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, job_id,

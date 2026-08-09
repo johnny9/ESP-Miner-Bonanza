@@ -255,7 +255,7 @@ int BM1397_set_max_baud(void)
 
 static uint8_t id = 0;
 
-bool BM1397_send_work(void *pvParameters, const bm_job *next_bm_job,
+bool BM1397_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
                       const mining_template_t *template)
 {
     job_packet job;
@@ -320,8 +320,6 @@ task_result *BM1397_process_work(GlobalState * GLOBAL_STATE)
 
     uint8_t rx_job_id = asic_result.job.id & 0xfc;
     uint8_t rx_midstate_index = asic_result.job.id & 0x03;
-
-    GlobalState *GLOBAL_STATE = (GlobalState *)pvParameters;
 
     mining_template_t template;
     if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, rx_job_id,

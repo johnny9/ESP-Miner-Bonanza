@@ -10,7 +10,7 @@
 #include "bzm_driver.h"
 #include "device_config.h"
 
-typedef task_result *(*bm_process_fn)(void *state);
+typedef task_result *(*bm_process_fn)(GlobalState *state);
 
 static asic_event_t *adapt_bm_result(GlobalState *state, bm_process_fn process)
 {
@@ -61,7 +61,7 @@ static const asic_driver_t DRIVERS[] = {
         .chip_id = 1397,
         .name = "BM1397",
         .ops = {
-            .init = (uint8_t (*)(GlobalState *))BM1397_init,
+            .init = BM1397_init,
             .process_work = process_bm1397,
             .set_max_baud = BM1397_set_max_baud,
             .send_work = send_bm1397,
@@ -75,7 +75,7 @@ static const asic_driver_t DRIVERS[] = {
         .chip_id = 1366,
         .name = "BM1366",
         .ops = {
-            .init = (uint8_t (*)(GlobalState *))BM1366_init,
+            .init = BM1366_init,
             .process_work = process_bm1366,
             .set_max_baud = BM1366_set_max_baud,
             .send_work = send_bm1366,
@@ -90,7 +90,7 @@ static const asic_driver_t DRIVERS[] = {
         .chip_id = 1368,
         .name = "BM1368",
         .ops = {
-            .init = (uint8_t (*)(GlobalState *))BM1368_init,
+            .init = BM1368_init,
             .process_work = process_bm1368,
             .set_max_baud = BM1368_set_max_baud,
             .send_work = send_bm1368,
@@ -105,7 +105,7 @@ static const asic_driver_t DRIVERS[] = {
         .chip_id = 1370,
         .name = "BM1370",
         .ops = {
-            .init = (uint8_t (*)(GlobalState *))BM1370_init,
+            .init = BM1370_init,
             .process_work = process_bm1370,
             .set_max_baud = BM1370_set_max_baud,
             .send_work = send_bm1370,

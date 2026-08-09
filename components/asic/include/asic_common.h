@@ -6,6 +6,8 @@
 #include "esp_err.h"
 #include "asic_result.h"
 
+typedef struct GlobalState GlobalState;
+
 static const double NONCE_SPACE = 4294967296.0; //  2^32
 
 typedef struct
