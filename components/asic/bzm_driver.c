@@ -12,6 +12,7 @@
 #include "bzm_registers.h"
 #include "bzm_runtime_health.h"
 #include "bzm_transport.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
@@ -21,57 +22,6 @@
 #include "serial.h"
 
 static const char * TAG = "bzm";
-static bzm_reactor_t REACTOR;
-static bzm_serial_transport_t TRANSPORT;
-static pthread_mutex_t REACTOR_LOCK = PTHREAD_MUTEX_INITIALIZER;
-/* AxeOS health reads must never queue behind the hot mining reactor.  The
- * result task deliberately holds REACTOR_LOCK across a bounded serial read so
- * a safe-off transition cannot tear down transport state underneath it. */
-static pthread_mutex_t DRIVER_HEALTH_LOCK = PTHREAD_MUTEX_INITIALIZER;
-static bool INITIALIZED;
-static bool STAGED_TRANSPORT_READY;
-/* Sticky for one staged session. A failed bridge renewal makes every later
- * adapter operation fail I/O until initialize reconstructs the session. */
-static bool STAGED_LEASE_IO_OK;
-static bzm_lease_guard_schedule_t STAGED_LEASE_SCHEDULE;
-static bzm_dispatch_authorizer_t STAGED_OPERATION_AUTHORIZE;
-static void * STAGED_OPERATION_AUTHORIZE_CONTEXT;
-static bzm_bringup_state_t STAGED_BRINGUP;
-static bzm_balanced_ramp_t STAGED_BALANCED_RAMP;
-static bzm_serial_parser_stats_t STAGED_ENGINE_WINDOW_BASELINE;
-static bzm_serial_parser_stats_t STAGED_SENSOR_PARSER_BASELINE;
-static bool STAGED_SENSOR_PARSER_BASELINE_VALID;
-static bzm_serial_parser_stats_t STAGED_RUNNING_PARSER_BASELINE;
-static bool STAGED_RUNNING_PARSER_BASELINE_VALID;
-static bool STAGED_ENGINE_WINDOW_ACTIVE;
-static bzm_bringup_telemetry_policy_t STAGED_RAMP_TELEMETRY_POLICY;
-static bool STAGED_RAMP_TELEMETRY_POLICY_READY;
-static bzm_telemetry_store_t STAGED_BATCH_TELEMETRY;
-static bool STAGED_BATCH_TELEMETRY_ACTIVE;
-static bzm_dispatch_gate_t STAGED_DISPATCH_GATE;
-static float LAST_TEMPERATURE = -1.0f;
-static int64_t LAST_TEMPERATURE_US;
-static atomic_uint_fast64_t RUNNING_DISPATCH_BATCHES;
-static atomic_uint_fast64_t RUNNING_DISPATCHED_LOGICAL_ENGINES;
-static atomic_uint_fast64_t RUNNING_DISPATCHED_CHIP_ENGINES;
-static atomic_uint_fast64_t RUNNING_DISPATCH_FAILURES;
-static atomic_uint_fast64_t RUNNING_MAPPED_RESULTS;
-static atomic_uint_fast64_t RUNNING_MAPPING_REJECTIONS;
-static atomic_uint_fast32_t RUNNING_MAPPING_REJECTION_STREAK;
-static atomic_bool RUNNING_MAPPING_RECOVERY_PENDING;
-static atomic_uint_fast64_t RUNNING_LOCALLY_VALID_RESULTS;
-static atomic_uint_fast64_t RUNNING_LOCALLY_REJECTED_RESULTS;
-static atomic_uint_fast64_t RUNNING_DUPLICATE_RESULTS;
-static atomic_uint_fast64_t HASHRATE_DIFFICULTY_ONE_COUNTERS[BZM_MAX_ASIC_COUNT];
-static atomic_uint_fast64_t
-    FREQUENCY_DOMAIN_VALID[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
-static atomic_uint_fast64_t
-    FREQUENCY_DOMAIN_REJECTED[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
-static atomic_uint_fast32_t RUNNING_LOCAL_REJECTION_STREAK;
-static atomic_bool RUNNING_LOCAL_RECOVERY_PENDING;
-static atomic_uint_fast32_t WORK_REPLACEMENT_GENERATION;
-static asic_driver_health_t DRIVER_HEALTH;
-static uint16_t FAST_DISPATCH_REMAINING;
 
 #define BZM_FAST_JOB_INTERVAL_MS 10.0
 #define BZM_STEADY_JOB_INTERVAL_MS 100.0
@@ -92,8 +42,129 @@ typedef struct {
     uint32_t final_ntime;
     uint32_t final_version;
 } bzm_result_identity_t;
-static bzm_result_identity_t RESULT_DEDUP[BZM_RESULT_DEDUP_CAPACITY];
-static size_t RESULT_DEDUP_NEXT;
+
+typedef struct {
+    bzm_reactor_t reactor;
+    bzm_serial_transport_t transport;
+    pthread_mutex_t reactor_lock;
+    /* AxeOS health reads must never queue behind the hot mining reactor. The
+     * result task deliberately holds reactor_lock across a bounded serial read
+     * so safe-off cannot tear down transport underneath it. */
+    pthread_mutex_t driver_health_lock;
+    bool initialized;
+    bool staged_transport_ready;
+    bool staged_lease_io_ok;
+    bzm_lease_guard_schedule_t staged_lease_schedule;
+    bzm_dispatch_authorizer_t staged_operation_authorize;
+    void *staged_operation_authorize_context;
+    bzm_bringup_state_t staged_bringup;
+    bzm_balanced_ramp_t staged_balanced_ramp;
+    bzm_serial_parser_stats_t staged_engine_window_baseline;
+    bzm_serial_parser_stats_t staged_sensor_parser_baseline;
+    bool staged_sensor_parser_baseline_valid;
+    bzm_serial_parser_stats_t staged_running_parser_baseline;
+    bool staged_running_parser_baseline_valid;
+    bool staged_engine_window_active;
+    bzm_bringup_telemetry_policy_t staged_ramp_telemetry_policy;
+    bool staged_ramp_telemetry_policy_ready;
+    bzm_telemetry_store_t staged_batch_telemetry;
+    bool staged_batch_telemetry_active;
+    bzm_dispatch_gate_t staged_dispatch_gate;
+    float last_temperature;
+    int64_t last_temperature_us;
+    atomic_uint_fast64_t running_dispatch_batches;
+    atomic_uint_fast64_t running_dispatched_logical_engines;
+    atomic_uint_fast64_t running_dispatched_chip_engines;
+    atomic_uint_fast64_t running_dispatch_failures;
+    atomic_uint_fast64_t running_mapped_results;
+    atomic_uint_fast64_t running_mapping_rejections;
+    atomic_uint_fast32_t running_mapping_rejection_streak;
+    atomic_bool running_mapping_recovery_pending;
+    atomic_uint_fast64_t running_locally_valid_results;
+    atomic_uint_fast64_t running_locally_rejected_results;
+    atomic_uint_fast64_t running_duplicate_results;
+    atomic_uint_fast64_t
+        hashrate_difficulty_one_counters[BZM_MAX_ASIC_COUNT];
+    atomic_uint_fast64_t
+        frequency_domain_valid[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
+    atomic_uint_fast64_t
+        frequency_domain_rejected[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
+    atomic_uint_fast32_t running_local_rejection_streak;
+    atomic_bool running_local_recovery_pending;
+    atomic_uint_fast32_t work_replacement_generation;
+    asic_driver_health_t driver_health;
+    uint16_t fast_dispatch_remaining;
+    bzm_result_identity_t result_dedup[BZM_RESULT_DEDUP_CAPACITY];
+    size_t result_dedup_next;
+} bzm_driver_state_t;
+
+static bzm_driver_state_t *BZM_STATE;
+
+#define REACTOR (*BZM_STATE).reactor
+#define TRANSPORT (*BZM_STATE).transport
+#define REACTOR_LOCK (*BZM_STATE).reactor_lock
+#define DRIVER_HEALTH_LOCK (*BZM_STATE).driver_health_lock
+#define INITIALIZED (*BZM_STATE).initialized
+#define STAGED_TRANSPORT_READY (*BZM_STATE).staged_transport_ready
+#define STAGED_LEASE_IO_OK (*BZM_STATE).staged_lease_io_ok
+#define STAGED_LEASE_SCHEDULE (*BZM_STATE).staged_lease_schedule
+#define STAGED_OPERATION_AUTHORIZE (*BZM_STATE).staged_operation_authorize
+#define STAGED_OPERATION_AUTHORIZE_CONTEXT \
+    (*BZM_STATE).staged_operation_authorize_context
+#define STAGED_BRINGUP (*BZM_STATE).staged_bringup
+#define STAGED_BALANCED_RAMP (*BZM_STATE).staged_balanced_ramp
+#define STAGED_ENGINE_WINDOW_BASELINE \
+    (*BZM_STATE).staged_engine_window_baseline
+#define STAGED_SENSOR_PARSER_BASELINE \
+    (*BZM_STATE).staged_sensor_parser_baseline
+#define STAGED_SENSOR_PARSER_BASELINE_VALID \
+    (*BZM_STATE).staged_sensor_parser_baseline_valid
+#define STAGED_RUNNING_PARSER_BASELINE \
+    (*BZM_STATE).staged_running_parser_baseline
+#define STAGED_RUNNING_PARSER_BASELINE_VALID \
+    (*BZM_STATE).staged_running_parser_baseline_valid
+#define STAGED_ENGINE_WINDOW_ACTIVE (*BZM_STATE).staged_engine_window_active
+#define STAGED_RAMP_TELEMETRY_POLICY \
+    (*BZM_STATE).staged_ramp_telemetry_policy
+#define STAGED_RAMP_TELEMETRY_POLICY_READY \
+    (*BZM_STATE).staged_ramp_telemetry_policy_ready
+#define STAGED_BATCH_TELEMETRY (*BZM_STATE).staged_batch_telemetry
+#define STAGED_BATCH_TELEMETRY_ACTIVE \
+    (*BZM_STATE).staged_batch_telemetry_active
+#define STAGED_DISPATCH_GATE (*BZM_STATE).staged_dispatch_gate
+#define LAST_TEMPERATURE (*BZM_STATE).last_temperature
+#define LAST_TEMPERATURE_US (*BZM_STATE).last_temperature_us
+#define RUNNING_DISPATCH_BATCHES (*BZM_STATE).running_dispatch_batches
+#define RUNNING_DISPATCHED_LOGICAL_ENGINES \
+    (*BZM_STATE).running_dispatched_logical_engines
+#define RUNNING_DISPATCHED_CHIP_ENGINES \
+    (*BZM_STATE).running_dispatched_chip_engines
+#define RUNNING_DISPATCH_FAILURES (*BZM_STATE).running_dispatch_failures
+#define RUNNING_MAPPED_RESULTS (*BZM_STATE).running_mapped_results
+#define RUNNING_MAPPING_REJECTIONS (*BZM_STATE).running_mapping_rejections
+#define RUNNING_MAPPING_REJECTION_STREAK \
+    (*BZM_STATE).running_mapping_rejection_streak
+#define RUNNING_MAPPING_RECOVERY_PENDING \
+    (*BZM_STATE).running_mapping_recovery_pending
+#define RUNNING_LOCALLY_VALID_RESULTS \
+    (*BZM_STATE).running_locally_valid_results
+#define RUNNING_LOCALLY_REJECTED_RESULTS \
+    (*BZM_STATE).running_locally_rejected_results
+#define RUNNING_DUPLICATE_RESULTS (*BZM_STATE).running_duplicate_results
+#define HASHRATE_DIFFICULTY_ONE_COUNTERS \
+    (*BZM_STATE).hashrate_difficulty_one_counters
+#define FREQUENCY_DOMAIN_VALID (*BZM_STATE).frequency_domain_valid
+#define FREQUENCY_DOMAIN_REJECTED (*BZM_STATE).frequency_domain_rejected
+#define RUNNING_LOCAL_REJECTION_STREAK \
+    (*BZM_STATE).running_local_rejection_streak
+#define RUNNING_LOCAL_RECOVERY_PENDING \
+    (*BZM_STATE).running_local_recovery_pending
+#define WORK_REPLACEMENT_GENERATION \
+    (*BZM_STATE).work_replacement_generation
+#define DRIVER_HEALTH (*BZM_STATE).driver_health
+#define FAST_DISPATCH_REMAINING (*BZM_STATE).fast_dispatch_remaining
+#define RESULT_DEDUP (*BZM_STATE).result_dedup
+#define RESULT_DEDUP_NEXT (*BZM_STATE).result_dedup_next
 
 
 enum
@@ -107,6 +178,64 @@ static bool staged_settle_parser(bzm_serial_transport_t * transport, const char 
                                  const bzm_serial_parser_stats_t * initial_baseline,
                                  bzm_serial_parser_stats_t * accepted_baseline);
 static void staged_sleep(void *context, uint32_t delay_ms);
+
+bool BZM_driver_state_init(GlobalState *state)
+{
+    if (state == NULL || state->DEVICE_CONFIG.family.asic.id != BZM) {
+        return false;
+    }
+    if (BZM_STATE != NULL) return true;
+
+    bzm_driver_state_t *allocated = heap_caps_calloc(
+        1, sizeof(*allocated), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (allocated == NULL) {
+        ESP_LOGE(TAG, "Unable to allocate Bonanza driver state in PSRAM");
+        return false;
+    }
+    if (pthread_mutex_init(&allocated->reactor_lock, NULL) != 0) {
+        heap_caps_free(allocated);
+        return false;
+    }
+    if (pthread_mutex_init(&allocated->driver_health_lock, NULL) != 0) {
+        pthread_mutex_destroy(&allocated->reactor_lock);
+        heap_caps_free(allocated);
+        return false;
+    }
+
+    allocated->last_temperature = -1.0f;
+    atomic_init(&allocated->running_dispatch_batches, 0);
+    atomic_init(&allocated->running_dispatched_logical_engines, 0);
+    atomic_init(&allocated->running_dispatched_chip_engines, 0);
+    atomic_init(&allocated->running_dispatch_failures, 0);
+    atomic_init(&allocated->running_mapped_results, 0);
+    atomic_init(&allocated->running_mapping_rejections, 0);
+    atomic_init(&allocated->running_mapping_rejection_streak, 0);
+    atomic_init(&allocated->running_mapping_recovery_pending, false);
+    atomic_init(&allocated->running_locally_valid_results, 0);
+    atomic_init(&allocated->running_locally_rejected_results, 0);
+    atomic_init(&allocated->running_duplicate_results, 0);
+    atomic_init(&allocated->running_local_rejection_streak, 0);
+    atomic_init(&allocated->running_local_recovery_pending, false);
+    atomic_init(&allocated->work_replacement_generation, 0);
+    for (size_t asic = 0; asic < BZM_MAX_ASIC_COUNT; ++asic) {
+        atomic_init(&allocated->hashrate_difficulty_one_counters[asic], 0);
+        for (size_t domain = 0; domain < BZM_ENGINE_STACK_COUNT; ++domain) {
+            atomic_init(&allocated->frequency_domain_valid[asic][domain], 0);
+            atomic_init(&allocated->frequency_domain_rejected[asic][domain],
+                        0);
+        }
+    }
+
+    BZM_STATE = allocated;
+    ESP_LOGI(TAG, "Allocated %u bytes of Bonanza driver state in PSRAM",
+             (unsigned)sizeof(*allocated));
+    return true;
+}
+
+bool BZM_driver_state_active(void)
+{
+    return BZM_STATE != NULL;
+}
 
 static void reset_result_dedup(void)
 {
@@ -163,7 +292,11 @@ int BZM_set_max_baud(void)
 
 uint8_t BZM_init(GlobalState * state)
 {
-    if (state == NULL || SERIAL_set_baud(BZM_set_max_baud()) != ESP_OK) {
+    if (!BZM_driver_state_init(state)) {
+        ESP_LOGE(TAG, "BZM driver state is unavailable");
+        return 0;
+    }
+    if (SERIAL_set_baud(BZM_set_max_baud()) != ESP_OK) {
         ESP_LOGE(TAG, "Could not select the 2 Mbaud raw BZM bridge link");
         return 0;
     }
@@ -1290,7 +1423,12 @@ static bool staged_fail_closed_locked(void)
 
 bzm_bringup_outcome_t BZM_staged_initialize(GlobalState * state, bzm_bringup_report_t * report)
 {
-    if (state == NULL || state->DEVICE_CONFIG.family.asic.core_count != BZM_ENGINES_PER_ASIC ||
+    if (!BZM_driver_state_init(state)) {
+        staged_report(report, BZM_BRINGUP_BAD,
+                      BZM_BRINGUP_REASON_INVALID_ARGUMENT);
+        return BZM_BRINGUP_BAD;
+    }
+    if (state->DEVICE_CONFIG.family.asic.core_count != BZM_ENGINES_PER_ASIC ||
         state->DEVICE_CONFIG.family.asic_count != BZM_BRINGUP_ASIC_COUNT) {
         pthread_mutex_lock(&REACTOR_LOCK);
         (void) staged_fail_closed_locked();

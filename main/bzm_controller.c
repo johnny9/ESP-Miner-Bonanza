@@ -115,9 +115,33 @@ typedef struct
 static const char * TAG = "bzm_controller";
 static bool bridge_control_contract_compatible(
     const bzm_bridge_safety_status_t *status);
-static bzm_runtime_state_t RUNTIME = {
-    .lock = PTHREAD_MUTEX_INITIALIZER,
-};
+static bzm_runtime_state_t *RUNTIME_STATE;
+#define RUNTIME (*RUNTIME_STATE)
+
+static bool runtime_state_init(GlobalState *global_state)
+{
+    if (global_state == NULL ||
+        global_state->DEVICE_CONFIG.family.asic.id != BZM ||
+        !global_state->DEVICE_CONFIG.bonanza_bridge) {
+        return false;
+    }
+    if (RUNTIME_STATE != NULL) return true;
+
+    bzm_runtime_state_t *allocated = heap_caps_calloc(
+        1, sizeof(*allocated), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (allocated == NULL) {
+        ESP_LOGE(TAG, "Unable to allocate Bonanza controller state in PSRAM");
+        return false;
+    }
+    if (pthread_mutex_init(&allocated->lock, NULL) != 0) {
+        heap_caps_free(allocated);
+        return false;
+    }
+    RUNTIME_STATE = allocated;
+    ESP_LOGI(TAG, "Allocated %u bytes of Bonanza controller state in PSRAM",
+             (unsigned)sizeof(*allocated));
+    return true;
+}
 
 static bzm_bringup_telemetry_policy_t telemetry_policy(void);
 static void runtime_frequency_task(void *parameter);
@@ -404,9 +428,10 @@ static bool start_mining_tasks_locked(void)
         return false;
     }
     if (RUNTIME.asic_result_task_handle == NULL &&
-        xTaskCreate(ASIC_result_task, "asic result", 8192, state,
-                    BZM_ASIC_RESULT_TASK_PRIORITY,
-                    &RUNTIME.asic_result_task_handle) != pdPASS) {
+        xTaskCreateWithCaps(ASIC_result_task, "asic result", 8192, state,
+                            BZM_ASIC_RESULT_TASK_PRIORITY,
+                            &RUNTIME.asic_result_task_handle,
+                            MALLOC_CAP_SPIRAM) != pdPASS) {
         return false;
     }
     if (RUNTIME.hashrate_task_handle == NULL && xTaskCreateWithCaps(hashrate_monitor_task, "hashrate monitor", 8192, state, 5,
@@ -2003,6 +2028,10 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
     if (!global_state->DEVICE_CONFIG.bonanza_bridge || global_state->DEVICE_CONFIG.family.asic.id != BZM) {
         return ESP_OK;
     }
+    if (!BZM_driver_state_init(global_state) ||
+        !runtime_state_init(global_state)) {
+        return ESP_ERR_NO_MEM;
+    }
 
     pthread_mutex_lock(&RUNTIME.lock);
     if (RUNTIME.initialized) {
@@ -2143,6 +2172,7 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
 
 bool bzm_controller_mining_stack_ready(void)
 {
+    if (RUNTIME_STATE == NULL) return false;
     pthread_mutex_lock(&RUNTIME.lock);
     bool started = false;
     bool cooling = false;
@@ -2170,6 +2200,7 @@ bool bzm_controller_mining_stack_ready(void)
 
 bool bzm_controller_active(void)
 {
+    if (RUNTIME_STATE == NULL) return false;
     pthread_mutex_lock(&RUNTIME.lock);
     bool active = RUNTIME.active;
     pthread_mutex_unlock(&RUNTIME.lock);
@@ -2178,11 +2209,13 @@ bool bzm_controller_active(void)
 
 bool bzm_controller_dispatch_allowed(void)
 {
+    if (RUNTIME_STATE == NULL) return false;
     return runtime_dispatch_authorizer(&RUNTIME);
 }
 
 bool bzm_controller_fan_control_allowed(void)
 {
+    if (RUNTIME_STATE == NULL) return false;
     if (atomic_load_explicit(&RUNTIME.pause_requested,
                              memory_order_acquire)) {
         return false;
@@ -2202,6 +2235,7 @@ bool bzm_controller_fan_control_allowed(void)
 
 bool bzm_controller_pause(void)
 {
+    if (RUNTIME_STATE == NULL) return true;
     /* Publish intent before waiting for either the controller lock or the
      * BZM reactor. A live PLL/rail transaction that completes concurrently
      * must yield to pause instead of latching its cancellation as a fault. */
@@ -2262,6 +2296,7 @@ bool bzm_controller_pause(void)
 
 bool bzm_controller_resume(void)
 {
+    if (RUNTIME_STATE == NULL) return true;
     pthread_mutex_lock(&RUNTIME.lock);
     if (!RUNTIME.active) {
         pthread_mutex_unlock(&RUNTIME.lock);
@@ -2343,6 +2378,7 @@ bool bzm_controller_resume(void)
 
 void bzm_controller_tuning_settings_changed(void)
 {
+    if (RUNTIME_STATE == NULL) return;
     pthread_mutex_lock(&RUNTIME.lock);
     TaskHandle_t task = RUNTIME.active && RUNTIME.initialized
                             ? RUNTIME.frequency_task_handle
@@ -2355,6 +2391,7 @@ void bzm_controller_tuning_settings_changed(void)
 
 void bzm_controller_overheat_mode_changed(bool enabled)
 {
+    if (RUNTIME_STATE == NULL) return;
     pthread_mutex_lock(&RUNTIME.lock);
     if (RUNTIME.active && RUNTIME.initialized &&
         RUNTIME.global_state != NULL) {
@@ -2376,6 +2413,7 @@ void bzm_controller_overheat_mode_changed(bool enabled)
 
 bool bzm_controller_overheat_recovery_active(void)
 {
+    if (RUNTIME_STATE == NULL) return false;
     pthread_mutex_lock(&RUNTIME.lock);
     const bool active = RUNTIME.active && RUNTIME.initialized &&
                         RUNTIME.overheat_recovery.active;
@@ -2385,6 +2423,7 @@ bool bzm_controller_overheat_recovery_active(void)
 
 bool bzm_controller_acquire_maintenance(bzm_supervisor_owner_t owner)
 {
+    if (RUNTIME_STATE == NULL) return false;
     atomic_store_explicit(&RUNTIME.pause_requested, true,
                           memory_order_release);
     pthread_mutex_lock(&RUNTIME.lock);
@@ -2397,6 +2436,7 @@ bool bzm_controller_acquire_maintenance(bzm_supervisor_owner_t owner)
 
 bool bzm_controller_acquire_bridge_recovery(void)
 {
+    if (RUNTIME_STATE == NULL) return false;
     atomic_store_explicit(&RUNTIME.pause_requested, true,
                           memory_order_release);
     pthread_mutex_lock(&RUNTIME.lock);
@@ -2458,6 +2498,7 @@ bool bzm_controller_acquire_bridge_recovery(void)
 
 bool bzm_controller_release_maintenance(bzm_supervisor_owner_t owner)
 {
+    if (RUNTIME_STATE == NULL) return false;
     pthread_mutex_lock(&RUNTIME.lock);
     close_dispatch_locked();
     bool ok = RUNTIME.initialized && bzm_supervisor_release_maintenance(&RUNTIME.supervisor, owner);
@@ -2468,6 +2509,7 @@ bool bzm_controller_release_maintenance(bzm_supervisor_owner_t owner)
 
 bool bzm_controller_prepare_restart(void)
 {
+    if (RUNTIME_STATE == NULL) return true;
     atomic_store_explicit(&RUNTIME.pause_requested, true,
                           memory_order_release);
     pthread_mutex_lock(&RUNTIME.lock);

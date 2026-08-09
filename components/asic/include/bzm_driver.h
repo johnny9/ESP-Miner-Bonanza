@@ -14,6 +14,11 @@
 
 typedef struct GlobalState GlobalState;
 
+/* The large Bonanza reactor and transport state is created only after board
+ * detection selects BZM, and must reside in external RAM. */
+bool BZM_driver_state_init(GlobalState *state);
+bool BZM_driver_state_active(void);
+
 typedef struct
 {
     uint64_t valid[BZM_MAX_ASIC_COUNT][BZM_ENGINE_STACK_COUNT];
