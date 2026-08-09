@@ -31,7 +31,7 @@ void BM1397_set_version_mask(uint32_t version_mask);
 int BM1397_set_max_baud(void);
 int BM1397_set_default_baud(void);
 float BM1397_send_hash_frequency(float frequency);
-task_result * BM1397_process_work(void * GLOBAL_STATE);
+task_result * BM1397_process_work(GlobalState * GLOBAL_STATE);
 void BM1397_read_registers(void);
 
 #endif /* BM1397_H_ */

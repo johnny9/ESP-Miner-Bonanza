@@ -2,6 +2,7 @@
 
 #include "crc.h"
 #include "global_state.h"
+#include "mining.h"
 #include "serial.h"
 #include "utils.h"
 
@@ -165,10 +166,8 @@ float BM1368_send_hash_frequency(float target_freq)
     return new_freq;
 }
 
-uint8_t BM1368_init(void * pvParameters)
+uint8_t BM1368_init(GlobalState * GLOBAL_STATE)
 {
-    GlobalState * GLOBAL_STATE = (GlobalState *)pvParameters;
-
     // set version mask
     for (int i = 0; i < 4; i++) {
         BM1368_set_version_mask(STRATUM_DEFAULT_VERSION_MASK);
@@ -258,8 +257,6 @@ static uint8_t id = 0;
 bool BM1368_send_work(void *pvParameters, const bm_job *next_bm_job,
                       const mining_template_t *template)
 {
-    GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
-
     BM1368_job job;
     id = (id + 24) % 128;
     job.job_id = id;
@@ -285,7 +282,7 @@ bool BM1368_send_work(void *pvParameters, const bm_job *next_bm_job,
     return true;
 }
 
-task_result * BM1368_process_work(void * pvParameters)
+task_result * BM1368_process_work(GlobalState * GLOBAL_STATE)
 {
     bm1368_asic_result_t asic_result = {0};
 

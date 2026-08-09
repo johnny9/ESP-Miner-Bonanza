@@ -144,12 +144,13 @@ static asic_result_status_t handle_result(GlobalState *state,
                                           const asic_result_t *result)
 {
     result_callback_context callback_context = {.state = state};
+    uint16_t active_pool_index = state->SYSTEM_MODULE.is_using_fallback
+        ? state->SYSTEM_MODULE.secondary_pool_index
+        : state->SYSTEM_MODULE.primary_pool_index;
     asic_result_context_t context = {
         .job_store = &state->asic_job_store,
         .self_test = state->SELF_TEST_MODULE.is_active,
-        .username = state->SYSTEM_MODULE.is_using_fallback
-                        ? state->SYSTEM_MODULE.fallback_pool_user
-                        : state->SYSTEM_MODULE.pool_user,
+        .username = state->SYSTEM_MODULE.pools[active_pool_index].user,
         .callback_context = &callback_context,
     };
     return asic_result_handle(result, &context, &RESULT_CALLBACKS);

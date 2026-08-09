@@ -86,10 +86,8 @@ static void my_log_cb(lv_log_level_t level, const char * buf)
     }
 }
 
-esp_err_t display_init(void * pvParameters)
+esp_err_t display_init(GlobalState * GLOBAL_STATE)
 {
-    GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
-
     if (GLOBAL_STATE->DEVICE_CONFIG.display_backend == DISPLAY_BACKEND_BONANZA_I2C) {
         GLOBAL_STATE->SYSTEM_MODULE.is_screen_active = false;
         ESP_LOGI(TAG, "Use external bonanzaDisplay backend; LVGL will not be initialized");
