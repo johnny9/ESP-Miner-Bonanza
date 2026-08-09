@@ -22,8 +22,8 @@ typedef struct __attribute__((__packed__))
     uint8_t version[4];
 } BM1370_job;
 
-uint8_t BM1370_init(void * GLOBAL_STATE);
-bool BM1370_send_work(void *GLOBAL_STATE, const bm_job *job,
+uint8_t BM1370_init(GlobalState *GLOBAL_STATE);
+bool BM1370_send_work(GlobalState *GLOBAL_STATE, const bm_job *job,
                       const mining_template_t *template);
 void BM1370_set_version_mask(uint32_t version_mask);
 int BM1370_set_max_baud(void);

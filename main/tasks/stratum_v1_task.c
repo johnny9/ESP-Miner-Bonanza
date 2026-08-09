@@ -234,7 +234,6 @@ void stratum_v1_task(void *pvParameters)
 
         tls_mode tls = GLOBAL_STATE->SYSTEM_MODULE.pools[pool_idx].tls;
         char * cert = GLOBAL_STATE->SYSTEM_MODULE.pools[pool_idx].cert;
-        retry_critical_attempts = 0;
 
         GLOBAL_STATE->transport = STRATUM_V1_transport_init(tls, cert);
         // Check if transport was initialized

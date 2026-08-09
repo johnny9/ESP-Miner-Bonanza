@@ -982,36 +982,6 @@ bool check_settings_and_update(const cJSON * const root, char **redirect_url)
             ESP_LOGW(TAG, "Invalid display rotation: '%d'", item->valueint);
             result = false;
         }
-    }
-
-    // Validate pools array separately
-    cJSON *pools_item = cJSON_GetObjectItem(root, "pools");
-    if (pools_item) {
-        if (!cJSON_IsArray(pools_item)) {
-            ESP_LOGW(TAG, "Invalid type for 'pools', expected array");
-            result = false;
-        } else {
-            int size = cJSON_GetArraySize(pools_item);
-            for (int i = 0; i < size; i++) {
-                cJSON *pool_item = cJSON_GetArrayItem(pools_item, i);
-                cJSON *id_item = cJSON_GetObjectItem(pool_item, "id");
-                if (!id_item || !cJSON_IsNumber(id_item)) {
-                    ESP_LOGW(TAG, "Pool item at index %d is missing required 'id' number", i);
-                    result = false;
-                    break;
-                }
-                int idx = id_item->valueint;
-                if (idx < 0 || idx >= MAX_POOLS) {
-                    ESP_LOGW(TAG, "Pool item has invalid 'id': %d", idx);
-                    result = false;
-                    break;
-                }
-                if (!validate_pool_json(pool_item, idx)) {
-                    result = false;
-                    break;
-                }
-            }
-        }
         if (key == NVS_CONFIG_LOG_LEVEL && cJSON_IsString(item) &&
             !log_level_config_is_valid(item->valuestring)) {
             ESP_LOGW(TAG, "Invalid log level: '%s'", item->valuestring);
@@ -1043,6 +1013,36 @@ bool check_settings_and_update(const cJSON * const root, char **redirect_url)
                          "%s cannot be below this hardware's %u%% fan floor",
                          setting->rest_name, (unsigned) minimum);
                 result = false;
+            }
+        }
+    }
+
+    // Validate pools array separately
+    cJSON *pools_item = cJSON_GetObjectItem(root, "pools");
+    if (pools_item) {
+        if (!cJSON_IsArray(pools_item)) {
+            ESP_LOGW(TAG, "Invalid type for 'pools', expected array");
+            result = false;
+        } else {
+            int size = cJSON_GetArraySize(pools_item);
+            for (int i = 0; i < size; i++) {
+                cJSON *pool_item = cJSON_GetArrayItem(pools_item, i);
+                cJSON *id_item = cJSON_GetObjectItem(pool_item, "id");
+                if (!id_item || !cJSON_IsNumber(id_item)) {
+                    ESP_LOGW(TAG, "Pool item at index %d is missing required 'id' number", i);
+                    result = false;
+                    break;
+                }
+                int idx = id_item->valueint;
+                if (idx < 0 || idx >= MAX_POOLS) {
+                    ESP_LOGW(TAG, "Pool item has invalid 'id': %d", idx);
+                    result = false;
+                    break;
+                }
+                if (!validate_pool_json(pool_item, idx)) {
+                    result = false;
+                    break;
+                }
             }
         }
     }

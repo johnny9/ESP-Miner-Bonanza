@@ -56,4 +56,7 @@ REQUIRES
     "tcp_transport"
     "esp_timer"
     "identify_mode"
+
+PRIV_REQUIRES
+    "esp_driver_gpio"
 )

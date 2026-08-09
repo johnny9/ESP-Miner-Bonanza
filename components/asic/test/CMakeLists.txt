@@ -5,4 +5,4 @@ list(APPEND ASIC_TEST_SOURCES
 idf_component_register(SRCS ${ASIC_TEST_SOURCES}
                        INCLUDE_DIRS "." "../../../main"
                                     "../../../main/http_server"
-                       REQUIRES cmock stratum stratum_v2 asic json)
+                       REQUIRES cmock stratum stratum_v2 asic)
