@@ -274,7 +274,9 @@ void app_main(void)
             if (xTaskCreate(create_jobs_task, "stratum miner", 8192, (void *) &GLOBAL_STATE, 20, NULL) != pdPASS) {
                 ESP_LOGE(TAG, "Error creating stratum miner task");
             }
-            if (xTaskCreate(ASIC_result_task, "asic result", 8192, (void *) &GLOBAL_STATE, 15, NULL) != pdPASS) {
+            if (xTaskCreateWithCaps(ASIC_result_task, "asic result", 8192,
+                                    (void *)&GLOBAL_STATE, 15, NULL,
+                                    MALLOC_CAP_SPIRAM) != pdPASS) {
                 ESP_LOGE(TAG, "Error creating asic result task");
             }
 

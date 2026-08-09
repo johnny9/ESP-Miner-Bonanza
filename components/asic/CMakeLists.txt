@@ -59,4 +59,5 @@ REQUIRES
 
 PRIV_REQUIRES
     "esp_driver_gpio"
+    "heap"
 )

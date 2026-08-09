@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_partition.h"
 #include "esp_image_format.h"
 #include "esp_ota_ops.h"
@@ -216,8 +217,10 @@ void SYSTEM_init_system(GlobalState * GLOBAL_STATE)
     GLOBAL_STATE->sv2_conn = NULL;
 
     // Initialize mutexes
-    if (!asic_job_store_init(&GLOBAL_STATE->asic_job_store)) {
-        ESP_LOGE(TAG, "Failed to initialize ASIC job store");
+    if (!asic_job_store_init_with_caps(
+            &GLOBAL_STATE->asic_job_store,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) {
+        ESP_LOGE(TAG, "Failed to initialize ASIC job store in PSRAM");
     }
     GLOBAL_STATE->stratum_mux = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
 }

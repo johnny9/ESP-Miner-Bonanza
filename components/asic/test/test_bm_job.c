@@ -8,7 +8,9 @@
 #include "asic_result_handler.h"
 #include "bm_job_builder.h"
 #include "bm_result.h"
+#include "bzm_driver.h"
 #include "device_config.h"
+#include "global_state.h"
 #include "mining_template.h"
 #include "sv2_mining_template.h"
 #include "unity.h"
@@ -24,6 +26,8 @@ static asic_job_store_t *new_store(void)
     asic_job_store_t *store = calloc(1, sizeof(*store));
     TEST_ASSERT_NOT_NULL(store);
     TEST_ASSERT_TRUE(asic_job_store_init(store));
+    TEST_ASSERT_NOT_NULL(store->entries);
+    TEST_ASSERT_EQUAL_UINT16(ASIC_JOB_STORE_CAPACITY, store->capacity);
     return store;
 }
 
@@ -31,6 +35,17 @@ static void delete_store(asic_job_store_t *store)
 {
     asic_job_store_destroy(store);
     free(store);
+}
+
+TEST_CASE("ASIC job store destroy accepts an uninitialized store",
+          "[asic][job-store][memory]")
+{
+    asic_job_store_t store = {0};
+
+    asic_job_store_destroy(&store);
+
+    TEST_ASSERT_NULL(store.entries);
+    TEST_ASSERT_EQUAL_UINT16(0, store.capacity);
 }
 
 static void assert_hex(const char *expected, const uint8_t *actual,
@@ -99,6 +114,19 @@ static void extended_fixture(sv2_ext_job_t *source, sv2_conn_t *connection)
     connection->extranonce_prefix[1] = 0xbb;
     connection->extranonce_prefix[2] = 0xcc;
     connection->extranonce_size = 4;
+}
+
+TEST_CASE("BZM driver state stays inactive for BM13xx devices",
+          "[asic][driver][memory]")
+{
+    GlobalState *state = calloc(1, sizeof(*state));
+    TEST_ASSERT_NOT_NULL(state);
+    state->DEVICE_CONFIG.family.asic = ASIC_BM1370;
+
+    TEST_ASSERT_FALSE(BZM_driver_state_active());
+    TEST_ASSERT_FALSE(BZM_driver_state_init(state));
+    TEST_ASSERT_FALSE(BZM_driver_state_active());
+    free(state);
 }
 
 TEST_CASE("SV1 adapter owns neutral metadata before Bitmain packet building",
