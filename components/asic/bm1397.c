@@ -178,10 +178,8 @@ float BM1397_send_hash_frequency(float target_freq)
     return frequency;
 }
 
-uint8_t BM1397_init(void * pvParameters)
+uint8_t BM1397_init(GlobalState * GLOBAL_STATE)
 {
-    GlobalState * GLOBAL_STATE = (GlobalState *)pvParameters;
-
     // send the init command
     _send_read_address();
 
@@ -260,8 +258,6 @@ static uint8_t id = 0;
 bool BM1397_send_work(void *pvParameters, const bm_job *next_bm_job,
                       const mining_template_t *template)
 {
-    GlobalState *GLOBAL_STATE = (GlobalState *)pvParameters;
-
     job_packet job;
     // max job number is 128
     // there is still some really weird logic with the job id bits for the asic to sort out
@@ -297,7 +293,7 @@ bool BM1397_send_work(void *pvParameters, const bm_job *next_bm_job,
     return true;
 }
 
-task_result *BM1397_process_work(void *pvParameters)
+task_result *BM1397_process_work(GlobalState * GLOBAL_STATE)
 {
     bm1397_asic_result_t asic_result = {0};
 

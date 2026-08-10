@@ -1,4 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
+import { getHttpErrorMessage } from 'src/app/utils/error-handler';
 import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
 import { FormBuilder, FormGroup, FormControl, Validators, ReactiveFormsModule } from '@angular/forms';
 import { ToastrService } from 'ngx-toastr';
@@ -7,21 +8,14 @@ import { LoadingService } from 'src/app/services/loading.service';
 import { LiveDataService } from 'src/app/services/live-data.service';
 import { SystemApiService } from 'src/app/services/system.service';
 import { ActivatedRoute } from '@angular/router';
-import { CommonModule } from '@angular/common';
-import { ButtonModule } from 'primeng/button';
-import { CheckboxModule } from 'primeng/checkbox';
-import { SelectModule } from 'primeng/select';
-import { MessageModule } from 'primeng/message';
-import { SliderModule } from 'primeng/slider';
-import { TooltipModule } from 'primeng/tooltip';
-import { InputTextModule } from 'primeng/inputtext';
 import { DateAgoPipe } from 'src/app/pipes/date-ago.pipe';
 import { SystemAsic as ISystemASIC } from 'src/app/generated/models';
-
-type SelectOption = {
-  name: string;
-  value: number;
-};
+import { DropdownComponent } from '../dropdown/dropdown.component';
+import { SelectOption } from '../../models/select-option.model';
+import { CommonModule } from '@angular/common';
+import { TooltipDirective } from '../../directives/tooltip.directive';
+import { CheckboxComponent } from '../checkbox/checkbox.component';
+import { SliderComponent } from '../slider/slider.component';
 
 const DISPLAY_TIMEOUT_STEPS = [0, 1, 2, 5, 15, 30, 60, 60 * 2, 60 * 4, 60* 8, -1];
 const STATS_FREQUENCY_STEPS = [0, 1, 2, 5, 10, 30, 60, 60 * 2, 60 * 6, 60 * 14, 60 * 28, 60 * 60];
@@ -33,13 +27,10 @@ const STATS_FREQUENCY_STEPS = [0, 1, 2, 5, 10, 30, 60, 60 * 2, 60 * 6, 60 * 14, 
     imports: [
         CommonModule,
         ReactiveFormsModule,
-        ButtonModule,
-        CheckboxModule,
-        SelectModule,
-        InputTextModule,
-        MessageModule,
-        SliderModule,
-        TooltipModule,
+        CheckboxComponent,
+        DropdownComponent,
+        SliderComponent,
+        TooltipDirective,
         DateAgoPipe,
     ]
 })
@@ -68,12 +59,15 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
   public isBonanza: boolean = false;
 
   private overclockUnlockRequested: boolean = false;
+  public selectFrequencyOptions: SelectOption[] = [];
+  public selectVoltageOptions: SelectOption[] = [];
 
   private destroy$ = new Subject<void>();
 
   public displays = ["NONE", "SSD1306 (128x32)", "SSD1309 (128x64)", "SH1107 (64x128)", "SH1107 (128x128)"];
   public rotations = [0, 90, 180, 270];
-  public logLevels = ['ERROR', 'WARN', 'INFO', 'DEBUG'];
+  public logLevels: SelectOption<string>[] = ['ERROR', 'WARN', 'INFO', 'DEBUG']
+    .map(level => ({ label: level, value: level }));
   public displayTimeoutControl: FormControl;
   public statsFrequencyControl: FormControl;
   public statsLimit: number = 720;
@@ -132,7 +126,7 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
           console.log(`Overclock setting saved: ${enabled === 1 ? 'enabled' : 'disabled'}`);
         },
         error: (err) => {
-          console.error(`Failed to save overclock setting: ${err.message}`);
+          console.error(`Failed to save overclock setting: ${getHttpErrorMessage(err, this.uri)}`);
         }
       });
   }
@@ -224,6 +218,15 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
         this.formSubject.next(this.form);
 
       this.updateAsicControlState();
+      this.updateSelectOptions();
+
+      this.form.controls['frequency'].valueChanges.pipe(
+        takeUntil(this.destroy$)
+      ).subscribe(() => this.updateSelectOptions());
+
+      this.form.controls['coreVoltage'].valueChanges.pipe(
+        takeUntil(this.destroy$)
+      ).subscribe(() => this.updateSelectOptions());
 
       this.form.controls['autofanspeed'].valueChanges.pipe(
         startWith(this.form.controls['autofanspeed'].value),
@@ -274,21 +277,25 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     const deviceUri = this.uri || '';
+    const restartAlreadyPending = this.savedChanges;
+    const restartRequired = this.isRestartRequired;
+
     this.systemService.updateSystem(deviceUri, form)
       .pipe(this.loadingService.lockUIUntilComplete())
       .subscribe({
         next: () => {
           const successMessage = this.uri ? `Saved settings for ${this.uri}` : 'Saved settings';
-          if (this.isRestartRequired) {
+          if (restartRequired) {
             this.toastr.warning('You must restart this device after saving for changes to take effect.');
           }
           this.toastr.success(successMessage);
-          this.savedChanges = true;
+          this.form.markAsPristine();
+          this.savedChanges = restartAlreadyPending || restartRequired;
         },
         error: (err: HttpErrorResponse) => {
-          const errorMessage = this.uri ? `Could not save settings for ${this.uri}. ${err.message}` : `Could not save settings. ${err.message}`;
+          const errorMessage = `Could not save settings. ${getHttpErrorMessage(err, this.uri)}`;
           this.toastr.error(errorMessage);
-          this.savedChanges = false;
+          this.savedChanges = restartAlreadyPending;
         }
       });
   }
@@ -322,20 +329,26 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
         next: () => {
           const successMessage = this.uri ? `Device at ${this.uri} restarted` : 'Device restarted';
           this.toastr.success(successMessage);
+          this.savedChanges = false;
         },
         error: (err: HttpErrorResponse) => {
-          const errorMessage = this.uri ? `Failed to restart device at ${this.uri}. ${err.message}` : `Failed to restart device. ${err.message}`;
+          const errorMessage = `Failed to restart device. ${getHttpErrorMessage(err, this.uri)}`;
           this.toastr.error(errorMessage);
         }
       });
   }
 
-  get selectFrequency(): SelectOption[] {
-    return this.buildSelectOptions('frequency', this.frequencyOptions, this.defaultFrequency);
+  private updateSelectOptions() {
+    this.selectFrequencyOptions = this.buildSelectOptions('frequency', this.frequencyOptions, this.defaultFrequency);
+    this.selectVoltageOptions = this.buildSelectOptions('coreVoltage', this.voltageOptions, this.defaultVoltage);
   }
 
-  get selectVoltage(): SelectOption[] {
-    return this.buildSelectOptions('coreVoltage', this.voltageOptions, this.defaultVoltage);
+  get displayOptions(): SelectOption[] {
+    return this.displays.map(display => ({ name: display, value: display }));
+  }
+
+  get rotationOptions(): SelectOption[] {
+    return this.rotations.map(rotation => ({ name: `${rotation}°`, value: rotation }));
   }
 
   get hasTunableAsicSettings(): boolean {

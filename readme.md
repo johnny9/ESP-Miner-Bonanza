@@ -117,7 +117,7 @@ The ESP-Miner-Bonanza UI is called AxeOS and provides an API to expose actions a
 For more details take a look at [`main/http_server/openapi.yaml`](./main/http_server/openapi.yaml).
 
 Available API endpoints:
-  
+
 **GET**
 
 * `/api/system/info` Get system information, including bridge firmware version and protocol compatibility
@@ -181,7 +181,7 @@ curl -X POST \
      --data-binary "@esp-miner.bin" \
      http://YOUR-BITAXE-IP/api/system/OTA
 
-# Update AxeOS
+# Update with a custom AxeOS Web UI partition (www.bin)
 curl -X POST \
      -H "Content-Type: application/octet-stream" \
      --data-binary "@www.bin" \
@@ -192,6 +192,38 @@ curl -X POST \
 curl -X PATCH http://YOUR-BITAXE-IP/api/system \
      -H "Content-Type: application/json" \
      -d '{"statsFrequency": 60}'
+
+# Configure a Stratum V1 Pool (Slot Index 0)
+curl -X PUT http://YOUR-BITAXE-IP/api/system/pools/0 \
+     -H "Content-Type: application/json" \
+     -d '{
+       "stratumProtocol": "SV1",
+       "stratumURL": "solo.ckpool.org",
+       "stratumPort": 3333,
+       "stratumUser": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa.worker1",
+       "stratumPassword": "x",
+       "stratumSuggestedDifficulty": 0,
+       "stratumExtranonceSubscribe": true,
+       "stratumTLS": 0,
+       "stratumDecodeCoinbase": true
+     }'
+
+# Configure a Stratum V2 Pool (Slot Index 1)
+curl -X PUT http://YOUR-BITAXE-IP/api/system/pools/1 \
+     -H "Content-Type: application/json" \
+     -d '{
+       "stratumProtocol": "SV2",
+       "stratumURL": "v2.srtm.ocean.xyz",
+       "stratumPort": 3334,
+       "stratumUser": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa.worker1",
+       "stratumPassword": "x",
+       "stratumSuggestedDifficulty": 0,
+       "stratumExtranonceSubscribe": true,
+       "stratumTLS": 0,
+       "stratumDecodeCoinbase": true,
+       "stratumV2ChannelType": "extended",
+       "stratumV2AuthorityPubkey": "your_base58_sv2_authority_public_key"
+     }'
 
 # Stream logs
 websocat ws://YOUR-BITAXE-IP/api/ws
@@ -341,11 +373,24 @@ The firmware hosts a small web server on port 80 for administrative purposes. On
 
 ### Recovery
 
-In the event that the admin web front end is inaccessible, for example because of an unsuccessful firmware update (`www.bin`), a recovery page can be accessed at `http://<IP>/recovery`.
+In the event that the admin web front end is inaccessible, for example because of an unsuccessful custom Web UI update, a recovery page can be accessed at `http://<IP>/recovery`.
 
 ### ASIC frequency, rail, and fan settings
 
 Board 1002 always proves four-chip mining at 800 MHz and 2.8 V before applying the configured targets. AxeOS offers common 800–2000 MHz and 2.8–3.2 V presets; `?oc` mode accepts intermediate frequencies and bounded 2.1–3.2 V aggregate rail values. Target changes do not reboot the ESP. Voltage increases are applied before a frequency increase, voltage decreases wait until a frequency decrease completes, and voltage-only changes apply directly. Every rail command is checked against TPS546 command, PGOOD, status, and telemetry readback. The controller keeps work flowing, applies the bounded initial-frequency shortcut when appropriate, and then advances directly to the user target in 25 MHz steps, waiting for a full work replacement between steps. Automatic tuning-based voltage selection, pass-rate capping, and voltage retries are not part of the manual path; the saved user frequency and voltage remain authoritative. Once the controller reaches healthy `RUNNING`, the existing AxeOS automatic PID or manual setting controls the bridge-owned fan. Bonanza requests are clamped to the hardware-qualified 36% floor and must retain at least 1000 RPM. Matching upstream ESP-Miner, a hottest-ASIC reading above 75°C immediately requests 100% fan and latches the Bonanza supervisor safe-off; startup, safe-off, maintenance, faults, and shutdown also force 100%.
+
+## Unified Firmware & Rollbacks
+
+Starting with the unified firmware releases, ESP-Miner uses a unified architecture where the AxeOS frontend is compiled, gzipped, and embedded directly into the firmware application binary (`esp-miner.bin`).
+
+A separate Web UI image (`www.bin`) is no longer required for standard usage since the web interface is served directly from the firmware. If you want to use a custom or modified AxeOS frontend, you can still enable the **custom web UI** option in the settings. This allows you to upload and serve a separate `www.bin` from the SPIFFS partition, which takes priority over the built-in assets.
+
+### Rollback to Pre-Unified Firmware
+
+If you roll back the firmware from a unified version to an older, pre-unified version (which expects a separate web partition):
+
+- **www partition persistence**: The `www` (SPIFFS) partition on the flash chip will remain untouched during the rollback, keeping whatever latest non-unified Web UI version was last active on the device.
+- **Potential UI Version Mismatch**: Since older firmware relies entirely on the separate `www` partition to serve the web interface, the device will load whatever files exist in that partition. If you experience layout errors or missing features after rolling back, you will need to manually flash or upload a compatible `www.bin` version that matches the older firmware version.
 
 ## Development using ESP-Miner-Bonanza/devcontainer
 
@@ -376,7 +421,7 @@ docker run --rm -it -v $PWD:/workspace espminer-bonanza-build /bin/bash
 git config --global --add safe.directory /workspace    # set git permissions or build will fail; only done once
 cd /workspace
 idf.py build
-```	
+```
 Once the build is done exit out of the docker session and flash the new firmware.
 
 ## Development
@@ -420,7 +465,7 @@ bitaxetool --config ./config-1002.cvs --firmware ./esp-miner-merged.bin
 
 Do not substitute a configuration for another Bitaxe model; this fork currently targets board 1002.
 
-**Notes:** 
+**Notes:**
   - If you are developing within a dev container, you will need to run the bitaxetool command from outside the container. Otherwise, you will get an error about the device not being found.
   - Some Bitaxe versions can't directly connect to a USB-C port. If yours is affected use a USB-A adapter as a workaround. More about it [here](https://github.com/bitaxeorg/bitaxeGamma/issues/37).
   - Only ESP32-S3-WROOM-1 module type N16R8 (16MB Flash, 8MB Octal SPI PSRAM) is supported. This model number should be visible on the ESP32 module. Other module types without PSRAM or with Quad SPI PSRAM will not work with the normal firmware. More about it [here](https://github.com/bitaxeorg/ESP-Miner/issues/826).
@@ -432,7 +477,7 @@ If you find that your not able to mine / have no hash rate you will need to chec
 
 1/ AiProtection
 
-2/ IoT 
+2/ IoT
 
 If your Wi-Fi router has both of these options you might have to disable them both.
 

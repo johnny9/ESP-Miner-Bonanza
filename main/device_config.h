@@ -7,6 +7,8 @@
 
 #define THERMAL_MAX_SENSORS 2
 
+typedef struct GlobalState GlobalState;
+
 typedef enum
 {
     BM1397,
@@ -16,7 +18,7 @@ typedef enum
     BZM,
 } Asic;
 
-typedef struct {
+typedef struct AsicConfig {
     Asic id;
     const char * name;
     uint16_t chip_id;
@@ -51,7 +53,7 @@ typedef enum
     BONANZA,
 } Family;
 
-typedef struct {
+typedef struct FamilyConfig {
     Family id;
     const char * name;
     AsicConfig asic;
@@ -70,7 +72,7 @@ typedef enum
     DISPLAY_BACKEND_BONANZA_I2C,
 } DisplayBackend;
 
-typedef struct {
+typedef struct DeviceConfig {
     const char * board_version;
     FamilyConfig family;
     DisplayBackend display_backend;
@@ -202,6 +204,6 @@ static const DeviceConfig default_configs[] = {
     { .board_version = "1002", .family = FAMILY_BONANZA, .display_backend = DISPLAY_BACKEND_BONANZA_I2C,                                                       .TPS546 = true, .bonanza_bridge = true,                                   .power_consumption_target = 0,  },
 };
 
-esp_err_t device_config_init(void * pvParameters);
+esp_err_t device_config_init(GlobalState * GLOBAL_STATE);
 
 #endif /* DEVICE_CONFIG_H_ */

@@ -3,9 +3,8 @@
 #include <limits.h>
 #include <stdlib.h>
 #include "mining.h"
+#include "stratum_api.h"
 #include "utils.h"
-#include "mbedtls/sha256.h"
-#include "esp_log.h"
 
 void mining_template_free(mining_template_t *template)
 {

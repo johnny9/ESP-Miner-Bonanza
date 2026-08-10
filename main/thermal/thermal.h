@@ -2,8 +2,10 @@
 #define THERMAL_H
 
 #include <esp_err.h>
+#include <stdint.h>
 
-#include "global_state.h"
+typedef struct GlobalState GlobalState;
+typedef struct DeviceConfig DeviceConfig;
 
 #define THERMAL_ASIC_THROTTLE_TEMP_C 75.0f
 
