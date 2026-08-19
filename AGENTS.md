@@ -1,97 +1,173 @@
-# ESP-Miner Development Guide for Agents
+# ESP-Miner agent guide
 
-Welcome to the ESP-Miner repository. This document provides a high-level overview of the project structure, build instructions, and CI setup to help you navigate and contribute effectively.
+## Purpose and orientation
 
-## Project Overview
-ESP-Miner is the firmware powering the Bitaxe open-source Bitcoin ASIC miners. It is built on the ESP-IDF framework (v5.x+) for the ESP32-S3 and includes a modern web interface (Axe-OS) built with Angular.
+ESP-Miner is ESP-IDF firmware for Bitaxe Bitcoin ASIC miners and includes the
+Angular AxeOS web interface. Start with [readme.md](readme.md) for supported
+hardware and user-facing behavior. For any non-trivial work, read
+[specs/OVERVIEW.md](specs/OVERVIEW.md), locate the relevant contract in
+[specs/INDEX.md](specs/INDEX.md), and then read its companion documents.
 
-## Repository Structure
+## Working behavior
 
-```text
-.
-├── .github/workflows/          # CI/CD pipelines (GitHub Actions)
-├── bootloader_components/      # Custom components for the 2nd stage bootloader
-├── components/                 # Shared application components (asic, stratum, etc.)
-├── main/                       # Main application source code
-│   └── http_server/            # C-based HTTP server logic
-│       └── axe-os/             # Axe-OS Angular Frontend
-├── config-*.cvs                # Hardware-specific configuration files
-├── partitions.csv              # Flash partition layout
-└── sdkconfig                   # Project-wide ESP-IDF configuration
-```
+- Inspect the current code, tests, configuration contracts, and relevant specs
+  before proposing or changing behavior.
+- State material assumptions before changing a public API, hardware behavior,
+  persistent configuration, compatibility promise, security boundary, or
+  safety rule.
+- Prefer the smallest coherent change; preserve unrelated work.
+- For a defect, establish evidence and add a regression that fails before the
+  fix when practical.
+- Keep a short plan for multi-step work and include explicit verification.
+- Never claim a test, build, flash, OTA, device run, or hardware-in-the-loop
+  result that was not actually performed.
 
-## Build Instructions
+## Specifications
 
-### 1. Firmware (Main Project)
-The project uses the standard ESP-IDF build system. Ensure you are using ESP-IDF v5.5.1 (or compatible).
+Use [.agents/skills/specs/SKILL.md](.agents/skills/specs/SKILL.md) for a new
+feature, durable behavior change, reconciliation, or product/architecture
+review. Specs record durable intent; code, tests, and measurements are
+implementation evidence. Report contradictions rather than silently choosing
+one source.
 
-**Prerequisites:**
-- ESP-IDF v5.5.1 environment sourced.
-- Node.js (v22+) and npm for the frontend bundle.
+For feature or module-boundary work, also read
+[feature ownership and dependency boundaries](specs/architecture/feature-ownership/SPEC.md).
+Every affected design must name the current implementation modules, state
+whether each boundary conforms or leaks, and name the target owner and seam.
+`GlobalState` is composition/storage, not a reusable component interface.
+Feature policy may depend on portable value types and injected ports; concrete
+board, ASIC, driver, ESP-IDF, transport, and persistence implementations are
+adapters selected by the composition root.
 
-**Commands:**
-```bash
-# Source the environment
-. ~/esp/v5.5.1/esp-idf/export.sh
+Update the affected feature specification in the same change when a change
+alters observable behavior, the REST/WebSocket API, configuration or NVS
+state, hardware interface, flashing/OTA procedure, safety/recovery rule,
+compatibility, timing, memory, power, or image-size constraint. Formatting,
+test-only cleanup, internal renames, and behavior-preserving refactors do not
+need a spec update.
 
-# Build the project (automatically builds Axe-OS and generates binaries)
-idf.py build
+## Reviews
 
-# Flash to device
-idf.py build flash
-```
-*Note: The Axe-OS frontend is automatically built and compressed into `www.bin` as part of the main `idf.py build` process.*
+Before reviewing a pull request, patch, implementation, architecture proposal,
+or feature specification, read and apply
+[specs/REVIEW-PREFERENCES.md](specs/REVIEW-PREFERENCES.md). It converts two
+years of upstream ESP-Miner review history into a repository-specific review
+checklist. Use the shared rules to assess the change; reviewer profiles are
+coverage lenses, not a reason to imitate an individual, tailor code to a person,
+or bypass current requirements.
 
-### 2. Axe-OS (Frontend)
-The frontend is a standalone Angular application located in `main/http_server/axe-os`.
+Review the exact change and current repository state. Separate actionable
+findings from optional suggestions and positive acknowledgements. Do not infer
+that a historical merge correlation makes a change correct, and do not submit
+a GitHub review unless the user explicitly asks for that external action.
 
-**Commands:**
-```bash
-cd main/http_server/axe-os
-npm install
+In particular:
 
-# Build only the frontend
-npm run build
+- Name one authoritative owner for each hardware fact, state value, and public
+  identifier. Consumers must not silently re-derive or shadow it.
+- Preserve dependency direction: hardware facts stay in board, ASIC, power, or
+  configuration layers; firmware owns device semantics; AxeOS presents typed
+  API state; controllers coordinate while domain tasks own their work.
+- Reject feature-policy dependencies on `GlobalState`, concrete board/driver
+  headers, ESP-IDF APIs, or sibling feature internals. Prefer immutable
+  profiles/snapshots and narrow ports, with backend selection performed once at
+  composition.
+- Treat a changed contract as a cross-layer change. Reconcile firmware,
+  OpenAPI, generated client code, service mocks, UI consumers, persistence,
+  compatibility, and tests wherever applicable.
+- Make resource ownership, input bounds, failure behavior, task/callback
+  lifetime, and transport/session reset boundaries explicit.
+- Keep patches focused. Split unrelated or independently reviewable behavior
+  unless atomicity requires it to move together.
 
-# Run local development server
-npm run start
-```
+## Source-of-truth order
 
-## Testing
+- [readme.md](readme.md): supported products, user behavior, build orientation.
+- [flashing.md](flashing.md): factory-image recovery guidance.
+- [doc/unit_testing.md](doc/unit_testing.md): firmware unit-test procedure and
+  its flashing warning.
+- [main/http_server/openapi.yaml](main/http_server/openapi.yaml): public HTTP
+  API contract; generated AxeOS client code follows from it.
+- `specs/`: durable feature contracts and acceptance criteria.
+- [specs/REVIEW-PREFERENCES.md](specs/REVIEW-PREFERENCES.md): evidence-derived
+  architecture, review, scope, and verification defaults.
+- Code and tests: current implementation evidence to reconcile with intent.
 
-### Internal C Components
-Firmware unit tests are located in the `test/` directory.
-```bash
-idf.py build test
-```
+## Project boundaries and hardware safety
 
-### Axe-OS Frontend
-Angular unit tests use Karma and Jasmine. We use a specific CI command for CI environments which ensures consistent reporting and uses a headless browser.
+- Do not flash hardware, run OTA, alter a device configuration, or use a
+  serial port unless the user explicitly authorizes the target and operation.
+- A unit-test flash replaces normal firmware. Use a dedicated test device or
+  preserve a recovery path as described in `doc/unit_testing.md`.
+- Preserve rollback and recovery paths for configuration, firmware, and web
+  assets. Treat board identity, target, image, and artifact provenance as
+  required preconditions for destructive hardware work.
+- Keep credentials and private network/device details out of source, logs,
+  documentation, test fixtures, and commits.
+- Bound untrusted network, serial, API, and uploaded-data handling. Do not
+  retry a state-changing operation unless its idempotence is established.
+- Changes to `openapi.yaml` require regenerated AxeOS API code and matching
+  mock-data updates in `system.service.ts`.
 
-**Execution:**
-```bash
-cd main/http_server/axe-os
-npm run test:ci
-```
+## Coding-style standards
 
-**Key Points:**
-- `npm run test:ci` automatically runs `npm run generate:api` before executing `ng test`.
-- It uses a custom `ChromeHeadlessCI` launcher (defined in `karma.conf.js`) with `--no-sandbox` to ensure stability in containerized CI environments.
-- Unit tests are highly isolated. **Reminder:** Components with many dependencies (like `HomeComponent`) must have all services, pipes, and sub-components explicitly declared or provided in the `TestBed`.
+The repository configuration is authoritative. Do not introduce a competing
+formatter or style guide.
 
-## CI/CD Setup
+### Firmware C/C++
 
-We use GitHub Actions for automated testing and releases.
+- Format changed C/C++ with the repository [`.clang-format`](.clang-format):
+  LLVM-derived style, four-space indentation, 132-column limit, middle pointer
+  alignment, and braces on their own lines for declarations.
+- Follow nearby component conventions for naming, include ordering, logging,
+  ESP-IDF error handling, and `esp_err_t` ownership. Prefer existing component
+  APIs over duplicate helpers.
+- Keep headers self-contained, public declarations minimal, and implementation
+  details private. Update component CMake registration and target tests when
+  adding a component source, header, or unit-test suite.
+- Make error paths explicit and fail safe. Check allocations and hardware
+  readiness before use; do not hide a hardware, protocol, or configuration
+  failure behind a best-effort success path.
 
-### Key Workflows:
-- **`unittest.yml`**: Runs both backend and frontend unit tests in parallel.
-- **`build.yml`**: Verifies that the project compiles for all primary configurations.
-- **`release.yml`**: Handles automated releases and binary packaging.
+### AxeOS Angular
 
-## AI Agent Tips
-- **API Generation**: If you modify `openapi.yaml`, you **must** run `npm run generate:api` in the `axe-os` directory to update the TypeScript services. This is also automatically handled by `npm run build` and `npm run test:ci`.
-- **Node Environment**: If `node` or `npm` are not in your global path, check for local installations in `~/.nvm`. You can source them using `export PATH=~/.nvm/versions/node/v[version]/bin:$PATH`.
-- **Modern Angular Testing**: Use functional providers like `provideRouter([])` and `provideHttpClient()` instead of deprecated class-based modules like `RouterTestingModule`.
-- **PSRAM**: Bitaxe heavily relies on PSRAM. Always check `esp_psram_is_initialized()` before allocating large buffers in the backend.
-- **Mock Data Parity**: When updating `openapi.yaml` and regenerating the API, you **must** update the mock data in `main/http_server/axe-os/src/app/services/system.service.ts`. The TypeScript compiler will fail if properties are missing from the `of()` calls used for development.
-- **API Type Safety**: The `SystemInfo` API uses a numeric 0/1 pattern for many boolean-like status fields (e.g., `overclockEnabled`, `overheat_mode`). In the backend, use `cJSON_AddNumberToObject(root, "key", val ? 1 : 0)` to maintain parity with the `integer` types in OpenAPI and support strict equality checks (`=== 1`) in the Angular frontend.
+- Follow `main/http_server/axe-os/.editorconfig`: UTF-8, final newline,
+  trailing-whitespace cleanup, two-space TypeScript indentation, four-space
+  HTML/SCSS indentation, and single-quoted TypeScript strings.
+- Use the Angular and TypeScript patterns already present in the affected
+  feature. Prefer functional providers such as `provideRouter([])` and
+  `provideHttpClient()` in tests rather than deprecated testing modules.
+- Keep API schema, generated client, service mocks, UI behavior, and focused
+  tests synchronized. Do not manually edit generated API output as a substitute
+  for changing `openapi.yaml` and running generation.
+
+## Commands and verification
+
+Source the ESP-IDF v5.5.3 environment before firmware commands. Use the
+repository's actual commands; do not invent formatters, linters, hardware
+commands, or deployment paths.
+
+| Purpose | Command |
+|---|---|
+| Firmware build | `idf.py build` |
+| Firmware unit-test build | `cd test && idf.py build` |
+| AxeOS API generation | `cd main/http_server/axe-os && npm run generate:api` |
+| AxeOS production build | `cd main/http_server/axe-os && npm run build` |
+| AxeOS CI tests | `cd main/http_server/axe-os && npm run test:ci` |
+| Factory configuration validation | `python3 tools/validate_bitaxe_1002_config.py` |
+| Specification integrity | `python3 tools/validate_specs.py` |
+| Whitespace validation | `git diff --check` |
+
+Choose verification proportional to the change. Documentation-only work needs
+the specification maintenance checks and `git diff --check`; it does not
+authorize a build, network access, or device operation.
+
+## Repository hygiene and done criteria
+
+- Never commit credentials, local configuration, device coordinates, build
+  output, downloaded firmware, captured logs, or generated dependency trees.
+- Inspect staged and unstaged changes separately; stage only in-scope files.
+- Commit and push only when explicitly authorized.
+- Work is done when the requested behavior is implemented, affected durable
+  specs and acceptance evidence agree, relevant verification has passed (or
+  its limitation is precise), and unrelated files are untouched.
