@@ -2,9 +2,12 @@
 #include <stdio.h>
 #include <limits.h>
 #include <stdlib.h>
+#include "esp_log.h"
 #include "mining.h"
 #include "stratum_api.h"
 #include "utils.h"
+
+static const char *TAG = "mining";
 
 void mining_template_free(mining_template_t *template)
 {
@@ -34,44 +37,45 @@ bool mining_template_clone(const mining_template_t *source,
     return true;
 }
 
-void calculate_coinbase_tx_hash(const char *coinbase_1, const char *coinbase_2, const char *extranonce, const char *extranonce_2, uint8_t dest[32])
-{
-    size_t len1 = strlen(coinbase_1);
-    size_t len2 = strlen(extranonce);
-    size_t len3 = strlen(extranonce_2);
-    size_t len4 = strlen(coinbase_2);
 
-    size_t coinbase_tx_bin_len = (len1 + len2 + len3 + len4) / 2;
-
-    uint8_t coinbase_tx_bin[coinbase_tx_bin_len];
-
-    size_t bin_offset = 0;
-    bin_offset += hex2bin(coinbase_1, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
-    bin_offset += hex2bin(extranonce, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
-    bin_offset += hex2bin(extranonce_2, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
-    bin_offset += hex2bin(coinbase_2, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
-
-    double_sha256_bin(coinbase_tx_bin, coinbase_tx_bin_len, dest);
-}
-
-void calculate_coinbase_tx_hash_bin(const uint8_t *prefix, size_t prefix_len,
+bool calculate_coinbase_tx_hash_bin(const uint8_t *prefix, size_t prefix_len,
                                     const uint8_t *extranonce_prefix, size_t ep_len,
                                     const uint8_t *extranonce_2, size_t e2_len,
                                     const uint8_t *suffix, size_t suffix_len,
                                     uint8_t dest[32])
 {
     size_t total_len = prefix_len + ep_len + e2_len + suffix_len;
-    uint8_t *buf = malloc(total_len);
-    if (!buf) return;
+    uint8_t stack_buf[1024];
+    uint8_t *buf = (total_len <= sizeof(stack_buf)) ? stack_buf : malloc(total_len);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate memory for coinbase tx (%zu bytes)", total_len);
+        if (dest) memset(dest, 0, 32);
+        return false;
+    }
 
     size_t offset = 0;
-    memcpy(buf + offset, prefix, prefix_len);   offset += prefix_len;
-    memcpy(buf + offset, extranonce_prefix, ep_len); offset += ep_len;
-    memcpy(buf + offset, extranonce_2, e2_len); offset += e2_len;
-    memcpy(buf + offset, suffix, suffix_len);
+    if (prefix && prefix_len > 0) {
+        memcpy(buf + offset, prefix, prefix_len);
+        offset += prefix_len;
+    }
+    if (extranonce_prefix && ep_len > 0) {
+        memcpy(buf + offset, extranonce_prefix, ep_len);
+        offset += ep_len;
+    }
+    if (extranonce_2 && e2_len > 0) {
+        memcpy(buf + offset, extranonce_2, e2_len);
+        offset += e2_len;
+    }
+    if (suffix && suffix_len > 0) {
+        memcpy(buf + offset, suffix, suffix_len);
+        offset += suffix_len;
+    }
 
     double_sha256_bin(buf, total_len, dest);
-    free(buf);
+    if (buf != stack_buf) {
+        free(buf);
+    }
+    return true;
 }
 
 void calculate_merkle_root_hash(const uint8_t coinbase_tx_hash[32], const uint8_t merkle_branches[][32], const int num_merkle_branches, uint8_t dest[32])
@@ -101,11 +105,16 @@ void extranonce_2_generate(uint64_t extranonce_2, uint32_t length, char dest[sta
     bin2hex(extranonce_2_bytes, length, dest, length * 2 + 1);
 }
 
+#include <math.h>
+
 double hash_to_pdiff(const uint8_t hash[32])
 {
+    if (!hash) return (double)UINT32_MAX;
     double s64 = le256todouble(hash);
-    if (s64 == 0.0) return (double)UINT32_MAX;
-    return truediffone / s64;
+    if (s64 <= 0.0 || isnan(s64) || isinf(s64)) return (double)UINT32_MAX;
+    double diff = truediffone / s64;
+    if (isnan(diff) || isinf(diff) || diff <= 0.0) return (double)UINT32_MAX;
+    return diff;
 }
 
 ///////cgminer nonce testing
@@ -149,4 +158,24 @@ uint32_t increment_bitmask(const uint32_t value, const uint32_t mask)
     }
 
     return new_value;
+}
+
+void calculate_coinbase_tx_hash(const char *coinbase_1, const char *coinbase_2, const char *extranonce, const char *extranonce_2, uint8_t dest[32])
+{
+    size_t len1 = strlen(coinbase_1);
+    size_t len2 = strlen(extranonce);
+    size_t len3 = strlen(extranonce_2);
+    size_t len4 = strlen(coinbase_2);
+
+    size_t coinbase_tx_bin_len = (len1 + len2 + len3 + len4) / 2;
+
+    uint8_t coinbase_tx_bin[coinbase_tx_bin_len];
+
+    size_t bin_offset = 0;
+    bin_offset += hex2bin(coinbase_1, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
+    bin_offset += hex2bin(extranonce, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
+    bin_offset += hex2bin(extranonce_2, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
+    bin_offset += hex2bin(coinbase_2, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
+
+    double_sha256_bin(coinbase_tx_bin, coinbase_tx_bin_len, dest);
 }

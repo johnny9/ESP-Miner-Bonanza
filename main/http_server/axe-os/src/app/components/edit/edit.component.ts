@@ -347,6 +347,10 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
     return this.displays.map(display => ({ name: display, value: display }));
   }
 
+  get isDisplayConfigurable(): boolean {
+    return this.displays.includes(this.form?.controls['display'].value);
+  }
+
   get rotationOptions(): SelectOption[] {
     return this.rotations.map(rotation => ({ name: `${rotation}°`, value: rotation }));
   }
@@ -464,6 +468,7 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
       'coreVoltage',
       'frequency',
       'autofanspeed',
+      'minFanSpeed',
       'manualFanSpeed',
       'minFanSpeed',
       'temptarget',

@@ -3,6 +3,7 @@
 #include "bm1366.h"
 #include "bm1368.h"
 #include "bm1370.h"
+#include "bm1373.h"
 #include "bm1397.h"
 #include "bm_job_builder.h"
 #include "bm_result.h"
@@ -54,8 +55,33 @@ DEFINE_BM_SEND_WRAPPER(1397)
 DEFINE_BM_SEND_WRAPPER(1366)
 DEFINE_BM_SEND_WRAPPER(1368)
 DEFINE_BM_SEND_WRAPPER(1370)
+DEFINE_BM_SEND_WRAPPER(1373)
+
+static asic_event_t *process_bm1373(GlobalState *state)
+{
+    return adapt_bm_result(state, BM1373_process_work);
+}
+
+static void read_bm1373_registers(GlobalState *state)
+{
+    (void)state;
+    BM1373_read_registers();
+}
 
 static const asic_driver_t DRIVERS[] = {
+    {
+        .id = BM1373, .chip_id = 1372, .name = "BM1372/BM1373",
+        .ops = {
+            .init = BM1373_init,
+            .process_work = process_bm1373,
+            .set_max_baud = BM1373_set_max_baud,
+            .send_work = send_bm1373,
+            .set_version_mask = BM1373_set_version_mask,
+            .set_hash_frequency = BM1373_send_hash_frequency,
+            .set_nonce_space = BM1373_set_nonce_space,
+            .read_registers = read_bm1373_registers,
+        },
+    },
     {
         .id = BM1397,
         .chip_id = 1397,

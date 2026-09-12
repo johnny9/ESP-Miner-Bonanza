@@ -23,13 +23,13 @@ class NonceLogLevelTests(unittest.TestCase):
         self.assert_debug_only("components/stratum/stratum_api.c", "tx:")
         self.assert_debug_only("components/stratum/stratum_api.c", "Result success")
         self.assert_debug_only("components/stratum/stratum_api.c", "Result failed:")
-        self.assert_debug_only("main/tasks/stratum_v1_task.c", "message result accepted")
-        self.assert_debug_only("main/tasks/stratum_v1_task.c", "Stratum response time:")
-        self.assert_debug_only("main/tasks/stratum_v2_task.c", "Shares accepted:")
+        self.assert_debug_only("main/tasks/stratum_v1_client.c", "message result accepted")
+        self.assert_debug_only("main/tasks/stratum_v1_client.c", "Stratum response time:")
+        self.assert_debug_only("main/tasks/stratum_v2_client.c", "Shares accepted:")
 
     def test_share_failures_remain_visible(self) -> None:
-        sv1 = (REPO_ROOT / "main/tasks/stratum_v1_task.c").read_text(encoding="utf-8")
-        sv2 = (REPO_ROOT / "main/tasks/stratum_v2_task.c").read_text(encoding="utf-8")
+        sv1 = (REPO_ROOT / "main/tasks/stratum_v1_client.c").read_text(encoding="utf-8")
+        sv2 = (REPO_ROOT / "main/tasks/stratum_v2_client.c").read_text(encoding="utf-8")
         results = (REPO_ROOT / "main/tasks/asic_result_task.c").read_text(encoding="utf-8")
         self.assertIn('ESP_LOGW(TAG, "message result rejected:', sv1)
         self.assertIn('ESP_LOGW(TAG, "Share rejected:', sv2)

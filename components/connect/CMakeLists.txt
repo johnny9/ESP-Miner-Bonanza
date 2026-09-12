@@ -5,10 +5,6 @@ SRCS
 INCLUDE_DIRS 
     "include"
 
-PRIV_INCLUDE_DIRS
-    "../../main"
-    "../../main/tasks"
-
 REQUIRES
     "asic"
     "nvs_flash"
@@ -18,4 +14,9 @@ REQUIRES
     "stratum_v2"
     "espressif__mdns"
     "identify_mode"
+)
+
+target_include_directories(${COMPONENT_LIB} PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../main"
+    "${CMAKE_CURRENT_LIST_DIR}/../../main/tasks"
 )

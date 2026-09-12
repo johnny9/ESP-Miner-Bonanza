@@ -14,10 +14,12 @@ typedef struct bm_job {
     uint32_t target;
     uint32_t starting_nonce;
     uint8_t num_midstates;
-    uint8_t midstate[32];
-    uint8_t midstate1[32];
-    uint8_t midstate2[32];
-    uint8_t midstate3[32];
+    union {
+        struct {
+            uint8_t midstate[32], midstate1[32], midstate2[32], midstate3[32];
+        };
+        uint8_t midstates[4][32];
+    };
 } bm_job;
 
 #endif // BM_JOB_H_

@@ -13,6 +13,7 @@ import {
 import { CheckboxComponent } from '../checkbox/checkbox.component';
 import { FormsModule } from '@angular/forms';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { ProgressbarComponent } from '../progressbar/progressbar.component';
 import { getHttpErrorMessage } from 'src/app/utils/error-handler';
 
 describe('UpdateComponent', () => {
@@ -43,7 +44,7 @@ describe('UpdateComponent', () => {
 
     TestBed.configureTestingModule({
       declarations: [UpdateComponent, ModalComponent],
-      imports: [CheckboxComponent, FormsModule, NoopAnimationsModule],
+      imports: [CheckboxComponent, ProgressbarComponent, FormsModule, NoopAnimationsModule],
       providers: [
         provideHttpClient(),
         provideToastr(),

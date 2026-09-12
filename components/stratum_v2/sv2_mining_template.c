@@ -71,12 +71,12 @@ bool mining_template_build_sv2_extended(const sv2_ext_job_t *source,
 
     uint8_t coinbase_hash[32];
     uint8_t merkle_root[32];
-    calculate_coinbase_tx_hash_bin(
+    if (!calculate_coinbase_tx_hash_bin(
         source->coinbase_prefix, source->coinbase_prefix_len,
         connection->extranonce_prefix, connection->extranonce_prefix_len,
         extranonce2, connection->extranonce_size,
         source->coinbase_suffix, source->coinbase_suffix_len,
-        coinbase_hash);
+        coinbase_hash)) return false;
     calculate_merkle_root_hash(coinbase_hash, source->merkle_path,
                                source->merkle_path_count, merkle_root);
 

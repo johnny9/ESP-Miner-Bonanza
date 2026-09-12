@@ -1,6 +1,12 @@
 #include <stdio.h>
 #include <string.h>
 #include "unity.h"
+#include "esp_heap_caps.h"
+
+void tearDown(void)
+{
+    TEST_ASSERT_TRUE_MESSAGE(heap_caps_check_integrity_all(true), "Heap corrupted during test");
+}
 
 static void print_banner(const char *text);
 

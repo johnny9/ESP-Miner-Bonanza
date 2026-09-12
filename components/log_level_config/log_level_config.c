@@ -9,8 +9,8 @@ static const char *const mining_debug_tags[] = {
     "asic_result",
     "scoreboard",
     "stratum_api",
-    "stratum_v1_task",
-    "stratum_v2_task",
+    "stratum_v1_client",
+    "stratum_v2_client",
 };
 
 bool log_level_config_parse(const char *name, esp_log_level_t *level)

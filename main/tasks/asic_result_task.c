@@ -14,7 +14,7 @@
 #include "scoreboard.h"
 #include "self_test.h"
 #include "stratum_api.h"
-#include "stratum_v2_task.h"
+#include "stratum_task.h"
 #include "sv2_protocol.h"
 #include "system.h"
 
@@ -22,8 +22,6 @@ static const char *TAG = "asic_result";
 
 typedef struct {
     GlobalState *state;
-    esp_transport_handle_t sv1_transport;
-    int sv1_uid;
 } result_callback_context;
 
 static void monitor_register(GlobalState *state,
@@ -40,73 +38,26 @@ static void record_self_test(void *context, double nonce_diff)
     self_test_record_nonce(callback_context->state, nonce_diff);
 }
 
-static bool sv1_transport_ready(void *context,
-                                const asic_share_submission_t *share)
+static int submit_share(void *context, const asic_share_submission_t *share)
 {
-    result_callback_context *callback_context = context;
-    GlobalState *state = callback_context->state;
-    taskENTER_CRITICAL(&state->stratum_mux);
-    callback_context->sv1_transport = state->transport;
-    callback_context->sv1_uid = state->send_uid++;
-    taskEXIT_CRITICAL(&state->stratum_mux);
-    bool ready = callback_context->sv1_transport != NULL;
-    if (!ready) {
-        ESP_LOGW(TAG,
-                 "No stratum connection, dropping share (work 0x%" PRIX64 ")",
-                 share->result->work_handle);
-    }
-    return ready;
-}
-
-static int submit_sv1(void *context, const asic_share_submission_t *share)
-{
-    result_callback_context *callback_context = context;
-    GlobalState *state = callback_context->state;
-    esp_transport_handle_t transport = callback_context->sv1_transport;
-    int uid = callback_context->sv1_uid;
-
-    if (transport == NULL) return -1;
+    GlobalState *state = ((result_callback_context *)context)->state;
+    mining_template_t job = {
+        .version = share->base_version,
+        .ntime = share->ntime,
+        .share = {
+            .protocol = share->protocol,
+            .pool_id = share->pool_id,
+            .job_id = (char *)share->job_id,
+            .extranonce2 = (char *)share->extranonce2,
+        },
+    };
     uint64_t sent_time_us = 0;
-    int ret = STRATUM_V1_submit_share(transport, uid, share->username,
-                                      share->job_id, share->extranonce2,
-                                      share->ntime, share->nonce,
-                                      share->version_bits, &sent_time_us);
-    if (ret < 0) {
-        ESP_LOGW(TAG, "Unable to write share to socket (ret: %d, errno %d: %s)",
-                 ret, errno, strerror(errno));
-    }
-
-    state->SYSTEM_MODULE.process_time =
-        (sent_time_us - share->result->timestamp_us) / 1000.0f;
-    ESP_LOGD(TAG, "Processing time: %0.1f ms",
-             state->SYSTEM_MODULE.process_time);
-    return ret;
-}
-
-static int submit_sv2_standard(void *context,
-                               const asic_share_submission_t *share)
-{
-    GlobalState *state = ((result_callback_context *)context)->state;
-    int ret = stratum_v2_submit_share(state, share->numeric_job_id,
-                                      share->nonce, share->ntime,
-                                      share->final_version);
-    if (ret < 0) {
-        ESP_LOGW(TAG, "Failed to submit SV2 share (ret=%d, errno=%d: %s)",
-                 ret, errno, strerror(errno));
-    }
-    return ret;
-}
-
-static int submit_sv2_extended(void *context,
-                               const asic_share_submission_t *share)
-{
-    GlobalState *state = ((result_callback_context *)context)->state;
-    int ret = stratum_v2_submit_share_extended(
-        state, share->numeric_job_id, share->nonce, share->ntime,
-        share->final_version, share->extranonce2_bin, share->extranonce2_len);
-    if (ret < 0) {
-        ESP_LOGW(TAG, "Failed to submit SV2 share (ret=%d, errno=%d: %s)",
-                 ret, errno, strerror(errno));
+    int ret = stratum_submit_share(state, &job, share->nonce,
+                                   share->final_version, &sent_time_us);
+    if (ret >= 0 && sent_time_us >= share->result->timestamp_us) {
+        state->SYSTEM_MODULE.process_time =
+            (sent_time_us - share->result->timestamp_us) / 1000.0f;
+        ESP_LOGD(TAG, "Processing time: %0.1f ms", state->SYSTEM_MODULE.process_time);
     }
     return ret;
 }
@@ -133,10 +84,9 @@ static void account_share(void *context,
 
 static const asic_result_callbacks_t RESULT_CALLBACKS = {
     .record_self_test = record_self_test,
-    .sv1_transport_ready = sv1_transport_ready,
-    .submit_sv1 = submit_sv1,
-    .submit_sv2_standard = submit_sv2_standard,
-    .submit_sv2_extended = submit_sv2_extended,
+    .submit_sv1 = submit_share,
+    .submit_sv2_standard = submit_share,
+    .submit_sv2_extended = submit_share,
     .account_share = account_share,
 };
 

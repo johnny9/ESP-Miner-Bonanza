@@ -1,5 +1,6 @@
 #include "unity.h"
 #include "mining.h"
+#include "mining_template.h"
 #include "stratum_api.h"
 #include "utils.h"
 

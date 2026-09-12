@@ -10,6 +10,11 @@
 
 asic_capabilities_t ASIC_get_capabilities(const GlobalState *GLOBAL_STATE);
 
+typedef struct {
+    uint64_t time_us;
+    float hashrate;
+} asic_domain_measurement_t;
+
 uint8_t ASIC_init(GlobalState * GLOBAL_STATE);
 asic_event_t * ASIC_process_work(GlobalState * GLOBAL_STATE);
 int ASIC_set_max_baud(GlobalState * GLOBAL_STATE);
@@ -33,5 +38,7 @@ void ASIC_record_local_result(GlobalState *GLOBAL_STATE, uint8_t asic_index,
                               double nonce_difficulty);
 bool ASIC_get_health(GlobalState *GLOBAL_STATE,
                      asic_driver_health_t *health);
+esp_err_t ASIC_get_domain_measurement(GlobalState * GLOBAL_STATE, uint8_t asic_nr,
+                                      uint8_t domain_nr, asic_domain_measurement_t * measurement);
 
 #endif // ASIC_H

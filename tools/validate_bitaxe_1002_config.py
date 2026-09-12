@@ -142,7 +142,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             "[config.cvs] [sdkconfig.defaults]"
         )
     root = Path(__file__).resolve().parents[1]
-    path = Path(args[0]) if args else root / "config-1002.cvs"
+    path = Path(args[0]) if args else root / "configs/config-1002.csv"
     defaults_path = (
         Path(args[1]) if len(args) == 2 else root / "sdkconfig.defaults"
     )

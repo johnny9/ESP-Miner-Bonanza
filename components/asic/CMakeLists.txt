@@ -1,5 +1,6 @@
 idf_component_register(
 SRCS 
+    "bm1373.c"
     "bm1370.c"
     "bm1368.c"
     "bm1366.c"
@@ -44,10 +45,6 @@ SRCS
 INCLUDE_DIRS 
     "include"
 
-PRIV_INCLUDE_DIRS
-    "../../main"
-    "../../main/tasks"
-
 REQUIRES 
     "freertos"
     "esp_driver_uart"
@@ -60,4 +57,9 @@ REQUIRES
 PRIV_REQUIRES
     "esp_driver_gpio"
     "heap"
+)
+
+target_include_directories(${COMPONENT_LIB} PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../main"
+    "${CMAKE_CURRENT_LIST_DIR}/../../main/tasks"
 )

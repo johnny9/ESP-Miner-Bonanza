@@ -384,7 +384,8 @@ static void exercise_protocol(mining_protocol_t protocol,
 {
     asic_job_store_t *store = new_store();
     mining_template_t template = owned_template(
-        protocol, "42", "11223344", 0);
+        protocol, "42", "11223344", DBL_MIN);
+    template.share.pool_id = 7;
     asic_work_handle_t handle;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(
         store, &template, &handle));
@@ -398,6 +399,7 @@ static void exercise_protocol(mining_protocol_t protocol,
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED,
                       asic_result_handle(&result, &context,
                                          &RESULT_CALLBACKS));
+    TEST_ASSERT_EQUAL_UINT8(7, capture->share.pool_id);
     TEST_ASSERT_EQUAL_STRING("42", capture->job_id);
     TEST_ASSERT_EQUAL_STRING("11223344", capture->extranonce2);
     TEST_ASSERT_EQUAL_STRING("worker.name", capture->share.username);
@@ -503,8 +505,8 @@ TEST_CASE("Bitmain raw adapter keeps share and register events distinct",
 TEST_CASE("ASIC driver table exposes operations without switch dispatch",
           "[asic][driver]")
 {
-    TEST_ASSERT_EQUAL_UINT32(5, asic_driver_count());
-    const char *names[] = {"BM1397", "BM1366", "BM1368", "BM1370", "BZM"};
+    TEST_ASSERT_EQUAL_UINT32(6, asic_driver_count());
+    const char *names[] = {"BM1372/BM1373", "BM1397", "BM1366", "BM1368", "BM1370", "BZM"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         const asic_driver_t *driver = asic_driver_at(i);
         TEST_ASSERT_NOT_NULL(driver);
@@ -529,4 +531,74 @@ TEST_CASE("ASIC driver table exposes operations without switch dispatch",
     }
     TEST_ASSERT_NULL(asic_driver_for_id(99));
     TEST_ASSERT_NULL(asic_driver_at(asic_driver_count()));
+}
+
+TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
+          "[asic][template][pool-slot]")
+{
+    uint8_t branches[32];
+    mining_notify legacy = sv1_fixture(branches);
+    mining_template_t expected;
+    TEST_ASSERT_TRUE(mining_template_build_sv1(
+        &legacy, "aabb", 4, 0x11223344, 0x00006000, 1234.5, &expected));
+
+    miner_job_t slot = {
+        .type = JOB_TYPE_V1, .version = legacy.version, .ntime = legacy.ntime,
+        .nbits = legacy.target, .clean_jobs = true, .pool_id = 7,
+        .pool_diff = 1234.5, .version_mask = 0x00006000,
+        .extranonce1 = {0xaa, 0xbb}, .extranonce1_len = 2,
+        .extranonce2_len = 4, .merkle_path_count = 1,
+    };
+    uint8_t prefix[128], suffix[128];
+    slot.coinbase_prefix = prefix;
+    slot.coinbase_suffix = suffix;
+    slot.coinbase_prefix_len = hex2bin(legacy.coinbase_1, prefix, sizeof(prefix));
+    slot.coinbase_suffix_len = hex2bin(legacy.coinbase_2, suffix, sizeof(suffix));
+    hex2bin(legacy.prev_block_hash, slot.prev_hash, sizeof(slot.prev_hash));
+    reverse_endianness_per_word(slot.prev_hash);
+    memcpy(slot.merkle_path, branches, sizeof(branches));
+    strcpy(slot.job_id, "42");
+
+    for (int protocol = JOB_TYPE_V1; protocol <= JOB_TYPE_SV2_EXTENDED; ++protocol) {
+        slot.type = protocol;
+        reverse_32bit_words(expected.merkle_root, slot.merkle_root);
+        mining_template_t actual;
+        TEST_ASSERT_TRUE(mining_template_build_miner_job(
+            &slot, 0x11223344, slot.version, &actual));
+        TEST_ASSERT_EQUAL_UINT8(protocol, actual.share.protocol);
+        TEST_ASSERT_EQUAL_UINT8(7, actual.share.pool_id);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.prev_block_hash, actual.prev_block_hash, 32);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.merkle_root, actual.merkle_root, 32);
+        TEST_ASSERT_EQUAL_STRING("42", actual.share.job_id);
+        TEST_ASSERT_EQUAL_STRING(protocol == JOB_TYPE_SV2_STANDARD ? "" : "44332211",
+                                 actual.share.extranonce2);
+        TEST_ASSERT_EQUAL_UINT32(42, actual.share.numeric_job_id);
+        TEST_ASSERT_TRUE(actual.clean_jobs);
+        slot.job_id[0] = '9';
+        TEST_ASSERT_EQUAL_STRING("42", actual.share.job_id);
+        slot.job_id[0] = '4';
+        mining_template_free(&actual);
+    }
+    mining_template_free(&expected);
+
+    mining_template_t rejected;
+    slot.extranonce2_len = MINING_MAX_EXTRANONCE2_SIZE + 1;
+    TEST_ASSERT_FALSE(mining_template_build_miner_job(&slot, 0, slot.version, &rejected));
+    TEST_ASSERT_NULL(rejected.share.job_id);
+}
+
+TEST_CASE("Zero pool difficulty does not submit shares", "[asic][result][routing]")
+{
+    asic_job_store_t *store = new_store();
+    mining_template_t template = owned_template(MINING_PROTOCOL_SV1, "42", "00", 0);
+    asic_work_handle_t handle;
+    TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &handle));
+    callback_capture_t capture = {.transport_ready = true};
+    asic_result_context_t context = {.job_store = store, .callback_context = &capture};
+    asic_result_t result = result_for(handle);
+    TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
+    TEST_ASSERT_EQUAL(0, capture.sv1_count);
+    TEST_ASSERT_EQUAL(1, capture.account_count);
+    mining_template_free(&template);
+    delete_store(store);
 }

@@ -14,9 +14,6 @@ void setUp(void) {
     b58_sha256_impl = my_sha256;
 }
 
-void tearDown(void) {
-}
-
 TEST_CASE("Base58 P2PKH encoding", "[base58]")
 {
     uint8_t hash[20] = {

@@ -103,12 +103,12 @@ bitaxetool --firmware ./esp-miner-factory-1002-<version>.bin
 - Flash just the NVS config to a bitaxe:
 
 ```
-bitaxetool --config ./config-1002.cvs
+bitaxetool --config ./configs/config-1002.csv
 ```
 - Flash both a factory image _and_ a config to your Bitaxe: note the settings in the config file will overwrite the config already baked into the factory image:
 
 ```
-bitaxetool --config ./config-1002.cvs --firmware ./esp-miner-factory-1002-<version>.bin
+bitaxetool --config ./configs/config-1002.csv --firmware ./esp-miner-factory-1002-<version>.bin
 ```
 
 ## AxeOS API
@@ -385,6 +385,26 @@ Starting with the unified firmware releases, ESP-Miner uses a unified architectu
 
 A separate Web UI image (`www.bin`) is no longer required for standard usage since the web interface is served directly from the firmware. If you want to use a custom or modified AxeOS frontend, you can still enable the **custom web UI** option in the settings. This allows you to upload and serve a separate `www.bin` from the SPIFFS partition, which takes priority over the built-in assets.
 
+### Disabling Custom Web UI via Recovery Page or API
+
+If a device is stuck serving an older custom `www.bin` partition and the Web UI settings option is not accessible, you can disable custom WWW and revert to the embedded AxeOS interface by visiting the recovery page in your browser:
+
+```
+http://<IP>/recovery
+```
+
+Alternatively, you can disable `useCustomWWW` directly via the REST API:
+
+```bash
+# Disable custom Web UI (revert to embedded AxeOS)
+curl -X PATCH http://YOUR-BITAXE-IP/api/system \
+     -H "Content-Type: application/json" \
+     -d '{"useCustomWWW": 0}'
+
+# Restart the device to apply changes
+curl -X POST http://YOUR-BITAXE-IP/api/system/restart
+```
+
 ### Rollback to Pre-Unified Firmware
 
 If you roll back the firmware from a unified version to an older, pre-unified version (which expects a separate web partition):
@@ -460,7 +480,7 @@ Note: configure VS Code and ESP-IDF for the ESP32-S3 target used by board 1002.
 With the bitaxe connected to your computer via USB, run:
 
 ```
-bitaxetool --config ./config-1002.cvs --firmware ./esp-miner-merged.bin
+bitaxetool --config ./configs/config-1002.csv --firmware ./esp-miner-merged.bin
 ```
 
 Do not substitute a configuration for another Bitaxe model; this fork currently targets board 1002.

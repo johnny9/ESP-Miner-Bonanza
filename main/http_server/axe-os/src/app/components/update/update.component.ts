@@ -32,6 +32,7 @@ export class UpdateComponent implements OnDestroy {
 
   public checkLatestRelease: boolean = false;
   public latestRelease$: Observable<any>;
+  public latestEspMinerAsset$: Observable<any>;
 
   public info$: Observable<SystemInfo>;
   public bridgeInfo$: Observable<BridgeInfo | null>;
@@ -60,6 +61,10 @@ export class UpdateComponent implements OnDestroy {
     this.latestRelease$ = this.githubUpdateService.getReleases().pipe(map(releases => {
       return (releases as any)[0];
     }));
+
+    this.latestEspMinerAsset$ = this.latestRelease$.pipe(
+      map((release: any) => release?.assets?.find((asset: any) => asset.name === 'esp-miner.bin'))
+    );
 
     this.info$ = this.liveDataService.info$;
     this.bridgeInfo$ = this.info$.pipe(

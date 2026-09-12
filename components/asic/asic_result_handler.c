@@ -49,6 +49,7 @@ asic_result_status_t asic_result_handle(
         .pool_difficulty = template.share.pool_difficulty,
         .target = template.target,
         .protocol = template.share.protocol,
+        .pool_id = template.share.pool_id,
     };
     memcpy(share.extranonce2_bin, template.share.extranonce2_bin,
            template.share.extranonce2_len);
@@ -62,7 +63,7 @@ asic_result_status_t asic_result_handle(
         return ASIC_RESULT_RECORDED_SELF_TEST;
     }
 
-    if (share.nonce_diff >= share.pool_difficulty) {
+    if (share.pool_difficulty > 0.0 && share.nonce_diff >= share.pool_difficulty) {
         switch (share.protocol) {
             case MINING_PROTOCOL_SV1: {
                 bool ready = callbacks->sv1_transport_ready == NULL ||

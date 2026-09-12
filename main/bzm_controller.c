@@ -25,7 +25,7 @@
 #include "freertos/task.h"
 #include "hashrate_monitor_task.h"
 #include "nvs_config.h"
-#include "protocol_coordinator.h"
+#include "stratum_task.h"
 #include "statistics_task.h"
 #include "stratum_api.h"
 #include "thermal.h"
@@ -64,7 +64,6 @@ typedef struct
     bool bridge_rx_stats_valid;
     bool mining_stack_ready;
     bool mining_tasks_started;
-    bool protocol_coordinator_initialized;
     TaskHandle_t create_jobs_task_handle;
     TaskHandle_t asic_result_task_handle;
     TaskHandle_t hashrate_task_handle;
@@ -427,6 +426,7 @@ static bool start_mining_tasks_locked(void)
                     &RUNTIME.create_jobs_task_handle) != pdPASS) {
         return false;
     }
+    state->create_jobs_task_handle = RUNTIME.create_jobs_task_handle;
     if (RUNTIME.asic_result_task_handle == NULL &&
         xTaskCreateWithCaps(ASIC_result_task, "asic result", 8192, state,
                             BZM_ASIC_RESULT_TASK_PRIORITY,
@@ -443,11 +443,7 @@ static bool start_mining_tasks_locked(void)
             pdPASS) {
         return false;
     }
-    if (!RUNTIME.protocol_coordinator_initialized) {
-        protocol_coordinator_init(state);
-        RUNTIME.protocol_coordinator_initialized = true;
-    }
-    if (RUNTIME.protocol_task_handle == NULL && xTaskCreateWithCaps(protocol_coordinator_task, "protocol coord", 3072, state, 5,
+    if (RUNTIME.protocol_task_handle == NULL && xTaskCreateWithCaps(stratum_task, "stratum", 16384, state, 5,
                                                                     &RUNTIME.protocol_task_handle, MALLOC_CAP_SPIRAM) != pdPASS) {
         return false;
     }

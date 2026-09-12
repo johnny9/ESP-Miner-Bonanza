@@ -42,6 +42,8 @@ asic_capabilities_t ASIC_capabilities_for_chip_id(uint16_t chip_id)
         case 1366:
         case 1368:
         case 1370:
+        case 1372:
+        case 1373:
             return BM13XX_CAPABILITIES;
         case BZM_CHIP_ID:
             return BZM_CAPABILITIES;

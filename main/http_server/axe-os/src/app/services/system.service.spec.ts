@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { environment } from '../../environments/environment';
 
 import { SystemApiService } from './system.service';
 import { provideHttpClient } from '@angular/common/http';
@@ -9,8 +10,11 @@ import {
 describe('SystemApiService', () => {
   let service: SystemApiService;
   let http: HttpTestingController;
+  let previousMock: boolean;
 
   beforeEach(() => {
+    previousMock = environment.mock;
+    environment.mock = false;
     TestBed.configureTestingModule({
       providers: [provideHttpClient(), provideHttpClientTesting()]
     });
@@ -18,7 +22,10 @@ describe('SystemApiService', () => {
     http = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    environment.mock = previousMock;
+    http.verify();
+  });
 
   it('should be created', () => {
     expect(service).toBeTruthy();

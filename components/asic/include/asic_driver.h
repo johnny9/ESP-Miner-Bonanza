@@ -73,7 +73,7 @@ typedef struct {
     float (*set_hash_frequency)(float frequency);
     void (*set_nonce_space)(double nonce_percent, float frequency,
                             uint16_t asic_count, uint16_t cores);
-    void (*read_registers)(void);
+    void (*read_registers)(GlobalState *state);
     bool (*hashrate_counter_snapshot)(GlobalState *state,
                                       uint32_t *difficulty_one_counters,
                                       size_t counter_count);

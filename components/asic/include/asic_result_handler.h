@@ -24,6 +24,7 @@ typedef struct {
     double pool_difficulty;
     uint32_t target;
     mining_protocol_t protocol;
+    uint8_t pool_id;
 } asic_share_submission_t;
 
 typedef struct {
