@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_psram.h"
 
 #include "adc.h"
@@ -33,6 +34,7 @@
 #include "statistics_task.h"
 #include "system.h"
 #include "task_monitor.h"
+#include "setup_ble.h"
 
 static GlobalState GLOBAL_STATE;
 
@@ -107,6 +109,16 @@ void app_main(void)
         log_level_config_apply(LOG_LEVEL_CONFIG_DEFAULT);
     }
     free(configured_log_level);
+
+    // Confirm app validity for OTA rollback
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            ESP_LOGI(TAG, "First boot after OTA update, confirming app validity");
+            esp_ota_mark_app_valid_cancel_rollback();
+        }
+    }
 
     // Ensure SSID is initialized before any screen/self-test uses it.
     GLOBAL_STATE.SYSTEM_MODULE.ssid = nvs_config_get_string(NVS_CONFIG_WIFI_SSID);
@@ -190,11 +202,14 @@ void app_main(void)
 
     if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
         // start the API for AxeOS
-        start_rest_server((void *) &GLOBAL_STATE);
+        start_rest_server(&GLOBAL_STATE);
     }
 
     // After mounting SPIFFS
     SYSTEM_init_versions(&GLOBAL_STATE);
+
+    // Pre-cache partition descriptions and space usage percentage
+    SYSTEM_init_partitions(&GLOBAL_STATE);
 
     // UART2 is the Bonanza control link on board 1002. Other products keep
     // using it for the Bitaxe Accessory Port.
@@ -208,9 +223,22 @@ void app_main(void)
         ESP_LOGI(TAG, "UART2 reserved for the Bonanza RP2040 bridge; BAP disabled");
     }
 
+    // While the device is still in setup mode (config AP up but no WiFi
+    // connection), expose the BLE provisioning service so the miner can be
+    // configured over Bluetooth. A short grace period avoids spinning up BLE on
+    // a normal boot that connects within a few seconds. setup_ble_start() is
+    // idempotent and only takes effect once the AP is actually enabled.
+    int setup_ble_grace_ms = 0;
     while (!GLOBAL_STATE.SYSTEM_MODULE.is_connected) {
+        if (GLOBAL_STATE.SYSTEM_MODULE.ap_enabled && setup_ble_grace_ms >= 5000) {
+            setup_ble_start(&GLOBAL_STATE);
+        }
+        setup_ble_grace_ms += 100;
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
+
+    // Connected to WiFi: tear down the setup BLE service to free the radio.
+    setup_ble_stop();
 
     queue_init(&GLOBAL_STATE.stratum_queue);
 
@@ -246,7 +274,9 @@ void app_main(void)
             if (xTaskCreate(create_jobs_task, "stratum miner", 8192, (void *) &GLOBAL_STATE, 20, NULL) != pdPASS) {
                 ESP_LOGE(TAG, "Error creating stratum miner task");
             }
-            if (xTaskCreate(ASIC_result_task, "asic result", 8192, (void *) &GLOBAL_STATE, 15, NULL) != pdPASS) {
+            if (xTaskCreateWithCaps(ASIC_result_task, "asic result", 8192,
+                                    (void *)&GLOBAL_STATE, 15, NULL,
+                                    MALLOC_CAP_SPIRAM) != pdPASS) {
                 ESP_LOGE(TAG, "Error creating asic result task");
             }
 

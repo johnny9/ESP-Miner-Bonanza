@@ -5,7 +5,7 @@
 
 // Bitmain-family packet material. Pool metadata remains in mining_template_t
 // and is never copied into this private representation.
-typedef struct {
+typedef struct bm_job {
     uint32_t version;
     uint32_t version_mask;
     uint8_t prev_block_hash[32];

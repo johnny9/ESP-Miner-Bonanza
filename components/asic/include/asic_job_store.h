@@ -21,12 +21,15 @@ typedef struct {
 
 typedef struct {
     pthread_mutex_t lock;
-    asic_job_store_entry_t entries[ASIC_JOB_STORE_CAPACITY];
+    asic_job_store_entry_t *entries;
+    uint16_t capacity;
     uint16_t next_slot;
     uint64_t next_generation;
 } asic_job_store_t;
 
 bool asic_job_store_init(asic_job_store_t *store);
+bool asic_job_store_init_with_caps(asic_job_store_t *store,
+                                   uint32_t memory_caps);
 void asic_job_store_destroy(asic_job_store_t *store);
 
 // Compatibility mode for ASICs whose hardware result contains only a slot id.

@@ -24,6 +24,7 @@ if ! command -v idf.py &> /dev/null; then
     echo "ESP-IDF environment not detected in PATH."
     # Try common local installation paths
     IDF_EXPORT_PATHS=(
+        "$HOME/esp/v6.0.2/esp-idf/export.sh"
         "$HOME/esp/esp-idf-v5.5.3/export.sh"
         "$HOME/esp/esp-idf-v5.5.4/export.sh"
         "$HOME/esp/v5.5.1/esp-idf/export.sh"
@@ -44,7 +45,7 @@ if ! command -v idf.py &> /dev/null; then
     
     if [ "$SOURCED" = false ]; then
         echo "ERROR: Could not locate ESP-IDF export script."
-        echo "Please source it manually (e.g. '. ~/esp/v5.5.1/esp-idf/export.sh') before running this script."
+        echo "Please source it manually (e.g. '. ~/esp/v6.0.2/esp-idf/export.sh') before running this script."
         exit 1
     fi
 fi
@@ -75,7 +76,7 @@ CCACHE_DIR="${CCACHE_DIR:-$ROOT_DIR/.cache/qemu-test-ccache}" \
 
 echo "Merging binaries..."
 cd "$BUILD_DIR"
-esptool.py --chip esp32s3 merge_bin --fill-flash-size 16MB -o flash_image.bin @flash_args
+esptool --chip esp32s3 merge-bin --pad-to-size 16MB -o flash_image.bin @flash_args
 
 echo "Running tests in QEMU emulator..."
 output_log="$PWD/output.log"

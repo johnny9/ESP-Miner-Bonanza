@@ -2,6 +2,7 @@
 
 #include "crc.h"
 #include "global_state.h"
+#include "mining.h"
 #include "serial.h"
 #include "utils.h"
 
@@ -188,10 +189,8 @@ float BM1366_send_hash_frequency(float target_freq)
     return new_freq;
 }
 
-uint8_t BM1366_init(void * pvParameters)
+uint8_t BM1366_init(GlobalState * GLOBAL_STATE)
 {
-    GlobalState * GLOBAL_STATE = (GlobalState *)pvParameters;
-
     // set version mask
     for (int i = 0; i < 3; i++) {
         BM1366_set_version_mask(STRATUM_DEFAULT_VERSION_MASK);
@@ -305,11 +304,9 @@ int BM1366_set_max_baud(void)
 
 static uint8_t id = 0;
 
-bool BM1366_send_work(void *pvParameters, const bm_job *next_bm_job,
+bool BM1366_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
                       const mining_template_t *template)
 {
-    GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
-
     BM1366_job job;
     id = (id + 8) % 128;
     job.job_id = id;
@@ -336,7 +333,7 @@ bool BM1366_send_work(void *pvParameters, const bm_job *next_bm_job,
     return true;
 }
 
-task_result * BM1366_process_work(void * pvParameters)
+task_result * BM1366_process_work(GlobalState * GLOBAL_STATE)
 {
     bm1366_asic_result_t asic_result = {0};
 
@@ -364,8 +361,6 @@ task_result * BM1366_process_work(void * pvParameters)
     uint8_t core_id = (uint8_t)((nonce_h >> 25) & 0x7f); // BM1366 has 112 cores, so it should be coded on 7 bits
     uint8_t small_core_id = asic_result.job.id & 0x07; // BM1366 has 8 small cores, so it should be coded on 3 bits
     uint32_t hardware_version_bits = (ntohs(asic_result.job.version) << 13); // shift the 16 bit value left 13
-
-    GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
 
     mining_template_t template;
     if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, job_id,

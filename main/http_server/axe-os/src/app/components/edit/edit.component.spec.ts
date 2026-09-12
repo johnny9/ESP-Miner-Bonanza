@@ -115,7 +115,12 @@ describe('EditComponent', () => {
 
     fixture.detectChanges();
 
-    expect(component.logLevels).toEqual(['ERROR', 'WARN', 'INFO', 'DEBUG']);
+    expect(component.logLevels).toEqual([
+      { label: 'ERROR', value: 'ERROR' },
+      { label: 'WARN', value: 'WARN' },
+      { label: 'INFO', value: 'INFO' },
+      { label: 'DEBUG', value: 'DEBUG' },
+    ]);
     expect(component.noRestartFields).toContain('logLevel');
     expect(fixture.nativeElement.textContent).toContain('INFO is recommended');
     expect(fixture.nativeElement.textContent).toContain('Changes take effect immediately');

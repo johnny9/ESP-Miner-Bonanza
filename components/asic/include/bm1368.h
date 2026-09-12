@@ -22,14 +22,14 @@ typedef struct __attribute__((__packed__))
     uint8_t version[4];
 } BM1368_job;
 
-uint8_t BM1368_init(void * GLOBAL_STATE);
-bool BM1368_send_work(void *GLOBAL_STATE, const bm_job *job,
+uint8_t BM1368_init(GlobalState *GLOBAL_STATE);
+bool BM1368_send_work(GlobalState *GLOBAL_STATE, const bm_job *job,
                       const mining_template_t *template);
 void BM1368_set_version_mask(uint32_t version_mask);
 int BM1368_set_max_baud(void);
 int BM1368_set_default_baud(void);
 float BM1368_send_hash_frequency(float frequency);
-task_result * BM1368_process_work(void * GLOBAL_STATE);
+task_result * BM1368_process_work(GlobalState * GLOBAL_STATE);
 void BM1368_read_registers(void);
 void BM1368_set_nonce_space(double nonce_percent, float frequency, uint16_t asic_count, uint16_t cores);
 

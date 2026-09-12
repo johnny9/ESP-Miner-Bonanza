@@ -9,6 +9,7 @@
 #include "pmbus_commands.h"
 
 #include "i2c_bitaxe.h"
+#include "global_state.h"
 #include "TPS546.h"
 #include "bzm_tps546_verify.h"
 
