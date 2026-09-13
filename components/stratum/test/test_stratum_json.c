@@ -1,5 +1,6 @@
 #include "unity.h"
 #include "stratum_api.h"
+#include "cJSON.h"
 #include <string.h>
 #include <sys/param.h>
 
@@ -390,17 +391,14 @@ TEST_CASE("Parse stratum set_difficulty rejects invalid values", "[mining.set_di
     TEST_ASSERT_FALSE(STRATUM_V1_parse(&msg, json_huge));
 }
 
-TEST_CASE("Parse stratum mining.set_extranonce negative length clamped", "[stratum]")
+TEST_CASE("Parse stratum mining.set_extranonce invalid lengths rejected", "[stratum]")
 {
     memset(&msg, 0, sizeof(msg));
     const char *json_neg_e2 = "{\"id\":1,\"method\":\"mining.set_extranonce\",\"params\":[\"deadbeef\",-1]}";
-    TEST_ASSERT_TRUE(STRATUM_V1_parse(&msg, json_neg_e2));
-    TEST_ASSERT_EQUAL(MINING_SET_EXTRANONCE, msg.method);
-    TEST_ASSERT_EQUAL_INT(0, msg.extranonce_2_len);
+    TEST_ASSERT_FALSE(STRATUM_V1_parse(&msg, json_neg_e2));
 
     const char *json_oversized_e2 = "{\"id\":1,\"method\":\"mining.set_extranonce\",\"params\":[\"deadbeef\",64]}";
-    TEST_ASSERT_TRUE(STRATUM_V1_parse(&msg, json_oversized_e2));
-    TEST_ASSERT_EQUAL_INT(32, msg.extranonce_2_len);
+    TEST_ASSERT_FALSE(STRATUM_V1_parse(&msg, json_oversized_e2));
 
     // Odd hex string length should be rejected
     const char *json_odd_hex = "{\"id\":1,\"method\":\"mining.set_extranonce\",\"params\":[\"deadbee\",8]}";
@@ -466,13 +464,10 @@ TEST_CASE("Parse stratum subscribe result extranonce negative size", "[mining.su
 {
     memset(&msg, 0, sizeof(msg));
     const char *json_sub_neg = "{\"result\":[[[\"mining.notify\",\"695482c0\"]],\"4de05269\",-1],\"id\":2,\"error\":null}";
-    TEST_ASSERT_TRUE(STRATUM_V1_parse(&msg, json_sub_neg));
-    TEST_ASSERT_EQUAL_STRING("4de05269", msg.extranonce_str);
-    TEST_ASSERT_EQUAL_INT(0, msg.extranonce_2_len);
+    TEST_ASSERT_FALSE(STRATUM_V1_parse(&msg, json_sub_neg));
 
     const char *json_sub_oversized = "{\"result\":[[[\"mining.notify\",\"695482c0\"]],\"4de05269\",100],\"id\":2,\"error\":null}";
-    TEST_ASSERT_TRUE(STRATUM_V1_parse(&msg, json_sub_oversized));
-    TEST_ASSERT_EQUAL_INT(32, msg.extranonce_2_len);
+    TEST_ASSERT_FALSE(STRATUM_V1_parse(&msg, json_sub_oversized));
 
     // Odd length extranonce1 in subscribe result should be rejected
     const char *json_sub_odd_e1 = "{\"result\":[[[\"mining.notify\",\"695482c0\"]],\"4de0526\",4],\"id\":2,\"error\":null}";
@@ -763,4 +758,130 @@ TEST_CASE("Notify respects actual coinbase buffer capacities", "[stratum][securi
     memset(prefix, 0xa5, sizeof(prefix));
     TEST_ASSERT_FALSE(STRATUM_V1_parse(&message, json, &job));
     TEST_ASSERT_EACH_EQUAL_UINT8(0xa5, prefix, sizeof(prefix));
+}
+
+
+TEST_CASE("Invalid notify fields preserve the destination job", "[stratum][security]")
+{
+    const char *valid = "{\"method\":\"mining.notify\",\"params\":[\"keep\","
+        "\"0000000000000000000000000000000000000000000000000000000000000000\","
+        "\"0100\",\"0200\",[],\"20000000\",\"1705ae3a\",\"647025b5\",true]}";
+    const int fields[] = {1, 2, 3, 4, 5, 6, 7, 8};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+        TEST_ASSERT_TRUE(test_parse(&msg, valid));
+        miner_job_t before = s_test_job;
+        cJSON *json = cJSON_Parse(valid);
+        cJSON *params = cJSON_GetObjectItem(json, "params");
+        cJSON *item = cJSON_GetArrayItem(params, fields[i]);
+        if (fields[i] == 4) {
+            cJSON_AddItemToArray(item, cJSON_CreateString(
+                "g000000000000000000000000000000000000000000000000000000000000000"));
+        } else if (fields[i] == 8) {
+            cJSON_ReplaceItemInArray(params, 8, cJSON_CreateString("true"));
+        } else {
+            item->valuestring[0] = 'g';
+        }
+        char *bad = cJSON_PrintUnformatted(json);
+        bool accepted = test_parse(&msg, bad);
+        free(bad);
+        cJSON_Delete(json);
+        TEST_ASSERT_FALSE_MESSAGE(accepted, "Malformed field accepted");
+        TEST_ASSERT_EQUAL_MEMORY(&before, &s_test_job, sizeof(before));
+        TEST_ASSERT_EQUAL_HEX8(1, s_test_job.coinbase_prefix[0]);
+        TEST_ASSERT_EQUAL_HEX8(2, s_test_job.coinbase_suffix[0]);
+    }
+}
+
+TEST_CASE("Extranonce sizes require integers and valid hex with inclusive bounds", "[stratum][security]")
+{
+    const char *sizes[] = {"-1", "33", "1.5", "1e100", "true", "0", "32"};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        char json[160];
+        snprintf(json, sizeof(json), "{\"method\":\"mining.set_extranonce\",\"params\":[\"aAbB\",%s]}", sizes[i]);
+        TEST_ASSERT_EQUAL(i >= 5, test_parse(&msg, json));
+        snprintf(json, sizeof(json), "{\"id\":2,\"result\":[[],\"aAbB\",%s]}", sizes[i]);
+        TEST_ASSERT_EQUAL(i >= 5, test_parse(&msg, json));
+    }
+    TEST_ASSERT_FALSE(test_parse(&msg, "{\"method\":\"mining.set_extranonce\",\"params\":[\"gg\",8]}"));
+    TEST_ASSERT_FALSE(test_parse(&msg, "{\"id\":2,\"result\":[[],\"gg\",8]}"));
+    TEST_ASSERT_TRUE(test_parse(&msg, "{\"id\":2,\"result\":[[],\"\",0]}"));
+}
+
+TEST_CASE("Version rolling requires a correlated accepted configure", "[stratum][security]")
+{
+    sv1_conn_t conn = {.configure_uid = 1};
+    StratumApiV1Message update = {.method = MINING_SET_VERSION_MASK, .version_mask = 0x1fffe000};
+    TEST_ASSERT_FALSE(STRATUM_V1_apply_version_mask(&conn, &update, 0x1fffe000));
+    TEST_ASSERT_EQUAL_HEX32(0, conn.version_mask);
+    update.method = STRATUM_RESULT_CONFIGURE;
+    update.message_id = 9;
+    update.response_success = true;
+    TEST_ASSERT_FALSE(STRATUM_V1_apply_version_mask(&conn, &update, 0x1fffe000));
+    update.message_id = 1;
+    TEST_ASSERT_TRUE(STRATUM_V1_apply_version_mask(&conn, &update, 0x18000000));
+    TEST_ASSERT_TRUE(conn.version_rolling_enabled);
+    TEST_ASSERT_EQUAL_HEX32(0x18000000, conn.version_mask);
+    update.method = MINING_SET_VERSION_MASK;
+    update.version_mask = 0;
+    TEST_ASSERT_TRUE(STRATUM_V1_apply_version_mask(&conn, &update, 0x1fffe000));
+    TEST_ASSERT_TRUE(conn.version_rolling_enabled); // Accepted zero mask still uses six params.
+    update.method = STRATUM_RESULT_CONFIGURE;
+    update.response_success = false;
+    TEST_ASSERT_TRUE(STRATUM_V1_apply_version_mask(&conn, &update, 0x1fffe000));
+    TEST_ASSERT_FALSE(conn.version_rolling_enabled);
+    update.method = MINING_SET_VERSION_MASK;
+    TEST_ASSERT_FALSE(STRATUM_V1_apply_version_mask(&conn, &update, 0x1fffe000));
+}
+
+TEST_CASE("Version masks reject malformed hex and preserve rejection responses", "[stratum][security]")
+{
+    const char *masks[] = {"ffff", "0000000g", " 0000000", "100000000", "00000000", "1FFFe000"};
+    for (size_t i = 0; i < sizeof(masks) / sizeof(masks[0]); i++) {
+        char json[180];
+        snprintf(json, sizeof(json), "{\"method\":\"mining.set_version_mask\",\"params\":[\"%s\"]}", masks[i]);
+        TEST_ASSERT_EQUAL(i >= 4, test_parse(&msg, json));
+        snprintf(json, sizeof(json), "{\"id\":1,\"result\":{\"version-rolling\":true,\"version-rolling.mask\":\"%s\"}}", masks[i]);
+        TEST_ASSERT_EQUAL(i >= 4, test_parse(&msg, json));
+    }
+    TEST_ASSERT_TRUE(test_parse(&msg, "{\"id\":1,\"result\":{\"version-rolling\":false}}"));
+    TEST_ASSERT_EQUAL(STRATUM_RESULT_CONFIGURE, msg.method);
+    TEST_ASSERT_FALSE(msg.response_success);
+    TEST_ASSERT_TRUE(test_parse(&msg, "{\"id\":1,\"result\":{\"version-rolling\":\"unsupported\"}}"));
+    TEST_ASSERT_FALSE(msg.response_success);
+}
+
+static int capture_share_write(esp_transport_handle_t transport, const char *buffer,
+                               int length, int timeout_ms)
+{
+    char *output = esp_transport_get_context_data(transport);
+    if (length < 0 || length >= 1024) return -1;
+    memcpy(output, buffer, length);
+    output[length] = '\0';
+    return length;
+}
+
+TEST_CASE("Share wire format omits unnegotiated version bits and includes accepted zero bits", "[stratum]")
+{
+    char output[1024];
+    esp_transport_handle_t transport = esp_transport_init();
+    TEST_ASSERT_NOT_NULL(transport);
+    TEST_ASSERT_EQUAL(ESP_OK, esp_transport_set_context_data(transport, output));
+    TEST_ASSERT_EQUAL(ESP_OK, esp_transport_set_func(transport, NULL, NULL, capture_share_write,
+                                                   NULL, NULL, NULL, NULL));
+    TEST_ASSERT_TRUE(STRATUM_V1_initialize_buffer());
+    uint32_t bits = 0;
+    for (int mode = 0; mode < 3; mode++) {
+        if (mode == 2) bits = 0x2000;
+        TEST_ASSERT_GREATER_THAN(0, STRATUM_V1_submit_share(transport, 4, "worker", "job", "",
+            0x647025b5, 0x12345678, mode == 0 ? NULL : &bits, NULL));
+        cJSON *json = cJSON_Parse(output);
+        TEST_ASSERT_NOT_NULL(json);
+        cJSON *params = cJSON_GetObjectItem(json, "params");
+        TEST_ASSERT_EQUAL_INT(mode == 0 ? 5 : 6, cJSON_GetArraySize(params));
+        TEST_ASSERT_EQUAL_STRING("", cJSON_GetArrayItem(params, 2)->valuestring);
+        if (mode != 0) TEST_ASSERT_EQUAL_STRING(mode == 1 ? "00000000" : "00002000",
+                                                cJSON_GetArrayItem(params, 5)->valuestring);
+        cJSON_Delete(json);
+    }
+    esp_transport_destroy(transport);
 }

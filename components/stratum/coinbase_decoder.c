@@ -11,6 +11,57 @@
 #define BIP110_SIGNAL_BIT 4
 #define BIP110_SIGNAL_EXPIRY_BLOCK 965664
 
+static bool read_compact_size(const uint8_t *data, size_t length,
+                              size_t *offset, uint64_t *value)
+{
+    if (*offset >= length) return false;
+    uint8_t tag = data[(*offset)++];
+    if (tag < 0xfd) {
+        *value = tag;
+        return true;
+    }
+    size_t bytes = tag == 0xfd ? 2 : tag == 0xfe ? 4 : 8;
+    if (bytes > length - *offset) return false;
+    *value = 0;
+    for (size_t i = 0; i < bytes; i++) {
+        *value |= (uint64_t)data[(*offset)++] << (8 * i);
+    }
+    return *value >= (bytes == 2 ? 0xfdULL : bytes == 4 ? 0x10000ULL : 0x100000000ULL);
+}
+
+bool coinbase_validate_miner_job(const miner_job_t *job)
+{
+    if (job == NULL || job->coinbase_prefix == NULL || job->coinbase_suffix == NULL ||
+        job->coinbase_prefix_len < 42 || job->extranonce1_len > 32 || job->extranonce2_len > 32) return false;
+    const uint8_t *prefix = job->coinbase_prefix;
+    // A coinbase has one input with a null outpoint. Its 2..100 byte scriptSig
+    // has a one-byte CompactSize; the extranonce insertion belongs inside it.
+    if (prefix[4] != 1 || prefix[41] < 2 || prefix[41] > 100) return false;
+    for (size_t i = 5; i < 41; i++) {
+        if (prefix[i] != (i < 37 ? 0 : 0xff)) return false;
+    }
+    size_t script_end = 42U + prefix[41];
+    size_t inserted_end = (size_t)job->coinbase_prefix_len + job->extranonce1_len + job->extranonce2_len;
+    if (inserted_end > script_end) return false;
+    size_t offset = script_end - inserted_end;
+    const uint8_t *suffix = job->coinbase_suffix;
+    size_t length = job->coinbase_suffix_len;
+    if (offset > length || length - offset < 4) return false;
+    offset += 4; // nSequence
+    uint64_t outputs;
+    if (!read_compact_size(suffix, length, &offset, &outputs) || outputs == 0 ||
+        outputs > (length - offset) / 9) return false;
+    for (uint64_t i = 0; i < outputs; i++) {
+        if (length - offset < 8) return false;
+        offset += 8; // value
+        uint64_t script_size;
+        if (!read_compact_size(suffix, length, &offset, &script_size) ||
+            script_size > length - offset) return false;
+        offset += (size_t)script_size;
+    }
+    return length - offset == 4; // Exactly one nLockTime, no trailing data.
+}
+
 // Wrapper for SHA256 to match libbase58's expected signature
 static bool my_sha256(void *digest, const void *data, size_t datasz) {
     sha256_bin(data, datasz, digest);

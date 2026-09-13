@@ -22,6 +22,11 @@
 #define OP_HASH160      0xa9
 #define OP_CHECKSIG     0xac
 
+// Validate the non-witness coinbase used to calculate its transaction ID.
+// Extranonce lengths must already describe this connection. No allocations,
+// payout decoding, BIP34 height assumptions, or display-output limits apply.
+bool coinbase_validate_miner_job(const miner_job_t *job);
+
 /**
  * @brief Decode Bitcoin varint from binary data
  * 

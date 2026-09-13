@@ -26,6 +26,7 @@ typedef struct {
     mining_protocol_t protocol;
     uint8_t pool_id;
     uint64_t work_generation;
+    uint32_t job_version;
 } asic_share_submission_t;
 
 typedef struct {

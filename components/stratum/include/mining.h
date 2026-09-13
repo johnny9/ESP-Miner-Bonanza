@@ -17,6 +17,7 @@ typedef struct {
     mining_protocol_t protocol;
     uint8_t pool_id;
     uint64_t work_generation;
+    uint32_t job_version;
     char *job_id;
     char *extranonce2;
     uint32_t numeric_job_id;

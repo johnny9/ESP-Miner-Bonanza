@@ -52,6 +52,7 @@ bool mining_template_build_sv1(const mining_notify *notification,
     template->target = notification->target;
     template->clean_jobs = notification->clean_jobs;
     template->share.protocol = MINING_PROTOCOL_SV1;
+    template->share.job_version = notification->version;
     template->share.pool_difficulty = difficulty;
     reverse_32bit_words(merkle_root, template->merkle_root);
 
@@ -109,6 +110,7 @@ bool mining_template_build_miner_job(const miner_job_t *job,
     template->share.protocol = (mining_protocol_t)job->type;
     template->share.pool_id = job->pool_id;
     template->share.work_generation = job->work_generation;
+    template->share.job_version = job->version;
     template->share.pool_difficulty = job->pool_diff;
     template->share.numeric_job_id = (uint32_t)strtoul(job->job_id, NULL, 10);
     reverse_32bit_words(job->prev_hash, template->prev_block_hash);

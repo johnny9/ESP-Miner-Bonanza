@@ -307,155 +307,85 @@ static stratum_method parse_method(const cJSON *method_json)
     return METHOD_UNKNOWN;
 }
 
+static bool valid_hex(const char *text, size_t length)
+{
+    if (text == NULL || strlen(text) != length || (length & 1U)) return false;
+    for (size_t i = 0; i < length; i++) {
+        char c = text[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F'))) return false;
+    }
+    return true;
+}
+
 static bool parse_mining_notify(cJSON *json, miner_job_t *job)
 {
-    if (!job) {
-        ESP_LOGE(TAG, "NULL job destination in mining.notify");
-        return false;
-    }
-
+    if (job == NULL) return false;
     cJSON *params = cJSON_GetObjectItem(json, "params");
-    if (!params || !cJSON_IsArray(params)) {
-        ESP_LOGE(TAG, "Invalid params in mining.notify");
-        return false;
-    }
     int params_count = cJSON_GetArraySize(params);
-    if (params_count < 8) {
-        ESP_LOGE(TAG, "Not enough params in mining.notify: %d", params_count);
-        return false;
+    if (!cJSON_IsArray(params) || params_count < 9) return false;
+
+    cJSON *job_id = cJSON_GetArrayItem(params, 0);
+    cJSON *prev_hash = cJSON_GetArrayItem(params, 1);
+    cJSON *c1 = cJSON_GetArrayItem(params, 2);
+    cJSON *c2 = cJSON_GetArrayItem(params, 3);
+    cJSON *branches = cJSON_GetArrayItem(params, 4);
+    cJSON *version = cJSON_GetArrayItem(params, 5);
+    cJSON *nbits = cJSON_GetArrayItem(params, 6);
+    cJSON *ntime = cJSON_GetArrayItem(params, 7);
+    // Preserve the supported extension layout with clean_jobs last.
+    cJSON *clean = cJSON_GetArrayItem(params, params_count - 1);
+    if (!cJSON_IsString(job_id) || !cJSON_IsString(prev_hash) ||
+        !cJSON_IsString(c1) || !cJSON_IsString(c2) ||
+        !cJSON_IsString(version) || !cJSON_IsString(nbits) ||
+        !cJSON_IsString(ntime) || !cJSON_IsBool(clean) ||
+        !cJSON_IsArray(branches)) return false;
+
+    size_t c1_chars = strlen(c1->valuestring);
+    size_t c2_chars = strlen(c2->valuestring);
+    size_t count = cJSON_GetArraySize(branches);
+    if (job_id->valuestring[0] == '\0' ||
+        strlen(job_id->valuestring) >= sizeof(job->job_id) ||
+        c1_chars == 0 || c1_chars > 2U * MAX_COINBASE_PREFIX_LEN ||
+        c2_chars == 0 || c2_chars > 2U * MAX_COINBASE_SUFFIX_LEN ||
+        count > MAX_MERKLE_BRANCHES ||
+        !valid_hex(prev_hash->valuestring, 64) ||
+        !valid_hex(c1->valuestring, c1_chars) ||
+        !valid_hex(c2->valuestring, c2_chars) ||
+        !valid_hex(version->valuestring, 8) ||
+        !valid_hex(nbits->valuestring, 8) ||
+        !valid_hex(ntime->valuestring, 8)) return false;
+    for (size_t i = 0; i < count; i++) {
+        cJSON *branch = cJSON_GetArrayItem(branches, i);
+        if (!cJSON_IsString(branch) || !valid_hex(branch->valuestring, 64)) return false;
     }
 
-    cJSON *job_id_item = cJSON_GetArrayItem(params, 0);
-    cJSON *prev_hash_item = cJSON_GetArrayItem(params, 1);
-    cJSON *c1_item = cJSON_GetArrayItem(params, 2);
-    cJSON *c2_item = cJSON_GetArrayItem(params, 3);
-    cJSON *merkle_branch = cJSON_GetArrayItem(params, 4);
-    cJSON *version_item = cJSON_GetArrayItem(params, 5);
-    cJSON *nbits_item = cJSON_GetArrayItem(params, 6);
-    cJSON *ntime_item = cJSON_GetArrayItem(params, 7);
+    uint32_t timestamp = strtoul(ntime->valuestring, NULL, 16);
+    time_t now = time(NULL);
+    if (timestamp < BITCOIN_GENESIS_NTIME ||
+        (now > 1704067200 && (uint64_t)timestamp > (uint64_t)now + 7200)) return false;
 
-    if (!job_id_item || !cJSON_IsString(job_id_item) ||
-        !prev_hash_item || !cJSON_IsString(prev_hash_item) ||
-        !c1_item || !cJSON_IsString(c1_item) ||
-        !c2_item || !cJSON_IsString(c2_item) ||
-        !version_item || !cJSON_IsString(version_item) ||
-        !nbits_item || !cJSON_IsString(nbits_item) ||
-        !ntime_item || !cJSON_IsString(ntime_item)) {
-        ESP_LOGE(TAG, "Invalid string fields in mining.notify");
-        return false;
-    }
-
-    if (job_id_item->valuestring[0] == '\0') {
-        ESP_LOGE(TAG, "Empty job_id in mining.notify");
-        return false;
-    }
-
-    if (strlen(prev_hash_item->valuestring) != 64) {
-        ESP_LOGE(TAG, "Invalid prev_hash length in mining.notify (expected 64, got %zu)",
-                 strlen(prev_hash_item->valuestring));
-        return false;
-    }
-
-    size_t c1_str_len = strlen(c1_item->valuestring);
-    if (c1_str_len == 0 || (c1_str_len % 2) != 0) {
-        ESP_LOGE(TAG, "Invalid coinbase_1 hex length in mining.notify: %zu", c1_str_len);
-        return false;
-    }
-
-    size_t c2_str_len = strlen(c2_item->valuestring);
-    if (c2_str_len == 0 || (c2_str_len % 2) != 0) {
-        ESP_LOGE(TAG, "Invalid coinbase_2 hex length in mining.notify: %zu", c2_str_len);
-        return false;
-    }
-
-    if (strlen(version_item->valuestring) != 8) {
-        ESP_LOGE(TAG, "Invalid version hex length in mining.notify (expected 8, got %zu)",
-                 strlen(version_item->valuestring));
-        return false;
-    }
-
-    if (strlen(nbits_item->valuestring) != 8) {
-        ESP_LOGE(TAG, "Invalid nbits hex length in mining.notify (expected 8, got %zu)",
-                 strlen(nbits_item->valuestring));
-        return false;
-    }
-
-    if (strlen(ntime_item->valuestring) != 8) {
-        ESP_LOGE(TAG, "Invalid ntime hex length in mining.notify (expected 8, got %zu)",
-                 strlen(ntime_item->valuestring));
-        return false;
-    }
-
-    if (!merkle_branch || !cJSON_IsArray(merkle_branch)) {
-        ESP_LOGE(TAG, "Invalid merkle_branch in mining.notify");
-        return false;
-    }
-
-    if (!miner_job_ensure_buffers(job)) return false;
+    // Validate every field before touching the destination, including payloads.
+    if (!miner_job_ensure_buffers(job) ||
+        c1_chars / 2 > job->coinbase_prefix_capacity ||
+        c2_chars / 2 > job->coinbase_suffix_capacity) return false;
     miner_job_reset(job);
     job->type = JOB_TYPE_V1;
-
-    if (strlen(job_id_item->valuestring) >= sizeof(job->job_id)) {
-        ESP_LOGE(TAG, "Invalid job_id length in mining.notify (expected < %zu, got %zu)",
-                 sizeof(job->job_id), strlen(job_id_item->valuestring));
-        return false;
-    }
-    strlcpy(job->job_id, job_id_item->valuestring, sizeof(job->job_id));
-
-    hex2bin(prev_hash_item->valuestring, job->prev_hash, 32);
+    strlcpy(job->job_id, job_id->valuestring, sizeof(job->job_id));
+    hex2bin(prev_hash->valuestring, job->prev_hash, 32);
     reverse_endianness_per_word(job->prev_hash);
-
-    size_t c1_len = c1_str_len / 2;
-    if (c1_len > MAX_COINBASE_PREFIX_LEN || c1_len > job->coinbase_prefix_capacity) {
-        ESP_LOGE(TAG, "coinbase_1 length %zu exceeds maximum %d in mining.notify", c1_len, MAX_COINBASE_PREFIX_LEN);
-        return false;
-    }
-    hex2bin(c1_item->valuestring, job->coinbase_prefix, c1_len);
-    job->coinbase_prefix_len = (uint16_t)c1_len;
-
-    size_t c2_len = c2_str_len / 2;
-    if (c2_len > MAX_COINBASE_SUFFIX_LEN || c2_len > job->coinbase_suffix_capacity) {
-        ESP_LOGE(TAG, "coinbase_2 length %zu exceeds maximum %d in mining.notify", c2_len, MAX_COINBASE_SUFFIX_LEN);
-        return false;
-    }
-    hex2bin(c2_item->valuestring, job->coinbase_suffix, c2_len);
-    job->coinbase_suffix_len = (uint16_t)c2_len;
-
-    size_t count = cJSON_GetArraySize(merkle_branch);
-    if (count > MAX_MERKLE_BRANCHES) {
-        ESP_LOGE(TAG, "Too many Merkle branches: %zu", count);
-        return false;
-    }
-    job->merkle_path_count = (uint8_t)count;
+    job->coinbase_prefix_len = c1_chars / 2;
+    job->coinbase_suffix_len = c2_chars / 2;
+    hex2bin(c1->valuestring, job->coinbase_prefix, job->coinbase_prefix_len);
+    hex2bin(c2->valuestring, job->coinbase_suffix, job->coinbase_suffix_len);
+    job->merkle_path_count = count;
     for (size_t i = 0; i < count; i++) {
-        cJSON *branch = cJSON_GetArrayItem(merkle_branch, i);
-        if (!branch || !cJSON_IsString(branch) || strlen(branch->valuestring) != 64) {
-            ESP_LOGE(TAG, "Invalid Merkle branch at index %zu", i);
-            return false;
-        }
-        hex2bin(branch->valuestring, job->merkle_path[i], 32);
+        hex2bin(cJSON_GetArrayItem(branches, i)->valuestring, job->merkle_path[i], 32);
     }
-
-    job->version = strtoul(version_item->valuestring, NULL, 16);
-    job->nbits = strtoul(nbits_item->valuestring, NULL, 16);
-    job->ntime = strtoul(ntime_item->valuestring, NULL, 16);
-    job->clean_jobs = cJSON_IsTrue(cJSON_GetArrayItem(params, params_count - 1));
-
-    if (job->ntime < BITCOIN_GENESIS_NTIME) {
-        ESP_LOGW(TAG, "Rejecting notify with pre-genesis ntime: %" PRIu32, job->ntime);
-        return false;
-    }
-
-    time_t now = time(NULL);
-    if (now > 1704067200) { // Check future bound if NTP synced
-        if (job->ntime > (uint32_t)now + 7200) {
-            ESP_LOGW(TAG, "Rejecting notify with ntime too far in future: %" PRIu32 " (now: %ld)",
-                     job->ntime, (long)now);
-            return false;
-        }
-    }
-
-    ESP_LOGD(TAG, "Parsed mining.notify: job_id=%s, clean_jobs=%d", job->job_id, job->clean_jobs);
+    job->version = strtoul(version->valuestring, NULL, 16);
+    job->nbits = strtoul(nbits->valuestring, NULL, 16);
+    job->ntime = timestamp;
+    job->clean_jobs = cJSON_IsTrue(clean);
     return true;
 }
 
@@ -489,7 +419,7 @@ static bool parse_set_version_mask(cJSON *json, StratumApiV1Message *message)
         return false;
     }
     cJSON *mask = cJSON_GetArrayItem(params, 0);
-    if (!mask || !cJSON_IsString(mask)) {
+    if (!cJSON_IsString(mask) || !valid_hex(mask->valuestring, 8)) {
         ESP_LOGE(TAG, "Invalid version mask in set_version_mask");
         return false;
     }
@@ -502,36 +432,28 @@ static bool parse_set_version_mask(cJSON *json, StratumApiV1Message *message)
     return true;
 }
 
+static bool parse_extranonce(cJSON *extranonce1, cJSON *extranonce2_size,
+                            StratumApiV1Message *message)
+{
+    if (!cJSON_IsString(extranonce1) || !cJSON_IsNumber(extranonce2_size)) return false;
+    size_t length = strlen(extranonce1->valuestring);
+    double size = extranonce2_size->valuedouble;
+    if (length > 64 || !valid_hex(extranonce1->valuestring, length) ||
+        !isfinite(size) || size < 0 || size > MAX_EXTRANONCE_2_LEN ||
+        floor(size) != size) return false;
+    char *copy = strdup(extranonce1->valuestring);
+    if (copy == NULL) return false;
+    free(message->extranonce_str);
+    message->extranonce_str = copy;
+    message->extranonce_2_len = (int)size;
+    return true;
+}
+
 static bool parse_set_extranonce(cJSON *json, StratumApiV1Message *message)
 {
     cJSON *params = cJSON_GetObjectItem(json, "params");
-    if (!params || !cJSON_IsArray(params) || cJSON_GetArraySize(params) < 2) {
-        ESP_LOGE(TAG, "Invalid params for set_extranonce");
-        return false;
-    }
-    cJSON *extranonce1 = cJSON_GetArrayItem(params, 0);
-    cJSON *extranonce2_size = cJSON_GetArrayItem(params, 1);
-    if (!extranonce1 || !extranonce2_size || !cJSON_IsString(extranonce1) || !cJSON_IsNumber(extranonce2_size)) {
-        ESP_LOGE(TAG, "Invalid extranonce data in set_extranonce");
-        return false;
-    }
-    size_t e1_len = strlen(extranonce1->valuestring);
-    if (e1_len % 2 != 0 || e1_len > 64) {
-        ESP_LOGE(TAG, "Invalid extranonce1 hex length: %zu", e1_len);
-        return false;
-    }
-    if (message->extranonce_str) free(message->extranonce_str);
-    message->extranonce_str = strdup(extranonce1->valuestring);
-    
-    int extranonce_2_len = extranonce2_size->valueint;
-    if (extranonce_2_len < 0 || extranonce_2_len > MAX_EXTRANONCE_2_LEN) {
-        ESP_LOGW(TAG, "Invalid extranonce_2_len %d (clamping to 0..%d)",
-                 extranonce_2_len, MAX_EXTRANONCE_2_LEN);
-        extranonce_2_len = (extranonce_2_len < 0) ? 0 : MAX_EXTRANONCE_2_LEN;
-    }
-    message->extranonce_2_len = extranonce_2_len;
-    ESP_LOGI(TAG, "Set extranonce: %s, size: %d", message->extranonce_str, message->extranonce_2_len);
-    return true;
+    return cJSON_IsArray(params) && cJSON_GetArraySize(params) >= 2 &&
+        parse_extranonce(cJSON_GetArrayItem(params, 0), cJSON_GetArrayItem(params, 1), message);
 }
 
 static bool parse_show_message(cJSON *json, StratumApiV1Message *message)
@@ -564,51 +486,40 @@ static bool parse_get_version(cJSON *json, StratumApiV1Message *message)
 static bool parse_subscribe_result(cJSON *json, StratumApiV1Message *message)
 {
     cJSON *result = cJSON_GetObjectItem(json, "result");
-    cJSON *extranonce = cJSON_GetArrayItem(result, 1);
-    cJSON *extranonce2_len = cJSON_GetArrayItem(result, 2);
-    if (!extranonce || !extranonce2_len || !cJSON_IsString(extranonce) || !cJSON_IsNumber(extranonce2_len)) {
-        ESP_LOGE(TAG, "Invalid extranonce data in subscribe result");
-        return false;
-    }
-
-    size_t e1_len = strlen(extranonce->valuestring);
-    if (e1_len % 2 != 0 || e1_len > 64) {
-        ESP_LOGE(TAG, "Invalid subscribe extranonce hex length: %zu", e1_len);
-        return false;
-    }
-
-    if (message->extranonce_str) free(message->extranonce_str);
-    message->extranonce_str = strdup(extranonce->valuestring);
-    
-    int extranonce_2_len = extranonce2_len->valueint;
-    if (extranonce_2_len < 0 || extranonce_2_len > MAX_EXTRANONCE_2_LEN) {
-        ESP_LOGW(TAG, "Invalid extranonce_2_len %d in subscribe result (clamping to 0..%d)",
-                 extranonce_2_len, MAX_EXTRANONCE_2_LEN);
-        extranonce_2_len = (extranonce_2_len < 0) ? 0 : MAX_EXTRANONCE_2_LEN;
-    }
-    message->extranonce_2_len = extranonce_2_len;
+    if (!cJSON_IsArray(cJSON_GetArrayItem(result, 0)) ||
+        !parse_extranonce(cJSON_GetArrayItem(result, 1), cJSON_GetArrayItem(result, 2), message)) return false;
     message->response_success = true;
-    ESP_LOGI(TAG, "Subscribe result: extranonce=%s, extranonce2_len=%d",
-             message->extranonce_str, message->extranonce_2_len);
     return true;
 }
 
 static bool parse_configure_result(cJSON *json, StratumApiV1Message *message)
 {
     cJSON *result = cJSON_GetObjectItem(json, "result");
-    cJSON *version_rolling = cJSON_GetObjectItem(result, "version-rolling");
+    cJSON *rolling = cJSON_GetObjectItem(result, "version-rolling");
     cJSON *mask = cJSON_GetObjectItem(result, "version-rolling.mask");
-    if (!version_rolling || !cJSON_IsTrue(version_rolling) || !mask || !cJSON_IsString(mask)) {
-        ESP_LOGE(TAG, "Invalid configure result fields");
+    if (cJSON_IsFalse(rolling) || cJSON_IsString(rolling)) {
+        message->response_success = false;
+        return true;
+    }
+    if (!cJSON_IsTrue(rolling) || !cJSON_IsString(mask) ||
+        !valid_hex(mask->valuestring, 8)) return false;
+    message->version_mask = strtoul(mask->valuestring, NULL, 16) & BIP320_VERSION_ROLLING_MASK;
+    message->response_success = true;
+    return true;
+}
+
+bool STRATUM_V1_apply_version_mask(sv1_conn_t *conn,
+                                  const StratumApiV1Message *message,
+                                  uint32_t supported_mask)
+{
+    if (conn == NULL || message == NULL) return false;
+    if (message->method == STRATUM_RESULT_CONFIGURE) {
+        if (message->message_id != conn->configure_uid) return false;
+        conn->version_rolling_enabled = message->response_success;
+    } else if (message->method != MINING_SET_VERSION_MASK || !conn->version_rolling_enabled) {
         return false;
     }
-    uint32_t raw_mask = (uint32_t)strtoul(mask->valuestring, NULL, 16);
-    if ((raw_mask & ~BIP320_VERSION_ROLLING_MASK) != 0) {
-        ESP_LOGW(TAG, "Configure mask 0x%08" PRIx32 " contains non-BIP320 bits; masking to allowed range", raw_mask);
-    }
-    message->version_mask = raw_mask & BIP320_VERSION_ROLLING_MASK;
-    message->response_success = true;
-    ESP_LOGI(TAG, "Configure result: version_mask=%08" PRIx32, message->version_mask);
+    conn->version_mask = conn->version_rolling_enabled ? message->version_mask & supported_mask : 0;
     return true;
 }
 
@@ -876,16 +787,21 @@ int STRATUM_V1_send_version(esp_transport_handle_t transport, int message_id)
 /// @param extranonce_2 The hex-encoded value of extra nonce 2.
 /// @param ntime The hex-encoded time value use in the block header.
 /// @param nonce The hex-encoded nonce value to use in the block header.
-/// @param version_bits The hex-encoded version bits set by miner (BIP310).
+/// @param version_bits Negotiated BIP310 bits, or NULL for the five-parameter base protocol.
 /// @param out_sent_time_us Pointer to store the time when the share was sent.
 int STRATUM_V1_submit_share(esp_transport_handle_t transport, int send_uid, const char * username, const char * job_id,
                             const char * extranonce_2, const uint32_t ntime,
-                            const uint32_t nonce, const uint32_t version_bits, uint64_t *out_sent_time_us)
+                            const uint32_t nonce, const uint32_t *version_bits, uint64_t *out_sent_time_us)
 {
     char submit_msg[BUFFER_SIZE];
-    snprintf(submit_msg, sizeof(submit_msg),
-        "{\"id\":%d,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%08lx\",\"%08lx\",\"%08lx\"]}\n",
-        send_uid, username, job_id, extranonce_2, ntime, nonce, version_bits);
+    char version_param[16] = "";
+    if (version_bits != NULL) {
+        snprintf(version_param, sizeof(version_param), ",\"%08" PRIx32 "\"", *version_bits);
+    }
+    int size = snprintf(submit_msg, sizeof(submit_msg),
+        "{\"id\":%d,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%08lx\",\"%08lx\"%s]}\n",
+        send_uid, username, job_id, extranonce_2, ntime, nonce, version_param);
+    if (size < 0 || size >= sizeof(submit_msg)) return -1;
 
     int ret = esp_transport_write(transport, submit_msg, strlen(submit_msg), TRANSPORT_TIMEOUT_MS);
 
@@ -905,7 +821,7 @@ int STRATUM_V1_configure_version_rolling(esp_transport_handle_t transport, int s
 {
     char configure_msg[BUFFER_SIZE];
     snprintf(configure_msg, sizeof(configure_msg),
-        "{\"id\":%d,\"method\":\"mining.configure\",\"params\":[[\"version-rolling\"],{\"version-rolling.mask\":\"%08lx\"}]}\n",
+        "{\"id\":%d,\"method\":\"mining.configure\",\"params\":[[\"version-rolling\"],{\"version-rolling.mask\":\"%08lx\",\"version-rolling.min-bit-count\":0}]}\n",
         send_uid, version_mask);
     debug_stratum_tx(configure_msg);
 

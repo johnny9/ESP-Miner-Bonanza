@@ -51,6 +51,7 @@ asic_result_status_t asic_result_handle(
         .protocol = template.share.protocol,
         .pool_id = template.share.pool_id,
         .work_generation = template.share.work_generation,
+        .job_version = template.share.job_version,
     };
     memcpy(share.extranonce2_bin, template.share.extranonce2_bin,
            template.share.extranonce2_len);

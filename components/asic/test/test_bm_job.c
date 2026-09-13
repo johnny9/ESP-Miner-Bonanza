@@ -450,6 +450,7 @@ TEST_CASE("Result generation rejects an old job before submission and accounting
     };
     mining_template_t template = owned_template(MINING_PROTOCOL_SV1, "reused-id", "00", 1e-20);
     template.share.work_generation = 7;
+    template.share.job_version = 0x20002000;
     asic_result_t result = result_for(0);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
     TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
@@ -462,6 +463,7 @@ TEST_CASE("Result generation rejects an old job before submission and accounting
     TEST_ASSERT_EQUAL(1, capture.sv1_count);
     TEST_ASSERT_EQUAL(1, capture.account_count);
     TEST_ASSERT_EQUAL_UINT32(8, capture.share.work_generation);
+    TEST_ASSERT_EQUAL_HEX32(0x20002000, capture.share.job_version);
     mining_template_free(&template);
     delete_store(store);
 }
@@ -602,6 +604,7 @@ TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
         TEST_ASSERT_EQUAL_UINT8(protocol, actual.share.protocol);
         TEST_ASSERT_EQUAL_UINT8(7, actual.share.pool_id);
         TEST_ASSERT_EQUAL_UINT32(123, actual.share.work_generation);
+        TEST_ASSERT_EQUAL_HEX32(slot.version, actual.share.job_version);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.prev_block_hash, actual.prev_block_hash, 32);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.merkle_root, actual.merkle_root, 32);
         TEST_ASSERT_EQUAL_STRING("42", actual.share.job_id);

@@ -48,6 +48,7 @@ static int submit_share(void *context, const asic_share_submission_t *share)
             .protocol = share->protocol,
             .pool_id = share->pool_id,
             .work_generation = share->work_generation,
+            .job_version = share->job_version,
             .job_id = (char *)share->job_id,
             .extranonce2 = (char *)share->extranonce2,
         },

@@ -15,6 +15,7 @@
 #include <string.h>
 #include "utils.h"
 #include "miner_job.h"
+#include "coinbase_decoder.h"
 #include <esp_heap_caps.h>
 #include "esp_transport_ssl.h"
 #include "freertos/task.h"
@@ -72,8 +73,6 @@ int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *
                             uint32_t nonce, uint32_t rolled_version, uint64_t *sent_time_us)
 {
     if (!GLOBAL_STATE || !active_job) return -1;
-    uint32_t version_bits = rolled_version ^ active_job->version;
-
     pthread_mutex_lock(&GLOBAL_STATE->transport_mutex);
     esp_transport_handle_t transport = GLOBAL_STATE->transport;
     if (transport == NULL || s_v1_conn == NULL ||
@@ -83,6 +82,12 @@ int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *
         return -1;
     }
 
+    uint32_t mask = s_v1_conn->version_mask;
+    if (((rolled_version ^ active_job->share.job_version) & ~mask) != 0) {
+        pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
+        return -1; // A new connection mask can invalidate outstanding results.
+    }
+    uint32_t version_bits = rolled_version & mask;
     int uid = s_v1_conn->send_uid++;
     int ret = STRATUM_V1_submit_share(
         transport,
@@ -92,7 +97,7 @@ int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *
         active_job->share.extranonce2,
         active_job->ntime,
         nonce,
-        version_bits,
+        s_v1_conn->version_rolling_enabled ? &version_bits : NULL,
         sent_time_us);
 
     if (ret >= 0) {
@@ -170,6 +175,7 @@ esp_err_t stratum_v1_run(GlobalState *GLOBAL_STATE, uint16_t pool_idx)
         return ESP_ERR_NO_MEM;
     }
     s_v1_conn->send_uid = 1;
+    s_v1_conn->configure_uid = 1;
     s_v1_conn->pool_idx = (uint8_t)pool_idx;
     strlcpy(s_v1_conn->user, username, sizeof(s_v1_conn->user));
     s_v1_conn->pool_difficulty = (double)GLOBAL_STATE->DEVICE_CONFIG.family.asic.difficulty;
@@ -291,6 +297,18 @@ esp_err_t stratum_v1_run(GlobalState *GLOBAL_STATE, uint16_t pool_idx)
                 break;
 
             case MINING_NOTIFY: {
+                target_job->pool_id = (uint8_t)pool_idx;
+                target_job->pool_diff = s_v1_conn->pool_difficulty;
+                target_job->version_mask = s_v1_conn->version_mask;
+                target_job->extranonce1_len = s_v1_conn->extranonce1_len;
+                memcpy(target_job->extranonce1, s_v1_conn->extranonce1, s_v1_conn->extranonce1_len);
+                target_job->extranonce2_len = s_v1_conn->extranonce2_len;
+                if (!s_v1_conn->subscribed || !coinbase_validate_miner_job(target_job)) {
+                    ESP_LOGW(TAG, "Ignoring notify with invalid coinbase or missing subscription");
+                    break;
+                }
+                // Invalid clean jobs must not clear IDs, retire active work,
+                // advance counters, or update the block timestamp.
                 bool is_duplicate = false;
                 if (target_job->job_id[0] != '\0') {
                     if (target_job->clean_jobs) {
@@ -304,15 +322,6 @@ esp_err_t stratum_v1_run(GlobalState *GLOBAL_STATE, uint16_t pool_idx)
                 } else {
                     GLOBAL_STATE->SYSTEM_MODULE.work_received++;
                     SYSTEM_notify_new_ntime(GLOBAL_STATE, target_job->ntime);
-
-                    target_job->pool_id = (uint8_t)pool_idx;
-                    target_job->pool_diff = s_v1_conn->pool_difficulty;
-                    target_job->version_mask = s_v1_conn->version_mask;
-                    target_job->extranonce1_len = s_v1_conn->extranonce1_len;
-                    if (s_v1_conn->extranonce1_len > 0) {
-                        memcpy(target_job->extranonce1, s_v1_conn->extranonce1, s_v1_conn->extranonce1_len);
-                    }
-                    target_job->extranonce2_len = s_v1_conn->extranonce2_len;
 
                     stratum_publish_job(GLOBAL_STATE, target_job, target_slot);
                 }
@@ -330,27 +339,22 @@ esp_err_t stratum_v1_run(GlobalState *GLOBAL_STATE, uint16_t pool_idx)
             }
 
             case MINING_SET_VERSION_MASK:
-                ESP_LOGI(TAG, "Set version mask: %08lx", s_v1_msg->version_mask);
-                s_v1_conn->version_mask = s_v1_msg->version_mask &
-                    ASIC_get_capabilities(GLOBAL_STATE).supported_version_mask;
-                break;
-
             case STRATUM_RESULT_CONFIGURE:
-                if (s_v1_msg->response_success) {
-                    ESP_LOGI(TAG, "Configure result accepted, version mask: %08lx", s_v1_msg->version_mask);
-                    s_v1_conn->version_mask = s_v1_msg->version_mask &
-                    ASIC_get_capabilities(GLOBAL_STATE).supported_version_mask;
-                } else {
-                    ESP_LOGW(TAG, "Configure result rejected: %s", s_v1_msg->error_str);
-                }
+                pthread_mutex_lock(&GLOBAL_STATE->transport_mutex);
+                STRATUM_V1_apply_version_mask(s_v1_conn, s_v1_msg,
+                    ASIC_get_capabilities(GLOBAL_STATE).supported_version_mask);
+                pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
                 break;
 
             case MINING_SET_EXTRANONCE:
             case STRATUM_RESULT_SUBSCRIBE:
                 if (s_v1_msg->extranonce_2_len < 0 || s_v1_msg->extranonce_2_len > MAX_EXTRANONCE_2_LEN) {
-                    ESP_LOGW(TAG, "Invalid extranonce_2_len %d, clamping to 0..%d",
-                             s_v1_msg->extranonce_2_len, MAX_EXTRANONCE_2_LEN);
-                    s_v1_msg->extranonce_2_len = (s_v1_msg->extranonce_2_len < 0) ? 0 : MAX_EXTRANONCE_2_LEN;
+                    ESP_LOGW(TAG, "Ignoring invalid extranonce length");
+                    break;
+                }
+                if (s_v1_msg->method == STRATUM_RESULT_SUBSCRIBE) {
+                    if (s_v1_msg->message_id != 2) break;
+                    s_v1_conn->subscribed = true;
                 }
                 s_v1_conn->extranonce2_len = (uint8_t)s_v1_msg->extranonce_2_len;
                 if (s_v1_msg->extranonce_str && s_v1_msg->extranonce_str[0] != '\0') {

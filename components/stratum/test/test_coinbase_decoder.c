@@ -395,3 +395,67 @@ TEST_CASE("Coinbase decoder requires exactly one locktime", "[coinbase_decoder][
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, coinbase_process_miner_job(&job, "", true, &result));
     TEST_ASSERT_NULL(result.scriptsig);
 }
+TEST_CASE("Coinbase admission checks locktime and extranonce placement", "[coinbase][security]")
+{
+    uint8_t prefix[44] = {1, 0, 0, 0, 1};
+    memset(prefix + 37, 0xff, 4);
+    prefix[41] = 9; // Two prefix bytes and seven extranonce bytes.
+    uint8_t suffix[19] = {0xff, 0xff, 0xff, 0xff, 1}; // One empty-script output.
+    miner_job_t job = {.coinbase_prefix = prefix, .coinbase_prefix_len = sizeof(prefix),
+        .coinbase_suffix = suffix, .coinbase_suffix_len = 18, .extranonce1_len = 3, .extranonce2_len = 4};
+    TEST_ASSERT_TRUE(coinbase_validate_miner_job(&job));
+    job.coinbase_suffix_len = 17;
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+    job.coinbase_suffix_len = 19;
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+    job.coinbase_suffix_len = 18;
+    job.extranonce2_len = 0;
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+    prefix[41] = 5;
+    TEST_ASSERT_TRUE(coinbase_validate_miner_job(&job));
+    prefix[5] = 1;
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+    prefix[5] = 0;
+    prefix[41] = 101;
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+}
+
+TEST_CASE("Coinbase admission supports large payouts without a display output limit", "[coinbase][security]")
+{
+    uint8_t prefix[44] = {1, 0, 0, 0, 1};
+    memset(prefix + 37, 0xff, 4);
+    prefix[41] = 2;
+    uint8_t *suffix = calloc(1, 4200);
+    TEST_ASSERT_NOT_NULL(suffix);
+    memset(suffix, 0xff, 4);
+    suffix[4] = 7;
+    // Six empty-script outputs, then a 4096-byte script with CompactSize length.
+    size_t offset = 5 + 6 * 9 + 8;
+    suffix[offset++] = 0xfd;
+    suffix[offset++] = 0x00;
+    suffix[offset++] = 0x10;
+    offset += 4096;
+    miner_job_t job = {.coinbase_prefix = prefix, .coinbase_prefix_len = sizeof(prefix),
+        .coinbase_suffix = suffix, .coinbase_suffix_len = offset + 4};
+    TEST_ASSERT_TRUE(coinbase_validate_miner_job(&job));
+    suffix[5 + 6 * 9 + 8] = 0xff; // Length exceeds the bounded transaction.
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+    free(suffix);
+}
+
+TEST_CASE("Coinbase admission rejects truncated and noncanonical CompactSize", "[coinbase][security]")
+{
+    uint8_t prefix[44] = {1, 0, 0, 0, 1};
+    memset(prefix + 37, 0xff, 4);
+    prefix[41] = 2;
+    uint8_t suffix[20] = {0xff, 0xff, 0xff, 0xff, 0xfd, 1, 0};
+    miner_job_t job = {.coinbase_prefix = prefix, .coinbase_prefix_len = sizeof(prefix),
+        .coinbase_suffix = suffix, .coinbase_suffix_len = sizeof(suffix)};
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+    job.coinbase_suffix_len = 5;
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+    job.coinbase_suffix_len = sizeof(suffix);
+    suffix[4] = 1;
+    suffix[13] = 0xff;
+    TEST_ASSERT_FALSE(coinbase_validate_miner_job(&job));
+}

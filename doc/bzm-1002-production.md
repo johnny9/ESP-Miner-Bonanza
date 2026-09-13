@@ -53,6 +53,26 @@ the shared return stream to approximately 6.2 reports per second per ASIC.
 This is the lowest supported telemetry cadence and remains comfortably inside
 the two-second runtime freshness limit.
 
+## Stratum job admission
+
+Stratum V1 rejects malformed hexadecimal fields, non-boolean clean flags, and
+invalid or fractional extranonce sizes before applying them. Both zero and
+32-byte extranonce2 values remain supported. After inserting the connection's
+extranonce lengths, coinbase admission checks the input, script boundaries,
+output lengths and exact locktime before retiring active work or advancing
+`workReceived`. This structural check does not decode payout addresses or cap
+the number of outputs to the UI's display limit. Malformed clean jobs leave
+active work and duplicate-job tracking unchanged.
+
+Version rolling stays disabled until a matching configure response accepts it.
+Mask notifications cannot enable it, and reconnect starts a new negotiation.
+Shares use five parameters before acceptance and six afterward, including an
+accepted zero mask. The sixth parameter carries the final version's masked
+bits, preserving bits already set in the original job version as required by
+[BIP310](https://github.com/bitcoin/bips/blob/master/bip-0310.mediawiki).
+The original version remains attached to owned work so results that change
+bits outside the current connection mask are discarded.
+
 ## Safety and recovery
 
 The RP2040 bridge owns an independent short output lease. ESP-Miner services
