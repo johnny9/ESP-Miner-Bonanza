@@ -13,7 +13,7 @@
 #include "hashrate_monitor_task.h"
 #include "scoreboard.h"
 #include "self_test.h"
-#include "stratum_api.h"
+#include "sv1_client.h"
 #include "stratum_task.h"
 #include "sv2_protocol.h"
 #include "system.h"

@@ -53,7 +53,7 @@ static void capture_frame(void * context, const bzm_frame_t * frame)
     capture->frames[capture->count++] = *frame;
 }
 
-TEST_CASE("BZM UART ring covers the bounded full-dispatch polling blackout", "[asic][bzm][serial]")
+TEST_CASE("BZM UART ring covers the bounded full-dispatch polling blackout", "[asic][bzm][serial][qemu-integration]")
 {
     TEST_ASSERT_TRUE(SERIAL_buffer_capacity_covers(SERIAL_RX_BUFFER_BYTES, SERIAL_RX_DESIGN_RATE_BYTES_PER_SECOND,
                                                    SERIAL_RX_MAX_DISPATCH_BLACKOUT_MS));
@@ -69,7 +69,7 @@ TEST_CASE("BZM UART ring covers the bounded full-dispatch polling blackout", "[a
     TEST_ASSERT_FALSE(SERIAL_fifo_reserve_covers(128U, 128U, 1U, 1U));
 }
 
-TEST_CASE("BZM parser preserves fragmented and interleaved TDM frames", "[asic][bzm][frame-parser]")
+TEST_CASE("BZM parser preserves fragmented and interleaved TDM frames", "[asic][bzm][frame-parser][qemu-integration]")
 {
     static const uint8_t stream[] = {
         0x99, 0x0a, 0x01, 0x83, 0x45, 0x78, 0x56, 0x34, 0x12, 0x17, 0x0d, 0x14, 0x03, 0xde, 0xad, 0xbe,
@@ -125,7 +125,7 @@ TEST_CASE("BZM parser preserves fragmented and interleaved TDM frames", "[asic][
     TEST_ASSERT_EQUAL_UINT32(0, bzm_frame_parser_pending_bytes(&parser));
 }
 
-TEST_CASE("BZM parser retains a bounded chronological discard trace", "[asic][bzm][frame-parser]")
+TEST_CASE("BZM parser retains a bounded chronological discard trace", "[asic][bzm][frame-parser][qemu-integration]")
 {
     uint8_t noise[BZM_FRAME_PARSER_DISCARD_TRACE_SIZE + 4U];
     for (size_t index = 0; index < sizeof(noise); ++index) {
@@ -145,7 +145,7 @@ TEST_CASE("BZM parser retains a bounded chronological discard trace", "[asic][bz
     TEST_ASSERT_EQUAL_UINT32(0, bzm_frame_parser_recent_discards(NULL, tail, sizeof(tail)));
 }
 
-TEST_CASE("BZM parser records the valid-frame count at the latest discard", "[asic][bzm][frame-parser]")
+TEST_CASE("BZM parser records the valid-frame count at the latest discard", "[asic][bzm][frame-parser][qemu-integration]")
 {
     static const uint8_t stream[] = {
         0x0a, 0x01, 0x83, 0x45, 0x78, 0x56, 0x34, 0x12, 0x17, 0x0d, 0x99,
@@ -160,7 +160,7 @@ TEST_CASE("BZM parser records the valid-frame count at the latest discard", "[as
     TEST_ASSERT_EQUAL_UINT32(1, parser.emitted_frames_at_last_discard);
 }
 
-TEST_CASE("BZM parser waits for complete frames without consuming prefixes", "[asic][bzm][frame-parser]")
+TEST_CASE("BZM parser waits for complete frames without consuming prefixes", "[asic][bzm][frame-parser][qemu-integration]")
 {
     static const uint8_t result[] = {
         0x0a, 0x01, 0x83, 0x45, 0x78, 0x56, 0x34, 0x12, 0x17, 0x0d,
@@ -177,7 +177,7 @@ TEST_CASE("BZM parser waits for complete frames without consuming prefixes", "[a
     TEST_ASSERT_EQUAL_UINT32(0, bzm_frame_parser_pending_bytes(&parser));
 }
 
-TEST_CASE("BZM parser accepts a fixed-length broadcast discovery noop", "[asic][bzm][frame-parser]")
+TEST_CASE("BZM parser accepts a fixed-length broadcast discovery noop", "[asic][bzm][frame-parser][qemu-integration]")
 {
     static const uint8_t noop[] = {
         BZM_TDM_BROADCAST_ASIC_ID, BZM_FRAME_NOOP, '2', 'Z', 'B',
@@ -193,7 +193,7 @@ TEST_CASE("BZM parser accepts a fixed-length broadcast discovery noop", "[asic][
     TEST_ASSERT_EQUAL_UINT8_ARRAY("2ZB", capture.frames[0].payload, BZM_TDM_NOOP_PAYLOAD_SIZE);
 }
 
-TEST_CASE("BZM parser accepts only the four spaced ASIC wire IDs", "[asic][bzm][frame-parser][tdm]")
+TEST_CASE("BZM parser accepts only the four spaced ASIC wire IDs", "[asic][bzm][frame-parser][tdm][qemu-integration]")
 {
     frame_capture_t capture = {0};
     bzm_frame_parser_t parser;
@@ -211,7 +211,7 @@ TEST_CASE("BZM parser accepts only the four spaced ASIC wire IDs", "[asic][bzm][
     TEST_ASSERT_GREATER_THAN_UINT32(0, parser.discarded_bytes);
 }
 
-TEST_CASE("BZM register reply length must be reserved before parsing", "[asic][bzm][frame-parser]")
+TEST_CASE("BZM register reply length must be reserved before parsing", "[asic][bzm][frame-parser][qemu-integration]")
 {
     static const uint8_t stream[] = {
         0x0a, 0x03, 0xaa, 0xbb, 0x0a, 0x0f, '2', 'Z', 'B',
@@ -236,7 +236,7 @@ TEST_CASE("BZM register reply length must be reserved before parsing", "[asic][b
     TEST_ASSERT_FALSE(bzm_frame_parser_cancel_register(&parser, 0x0a));
 }
 
-TEST_CASE("BZM generation-two telemetry decodes every safety field", "[asic][bzm][telemetry]")
+TEST_CASE("BZM generation-two telemetry decodes every safety field", "[asic][bzm][telemetry][qemu-integration]")
 {
     /* temp=0x900, ch0=0x1800, ch1=0x1810, ch2=0x0aab; sensors enabled,
      * combined PLL0/PLL1 lock set. TDM byte-7 bits 5 and 6 are reserved. */
@@ -272,7 +272,7 @@ TEST_CASE("BZM generation-two telemetry decodes every safety field", "[asic][bzm
     TEST_ASSERT_FALSE(bzm_telemetry_decode(0x0a, payload, sizeof(payload) - 1, 0, &sample));
 }
 
-TEST_CASE("BZM telemetry faults and trips fail the aggregate validity", "[asic][bzm][telemetry]")
+TEST_CASE("BZM telemetry faults and trips fail the aggregate validity", "[asic][bzm][telemetry][qemu-integration]")
 {
     static const uint8_t payload[BZM_TDM_TELEMETRY_PAYLOAD_SIZE] = {
         0xf9, 0x00, 0xd8, 0x00, 0x60, 0xd0, 0xaa, 0x12,
@@ -290,7 +290,7 @@ TEST_CASE("BZM telemetry faults and trips fail the aggregate validity", "[asic][
     TEST_ASSERT_FALSE(sample.pll_locked);
 }
 
-TEST_CASE("BZM telemetry distinguishes immediate trips from confirmable frame anomalies", "[asic][bzm][telemetry]")
+TEST_CASE("BZM telemetry distinguishes immediate trips from confirmable frame anomalies", "[asic][bzm][telemetry][qemu-integration]")
 {
     bzm_telemetry_sample_t sample = {
         .received = true,
@@ -322,7 +322,7 @@ TEST_CASE("BZM telemetry distinguishes immediate trips from confirmable frame an
     TEST_ASSERT_FALSE(bzm_telemetry_sample_has_immediate_trip(&sample));
 }
 
-TEST_CASE("BZM telemetry freshness bounds and NaN checks fail closed", "[asic][bzm][telemetry]")
+TEST_CASE("BZM telemetry freshness bounds and NaN checks fail closed", "[asic][bzm][telemetry][qemu-integration]")
 {
     static const uint8_t payload[BZM_TDM_TELEMETRY_PAYLOAD_SIZE] = {
         0xc9, 0x00, 0x98, 0x00, 0x60, 0xd0, 0xaa, 0xe2,
@@ -377,7 +377,7 @@ TEST_CASE("BZM telemetry freshness bounds and NaN checks fail closed", "[asic][b
     TEST_ASSERT_FALSE(bzm_telemetry_sample_is_safe(&sample, 1100, 100, &bounds, true));
 }
 
-TEST_CASE("BZM CH2 confirmation requires consecutive fresh excursions", "[asic][bzm][telemetry]")
+TEST_CASE("BZM CH2 confirmation requires consecutive fresh excursions", "[asic][bzm][telemetry][qemu-integration]")
 {
     bzm_telemetry_bounds_t bounds = {
         .temperature_min_c = -20.0f,
@@ -437,7 +437,7 @@ TEST_CASE("BZM CH2 confirmation requires consecutive fresh excursions", "[asic][
                       bzm_ch2_confirmation_observe(&confirmation, &store, &bounds, 3, &culprit, &observed));
 }
 
-TEST_CASE("BZM CH2 confirmation fails closed on invalid inputs", "[asic][bzm][telemetry]")
+TEST_CASE("BZM CH2 confirmation fails closed on invalid inputs", "[asic][bzm][telemetry][qemu-integration]")
 {
     bzm_telemetry_bounds_t bounds = {
         .temperature_min_c = -20.0f,
@@ -491,7 +491,7 @@ static bzm_telemetry_store_t safe_confirmation_store(uint64_t timestamp_us)
     return store;
 }
 
-TEST_CASE("BZM telemetry confirmation tracks transient anomalies per ASIC", "[asic][bzm][telemetry]")
+TEST_CASE("BZM telemetry confirmation tracks transient anomalies per ASIC", "[asic][bzm][telemetry][qemu-integration]")
 {
     const bzm_telemetry_bounds_t bounds = {
         .temperature_min_c = -20.0f,
@@ -538,7 +538,7 @@ TEST_CASE("BZM telemetry confirmation tracks transient anomalies per ASIC", "[as
                       bzm_telemetry_confirmation_observe(&confirmation, &store, 500, 100, &bounds, true, 3, &culprit, &observed));
 }
 
-TEST_CASE("BZM telemetry confirmation rejects a continuous same-ASIC anomaly and an immediate trip", "[asic][bzm][telemetry]")
+TEST_CASE("BZM telemetry confirmation rejects a continuous same-ASIC anomaly and an immediate trip", "[asic][bzm][telemetry][qemu-integration]")
 {
     const bzm_telemetry_bounds_t bounds = {
         .temperature_min_c = -20.0f,
@@ -575,7 +575,7 @@ TEST_CASE("BZM telemetry confirmation rejects a continuous same-ASIC anomaly and
 }
 
 TEST_CASE("BZM PLL telemetry confirmation recovers an isolated unlock and rejects a continuous unlock",
-          "[asic][bzm][telemetry][pll]")
+          "[asic][bzm][telemetry][pll][qemu-integration]")
 {
     bzm_pll_lock_confirmation_t confirmation;
     bzm_pll_lock_confirmation_init(&confirmation);
@@ -611,7 +611,7 @@ TEST_CASE("BZM PLL telemetry confirmation recovers an isolated unlock and reject
     TEST_ASSERT_EQUAL_UINT8(3, observed);
 }
 
-TEST_CASE("BZM PLL telemetry confirmation fails closed on invalid or stale input", "[asic][bzm][telemetry][pll]")
+TEST_CASE("BZM PLL telemetry confirmation fails closed on invalid or stale input", "[asic][bzm][telemetry][pll][qemu-integration]")
 {
     bzm_pll_lock_confirmation_t confirmation;
     bzm_pll_lock_confirmation_init(&confirmation);
@@ -625,7 +625,7 @@ TEST_CASE("BZM PLL telemetry confirmation fails closed on invalid or stale input
                       bzm_pll_lock_confirmation_observe(&confirmation, &store, 100, 100, 3, NULL, NULL));
 }
 
-TEST_CASE("BZM telemetry store keeps independent per-ASIC samples", "[asic][bzm][telemetry]")
+TEST_CASE("BZM telemetry store keeps independent per-ASIC samples", "[asic][bzm][telemetry][qemu-integration]")
 {
     static const uint8_t payload[BZM_TDM_TELEMETRY_PAYLOAD_SIZE] = {
         0xc9, 0x00, 0x98, 0x00, 0x60, 0xd0, 0xaa, 0xe2,
@@ -661,7 +661,7 @@ TEST_CASE("BZM telemetry store keeps independent per-ASIC samples", "[asic][bzm]
 }
 
 TEST_CASE("BZM temperature aggregation reports the hottest fresh ASIC",
-          "[asic][bzm][telemetry][temperature]")
+          "[asic][bzm][telemetry][temperature][qemu-integration]")
 {
     bzm_telemetry_store_t store;
     bzm_telemetry_store_init(&store);
@@ -698,7 +698,7 @@ TEST_CASE("BZM temperature aggregation reports the hottest fresh ASIC",
         bzm_telemetry_max_temperature(&store, 1000, 100, NULL));
 }
 
-TEST_CASE("BZM local register definitions expose stable diagnostics", "[asic][bzm][registers]")
+TEST_CASE("BZM local register definitions expose stable diagnostics", "[asic][bzm][registers][qemu-integration]")
 {
     TEST_ASSERT_EQUAL_STRING("uart_tdm_control", bzm_local_register_name(BZM_LOCAL_REG_UART_TDM_CONTROL));
     TEST_ASSERT_EQUAL_STRING("result_status_control", bzm_local_register_name(BZM_LOCAL_REG_RESULT_STATUS_CONTROL));
@@ -714,7 +714,7 @@ TEST_CASE("BZM local register definitions expose stable diagnostics", "[asic][bz
     TEST_ASSERT_EQUAL_HEX32(0x3fff, BZM_VOLTAGE_CODE_MASK);
 }
 
-TEST_CASE("BZM transport routes interleaved UART frames through one parser", "[asic][bzm][transport]")
+TEST_CASE("BZM transport routes interleaved UART frames through one parser", "[asic][bzm][transport][qemu-integration]")
 {
     static const uint8_t stream[] = {
         0x0a,
@@ -799,7 +799,7 @@ TEST_CASE("BZM transport routes interleaved UART frames through one parser", "[a
     free(transport);
 }
 
-TEST_CASE("BZM serial poll drains a complete high-rate TDM backlog", "[asic][bzm][transport][tdm]")
+TEST_CASE("BZM serial poll drains a complete high-rate TDM backlog", "[asic][bzm][transport][tdm][qemu-integration]")
 {
     static const uint8_t payload[BZM_TDM_TELEMETRY_PAYLOAD_SIZE] = {
         0xc9, 0x00, 0x98, 0x00, 0x60, 0xd0, 0xaa, 0xe2,
@@ -833,7 +833,7 @@ TEST_CASE("BZM serial poll drains a complete high-rate TDM backlog", "[asic][bzm
     free(transport);
 }
 
-TEST_CASE("BZM transport register reservations reject ambiguity and recover framing", "[asic][bzm][transport]")
+TEST_CASE("BZM transport register reservations reject ambiguity and recover framing", "[asic][bzm][transport][qemu-integration]")
 {
     static const uint8_t stream[] = {
         0x14, BZM_FRAME_REGISTER, 0xaa, 0xbb, 0x0a, BZM_FRAME_REGISTER, 0x11, 0x22,

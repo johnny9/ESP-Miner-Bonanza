@@ -3,7 +3,7 @@
 #include "serial.h"
 #include "unity.h"
 
-TEST_CASE("staged serial setup installs UART1 before selecting ASIC baud", "[asic][bzm][serial][not-on-qemu]")
+TEST_CASE("staged serial setup installs UART1 before selecting ASIC baud", "[asic][bzm][serial][not-on-qemu][qemu-integration]")
 {
     if (SERIAL_is_initialized()) {
         TEST_ASSERT_EQUAL(ESP_OK, uart_driver_delete(UART_NUM_1));

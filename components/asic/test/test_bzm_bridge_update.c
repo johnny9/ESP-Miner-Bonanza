@@ -133,7 +133,7 @@ static bool simulated_maintenance(void * context)
     return context != NULL;
 }
 
-TEST_CASE("bridge updater requires a complete maintenance hook pair", "[asic][bzm][bridge-update][maintenance]")
+TEST_CASE("bridge updater requires a complete maintenance hook pair", "[asic][bzm][bridge-update][maintenance][qemu-integration]")
 {
     int context = 1;
     TEST_ASSERT_FALSE(BZM_bridge_update_set_maintenance_hooks(NULL, simulated_maintenance, &context));
@@ -141,7 +141,7 @@ TEST_CASE("bridge updater requires a complete maintenance hook pair", "[asic][bz
     TEST_ASSERT_TRUE(BZM_bridge_update_set_maintenance_hooks(simulated_maintenance, simulated_maintenance, &context));
 }
 
-TEST_CASE("bridge updater is enabled only for BZM bridge boards", "[asic][bzm][bridge-update][gate]")
+TEST_CASE("bridge updater is enabled only for BZM bridge boards", "[asic][bzm][bridge-update][gate][qemu-integration]")
 {
     DeviceConfig config = {0};
     config.family.asic.id = BZM;
@@ -169,7 +169,7 @@ TEST_CASE("bridge updater is enabled only for BZM bridge boards", "[asic][bzm][b
         NULL, ESP_ERR_TIMEOUT));
 }
 
-TEST_CASE("bridge updater validates RP2040 raw images before maintenance", "[asic][bzm][bridge-update][validation]")
+TEST_CASE("bridge updater validates RP2040 raw images before maintenance", "[asic][bzm][bridge-update][validation][qemu-integration]")
 {
     uint8_t image[0x108];
     make_valid_image(image, sizeof(image));
@@ -182,7 +182,7 @@ TEST_CASE("bridge updater validates RP2040 raw images before maintenance", "[asi
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_RESPONSE, bzm_bridge_update_validate_image(image, sizeof(image)));
 }
 
-TEST_CASE("bridge updater identifies a valid embedded firmware manifest", "[asic][bzm][bridge-update][manifest]")
+TEST_CASE("bridge updater identifies a valid embedded firmware manifest", "[asic][bzm][bridge-update][manifest][qemu-integration]")
 {
     uint8_t image[0x108 + BZM_BRIDGE_IMAGE_MANIFEST_SIZE];
     make_valid_image(image, sizeof(image));
@@ -204,7 +204,7 @@ TEST_CASE("bridge updater identifies a valid embedded firmware manifest", "[asic
     TEST_ASSERT_EQUAL_STRING("1.2.3", manifest.version);
 }
 
-TEST_CASE("bridge updater rejects missing duplicate and corrupt manifests", "[asic][bzm][bridge-update][manifest]")
+TEST_CASE("bridge updater rejects missing duplicate and corrupt manifests", "[asic][bzm][bridge-update][manifest][qemu-integration]")
 {
     uint8_t image[
         0x108 + (2 * BZM_BRIDGE_IMAGE_MANIFEST_SIZE)];
@@ -233,7 +233,7 @@ TEST_CASE("bridge updater rejects missing duplicate and corrupt manifests", "[as
             image, sizeof(image), &manifest));
 }
 
-TEST_CASE("forced bridge uploads bypass only manifest identity", "[asic][bzm][bridge-update][manifest]")
+TEST_CASE("forced bridge uploads bypass only manifest identity", "[asic][bzm][bridge-update][manifest][qemu-integration]")
 {
     uint8_t image[0x108 + BZM_BRIDGE_IMAGE_MANIFEST_SIZE];
     make_valid_image(image, sizeof(image));
@@ -263,7 +263,7 @@ TEST_CASE("forced bridge uploads bypass only manifest identity", "[asic][bzm][br
     TEST_ASSERT_FALSE(manifest_validated);
 }
 
-TEST_CASE("post-flash bridge identity must match the image manifest", "[asic][bzm][bridge-update][manifest]")
+TEST_CASE("post-flash bridge identity must match the image manifest", "[asic][bzm][bridge-update][manifest][qemu-integration]")
 {
     bzm_bridge_image_manifest_t manifest = {
         .protocol_major = 1,
@@ -292,7 +292,7 @@ TEST_CASE("post-flash bridge identity must match the image manifest", "[asic][bz
         bzm_bridge_update_manifest_matches_info(NULL, &info));
 }
 
-TEST_CASE("bridge chunk plan never reads beyond image and pads only final page", "[asic][bzm][bridge-update][chunks]")
+TEST_CASE("bridge chunk plan never reads beyond image and pads only final page", "[asic][bzm][bridge-update][chunks][qemu-integration]")
 {
     bzm_bridge_flash_chunk_t chunk;
     size_t image_size = BZM_BRIDGE_FLASH_CHUNK_SIZE + 257;
@@ -311,7 +311,7 @@ TEST_CASE("bridge chunk plan never reads beyond image and pads only final page",
     TEST_ASSERT_FALSE(bzm_bridge_flash_next_chunk(image_size, image_size, &chunk));
 }
 
-TEST_CASE("bridge flash poll accepts a stub that completes before running is sampled", "[asic][bzm][bridge-update][swd-poll]")
+TEST_CASE("bridge flash poll accepts a stub that completes before running is sampled", "[asic][bzm][bridge-update][swd-poll][qemu-integration]")
 {
     TEST_ASSERT_EQUAL(BZM_BRIDGE_STUB_POLL_COMPLETE,
                       bzm_bridge_flash_stub_poll_result(false, true, BZM_BRIDGE_STUB_STATUS_OK, BZM_BRIDGE_STUB_STAGE_DONE));
@@ -323,7 +323,7 @@ TEST_CASE("bridge flash poll accepts a stub that completes before running is sam
                       bzm_bridge_flash_stub_poll_result(true, true, BZM_BRIDGE_STUB_STATUS_BUSY, BZM_BRIDGE_STUB_STAGE_IDLE));
 }
 
-TEST_CASE("bridge update workflow restores bridge and confirms version", "[asic][bzm][bridge-update][workflow]")
+TEST_CASE("bridge update workflow restores bridge and confirms version", "[asic][bzm][bridge-update][workflow][qemu-integration]")
 {
     uint8_t image[0x108];
     make_valid_image(image, sizeof(image));
@@ -346,7 +346,7 @@ TEST_CASE("bridge update workflow restores bridge and confirms version", "[asic]
     TEST_ASSERT_EQUAL_UINT8(100, sim.reported_progress);
 }
 
-TEST_CASE("bridge update workflow restores maintenance state after flash failure", "[asic][bzm][bridge-update][rollback]")
+TEST_CASE("bridge update workflow restores maintenance state after flash failure", "[asic][bzm][bridge-update][rollback][qemu-integration]")
 {
     uint8_t image[0x108];
     make_valid_image(image, sizeof(image));
@@ -358,7 +358,7 @@ TEST_CASE("bridge update workflow restores maintenance state after flash failure
     TEST_ASSERT_EQUAL_INT_ARRAY(expected, sim.calls, sizeof(expected) / sizeof(expected[0]));
 }
 
-TEST_CASE("older bridge firmware may update without version command support", "[asic][bzm][bridge-update][compatibility]")
+TEST_CASE("older bridge firmware may update without version command support", "[asic][bzm][bridge-update][compatibility][qemu-integration]")
 {
     uint8_t image[0x108];
     make_valid_image(image, sizeof(image));
@@ -370,7 +370,7 @@ TEST_CASE("older bridge firmware may update without version command support", "[
     TEST_ASSERT_FALSE(query_supported);
 }
 
-TEST_CASE("bridge update fails when post-flash version query times out", "[asic][bzm][bridge-update][confirmation]")
+TEST_CASE("bridge update fails when post-flash version query times out", "[asic][bzm][bridge-update][confirmation][qemu-integration]")
 {
     uint8_t image[0x108];
     make_valid_image(image, sizeof(image));

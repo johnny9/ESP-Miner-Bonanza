@@ -23,7 +23,7 @@ static void assert_safety_status_rejected(const uint8_t *payload,
 }
 
 TEST_CASE("Bonanza bridge encodes the RP2040 control packet format",
-          "[asic][bzm][bridge]")
+          "[asic][bzm][bridge][qemu-integration]")
 {
     uint8_t frame[16];
     uint8_t level = 1;
@@ -43,7 +43,7 @@ TEST_CASE("Bonanza bridge encodes the RP2040 control packet format",
 }
 
 TEST_CASE("Bonanza bridge validates response length id and error frames",
-          "[asic][bzm][bridge]")
+          "[asic][bzm][bridge][qemu-integration]")
 {
     const uint8_t *payload;
     size_t payload_length;
@@ -77,7 +77,7 @@ TEST_CASE("Bonanza bridge validates response length id and error frames",
 }
 
 TEST_CASE("Bonanza bridge decodes bounded version information",
-          "[asic][bzm][bridge][version]")
+          "[asic][bzm][bridge][version][qemu-integration]")
 {
     const uint8_t payload[] = {
         BZM_BRIDGE_INFO_SCHEMA_VERSION,
@@ -119,7 +119,7 @@ TEST_CASE("Bonanza bridge decodes bounded version information",
 }
 
 TEST_CASE("Bonanza bridge decodes fixed-width RX loss counters",
-          "[asic][bzm][bridge][rx-stats]")
+          "[asic][bzm][bridge][rx-stats][qemu-integration]")
 {
     const uint8_t payload[] = {
         BZM_BRIDGE_RX_STATS_SCHEMA_VERSION,
@@ -153,7 +153,7 @@ TEST_CASE("Bonanza bridge decodes fixed-width RX loss counters",
 }
 
 TEST_CASE("Bonanza bridge decodes coherent safety status evidence",
-          "[asic][bzm][bridge][safety]")
+          "[asic][bzm][bridge][safety][qemu-integration]")
 {
     const uint8_t boot_safe[] = {
         0x01, 0x00, 0x00, 0x00, 0x00, 0x80,
@@ -244,7 +244,7 @@ TEST_CASE("Bonanza bridge decodes coherent safety status evidence",
 }
 
 TEST_CASE("Bonanza bridge rejects malformed or contradictory safety status",
-          "[asic][bzm][bridge][safety]")
+          "[asic][bzm][bridge][safety][qemu-integration]")
 {
     const uint8_t valid[] = {
         0x01, 0x00, 0x00, 0x00, 0x00, 0x80,
@@ -299,7 +299,7 @@ TEST_CASE("Bonanza bridge rejects malformed or contradictory safety status",
 }
 
 TEST_CASE("Bonanza bridge command constants encode every owned peripheral",
-          "[asic][bzm][bridge]")
+          "[asic][bzm][bridge][qemu-integration]")
 {
     typedef struct {
         uint8_t page;
@@ -330,7 +330,7 @@ TEST_CASE("Bonanza bridge command constants encode every owned peripheral",
 }
 
 TEST_CASE("Bonanza bridge operations fail closed while unavailable",
-          "[asic][bzm][bridge][unavailable]")
+          "[asic][bzm][bridge][unavailable][qemu-integration]")
 {
     bool tripped = false;
     uint16_t rpm = 0;
@@ -381,7 +381,7 @@ TEST_CASE("Bonanza bridge operations fail closed while unavailable",
 }
 
 TEST_CASE("Bonanza bridge fault clear requires physical safe outputs and trip low",
-          "[asic][bzm][bridge][safety]")
+          "[asic][bzm][bridge][safety][qemu-integration]")
 {
     bzm_bridge_safety_status_t status = {
         .valid = true,

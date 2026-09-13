@@ -204,7 +204,7 @@ static mining_template_t bzm_template(const char *job_id, bool clean_jobs)
 }
 
 TEST_CASE("Bitaxe 1002 selects the Bonanza board profile",
-          "[asic][bzm][board][1002]")
+          "[asic][bzm][board][1002][qemu-integration]")
 {
     const DeviceConfig *board = NULL;
     for (size_t i = 0;
@@ -303,7 +303,7 @@ static bzm_reactor_t *new_reactor(asic_job_store_t *store,
 }
 
 TEST_CASE("BZM work builder derives four family-private midstates",
-          "[asic][bzm][work]")
+          "[asic][bzm][work][qemu-integration]")
 {
     mining_template_t template = bzm_template("work", true);
     template.version_mask = 0x1fffe000;
@@ -341,7 +341,7 @@ TEST_CASE("BZM work builder derives four family-private midstates",
 }
 
 TEST_CASE("BZM keeps enhanced sequence identity when version rolling is unavailable",
-          "[asic][bzm][reactor][version][sequence]")
+          "[asic][bzm][reactor][version][sequence][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -371,7 +371,7 @@ TEST_CASE("BZM keeps enhanced sequence identity when version rolling is unavaila
 }
 
 TEST_CASE("BZM result frame decoder follows the mixed-endian wire layout",
-          "[asic][bzm][result]")
+          "[asic][bzm][result][qemu-integration]")
 {
     uint8_t frame[BZM_RESULT_FRAME_SIZE] = {
         0x83, 0x45, 0x78, 0x56, 0x34, 0x12, 0x17, 0x0d,
@@ -387,7 +387,7 @@ TEST_CASE("BZM result frame decoder follows the mixed-endian wire layout",
 }
 
 TEST_CASE("BZM TDM result decoder preserves the ASIC address",
-          "[asic][bzm][result]")
+          "[asic][bzm][result][qemu-integration]")
 {
     uint8_t frame[BZM_TDM_RESULT_FRAME_SIZE] = {
         0x1e, 0x01,
@@ -402,14 +402,14 @@ TEST_CASE("BZM TDM result decoder preserves the ASIC address",
 }
 
 TEST_CASE("BZM temperature conversion follows the Intel 12-bit formula",
-          "[asic][bzm][temperature]")
+          "[asic][bzm][temperature][qemu-integration]")
 {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 22.02f,
                              bzm_temperature_from_code(0x800));
 }
 
 TEST_CASE("BZM compact engine IDs skip every disabled 1002 coordinate",
-          "[asic][bzm][engine-map]")
+          "[asic][bzm][engine-map][qemu-integration]")
 {
     TEST_ASSERT_EQUAL_UINT16(236, BZM_ENGINES_PER_ASIC);
     TEST_ASSERT_EQUAL_UINT16(240, BZM_ENGINE_GRID_COUNT);
@@ -459,7 +459,7 @@ TEST_CASE("BZM compact engine IDs skip every disabled 1002 coordinate",
 }
 
 TEST_CASE("BZM transport encoder emits byte-paired 9-bit write words",
-          "[asic][bzm][transport]")
+          "[asic][bzm][transport][qemu-integration]")
 {
     TEST_ASSERT_EQUAL_HEX8(0xfa, BZM_BROADCAST_ASIC);
     TEST_ASSERT_EQUAL_HEX8(0xff, BZM_ALL_ASICS);
@@ -486,7 +486,7 @@ TEST_CASE("BZM transport encoder emits byte-paired 9-bit write words",
 }
 
 TEST_CASE("BZM transport encodes read and noop commands",
-          "[asic][bzm][transport]")
+          "[asic][bzm][transport][qemu-integration]")
 {
     uint8_t encoded[16];
     const uint8_t expected_read[] = {
@@ -514,7 +514,7 @@ TEST_CASE("BZM transport encodes read and noop commands",
 }
 
 TEST_CASE("BZM chain discovery reports every chain length from zero to four",
-          "[asic][bzm][discovery]")
+          "[asic][bzm][discovery][qemu-integration]")
 {
     for (size_t available = 0; available <= BZM_MAX_ASIC_COUNT;
          ++available) {
@@ -535,7 +535,7 @@ TEST_CASE("BZM chain discovery reports every chain length from zero to four",
 }
 
 TEST_CASE("BZM transport partitions an engine nonce range across ASICs",
-          "[asic][bzm][transport][nonce]")
+          "[asic][bzm][transport][nonce][qemu-integration]")
 {
     for (size_t i = 0; i < 4; ++i) {
         uint32_t start;
@@ -554,7 +554,7 @@ TEST_CASE("BZM transport partitions an engine nonce range across ASICs",
 }
 
 TEST_CASE("BZM transport programs ordered enhanced work and flush jobs",
-          "[asic][bzm][transport][program]")
+          "[asic][bzm][transport][program][qemu-integration]")
 {
     mining_template_t template = bzm_template("transport", false);
     asic_work_t source = {
@@ -650,7 +650,7 @@ TEST_CASE("BZM transport programs ordered enhanced work and flush jobs",
 }
 
 TEST_CASE("BZM reactor dispatches one stored generation to every engine",
-          "[asic][bzm][reactor]")
+          "[asic][bzm][reactor][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -699,7 +699,7 @@ TEST_CASE("BZM reactor dispatches one stored generation to every engine",
 }
 
 TEST_CASE("BZM full dispatch covers 236 engines in balanced write order",
-          "[asic][bzm][reactor][topology][balance]")
+          "[asic][bzm][reactor][topology][balance][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -753,7 +753,7 @@ TEST_CASE("BZM full dispatch covers 236 engines in balanced write order",
 }
 
 TEST_CASE("BZM incremental assignments retain compact IDs in balanced order",
-          "[asic][bzm][reactor][topology][result]")
+          "[asic][bzm][reactor][topology][result][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -805,7 +805,7 @@ TEST_CASE("BZM incremental assignments retain compact IDs in balanced order",
 }
 
 TEST_CASE("BZM assigns independent templates and retains one prior job per engine",
-          "[asic][bzm][reactor][scheduler][result]")
+          "[asic][bzm][reactor][scheduler][result][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -869,7 +869,7 @@ TEST_CASE("BZM assigns independent templates and retains one prior job per engin
 }
 
 TEST_CASE("BZM rejects delayed assignments after their bounded store slot is reused",
-          "[asic][bzm][reactor][scheduler][result]")
+          "[asic][bzm][reactor][scheduler][result][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -912,7 +912,7 @@ TEST_CASE("BZM rejects delayed assignments after their bounded store slot is reu
 }
 
 TEST_CASE("BZM reactor resolves microstate version and timestamp rolling",
-          "[asic][bzm][reactor][result]")
+          "[asic][bzm][reactor][result][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -976,7 +976,7 @@ TEST_CASE("BZM reactor resolves microstate version and timestamp rolling",
 }
 
 TEST_CASE("BZM reactor retains both enhanced sequence generations",
-          "[asic][bzm][reactor][result][pipeline]")
+          "[asic][bzm][reactor][result][pipeline][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1026,7 +1026,7 @@ TEST_CASE("BZM reactor retains both enhanced sequence generations",
 }
 
 TEST_CASE("BZM 1002 nonce gap reproduces captured Stage 7 hardware proof",
-          "[asic][bzm][reactor][result][hardware-vector]")
+          "[asic][bzm][reactor][result][hardware-vector][qemu-integration]")
 {
     mining_template_t template = {
         .version = 0x20000000,
@@ -1055,7 +1055,7 @@ TEST_CASE("BZM 1002 nonce gap reproduces captured Stage 7 hardware proof",
 }
 
 TEST_CASE("BZM distinguishes nonce results from non-share status frames",
-          "[asic][bzm][result]")
+          "[asic][bzm][result][qemu-integration]")
 {
     bzm_raw_result_t result = {.status = 0x07};
     TEST_ASSERT_FALSE(bzm_raw_result_has_valid_nonce(NULL));
@@ -1067,7 +1067,7 @@ TEST_CASE("BZM distinguishes nonce results from non-share status frames",
 }
 
 TEST_CASE("BZM failed flush remains a barrier until transport recovers",
-          "[asic][bzm][reactor][flush-error]")
+          "[asic][bzm][reactor][flush-error][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1103,7 +1103,7 @@ TEST_CASE("BZM failed flush remains a barrier until transport recovers",
 }
 
 TEST_CASE("BZM clean-job barrier rejects stale results and invalidates handles",
-          "[asic][bzm][reactor][clean-job]")
+          "[asic][bzm][reactor][clean-job][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1145,7 +1145,7 @@ TEST_CASE("BZM clean-job barrier rejects stale results and invalidates handles",
 }
 
 TEST_CASE("BZM idle clean-job barrier does not disturb the hardware link",
-          "[asic][bzm][reactor][clean-job][idle]")
+          "[asic][bzm][reactor][clean-job][idle][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1169,7 +1169,7 @@ TEST_CASE("BZM idle clean-job barrier does not disturb the hardware link",
 }
 
 TEST_CASE("BZM quarantines clean-job results through the full engine rotation",
-          "[asic][bzm][reactor][clean-job][scheduler]")
+          "[asic][bzm][reactor][clean-job][scheduler][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1192,7 +1192,7 @@ TEST_CASE("BZM quarantines clean-job results through the full engine rotation",
 }
 
 TEST_CASE("BZM repeated clean refreshes preserve frequency replacement proof",
-          "[asic][bzm][reactor][clean-job][evidence]")
+          "[asic][bzm][reactor][clean-job][evidence][qemu-integration]")
 {
     /* Reproduce the PR #5 HIL cadence with the corrected production policy.
      * Each notification arrives before a 236-engine rotation can finish.
@@ -1259,7 +1259,7 @@ TEST_CASE("BZM repeated clean refreshes preserve frequency replacement proof",
 }
 
 TEST_CASE("BZM clean jobs retire delayed results without resetting engine order",
-          "[asic][bzm][reactor][clean-job][stale]")
+          "[asic][bzm][reactor][clean-job][stale][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1309,7 +1309,7 @@ TEST_CASE("BZM clean jobs retire delayed results without resetting engine order"
 }
 
 TEST_CASE("BZM incremental sequence reuse requires a hardware barrier",
-          "[asic][bzm][reactor][wrap][clean-job]")
+          "[asic][bzm][reactor][wrap][clean-job][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1349,7 +1349,7 @@ TEST_CASE("BZM incremental sequence reuse requires a hardware barrier",
 }
 
 TEST_CASE("BZM sequence wrap forces a flush before identity reuse",
-          "[asic][bzm][reactor][wrap]")
+          "[asic][bzm][reactor][wrap][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1388,7 +1388,7 @@ TEST_CASE("BZM sequence wrap forces a flush before identity reuse",
 }
 
 TEST_CASE("BZM partial dispatch is flushed and never publishes a handle",
-          "[asic][bzm][reactor][error]")
+          "[asic][bzm][reactor][error][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
@@ -1455,7 +1455,7 @@ TEST_CASE("BZM partial dispatch is flushed and never publishes a handle",
 }
 
 TEST_CASE("BZM advertises rolling features without exposing chip identity",
-          "[asic][bzm][capabilities]")
+          "[asic][bzm][capabilities][qemu-integration]")
 {
     asic_capabilities_t capabilities =
         ASIC_capabilities_for_chip_id(BZM_CHIP_ID);

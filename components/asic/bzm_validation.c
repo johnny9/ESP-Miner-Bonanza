@@ -159,7 +159,7 @@ static bool force_safe_off(const bzm_validation_ops_t * ops, void * ops_context,
 
 static void skip_after(bzm_validation_report_t * report, bzm_validation_stage_t failed_stage)
 {
-    for (int stage = failed_stage + 1; stage <= report->requested_stage && stage < BZM_STAGE_COUNT; ++stage) {
+    for (bzm_validation_stage_t stage = failed_stage + 1; stage <= report->requested_stage && stage < BZM_STAGE_COUNT; ++stage) {
         report->stages[stage] = bzm_validation_result(BZM_CHECK_SKIPPED, BZM_VALIDATION_CODE_PREREQUISITE_FAILED,
                                                       "an earlier startup step did not complete GOOD");
     }
@@ -225,7 +225,7 @@ bool bzm_validation_execute(const bzm_validation_policy_t * policy, const bzm_va
 
     report->state = BZM_VALIDATION_EXECUTING;
     report->overall = BZM_CHECK_GOOD;
-    for (int stage = BZM_STAGE_OFF_SAFE; stage <= policy->requested_stage; ++stage) {
+    for (bzm_validation_stage_t stage = BZM_STAGE_OFF_SAFE; stage <= policy->requested_stage; ++stage) {
         report->stages[stage] = bzm_validation_result(BZM_CHECK_RUNNING, BZM_VALIDATION_CODE_NONE, "stage is executing");
         bzm_stage_result_t result = normalize_stage_result(ops->run_stage(ops_context, (bzm_validation_stage_t) stage));
         report->stages[stage] = result;

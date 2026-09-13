@@ -38,7 +38,7 @@ static void delete_store(asic_job_store_t *store)
 }
 
 TEST_CASE("ASIC job store destroy accepts an uninitialized store",
-          "[asic][job-store][memory]")
+          "[asic][job-store][memory][qemu-integration]")
 {
     asic_job_store_t store = {0};
 
@@ -117,7 +117,7 @@ static void extended_fixture(sv2_ext_job_t *source, sv2_conn_t *connection)
 }
 
 TEST_CASE("BZM driver state stays inactive for BM13xx devices",
-          "[asic][driver][memory]")
+          "[asic][driver][memory][qemu-integration]")
 {
     GlobalState *state = calloc(1, sizeof(*state));
     TEST_ASSERT_NOT_NULL(state);
@@ -130,7 +130,7 @@ TEST_CASE("BZM driver state stays inactive for BM13xx devices",
 }
 
 TEST_CASE("SV1 adapter owns neutral metadata before Bitmain packet building",
-          "[asic][template][sv1]")
+          "[asic][template][sv1][qemu-integration]")
 {
     uint8_t branches[32];
     mining_notify source = sv1_fixture(branches);
@@ -159,7 +159,7 @@ TEST_CASE("SV1 adapter owns neutral metadata before Bitmain packet building",
 }
 
 TEST_CASE("Bitmain builder preserves literal version-rolled midstates",
-          "[asic][bitmain][not-on-qemu]")
+          "[asic][bitmain][not-on-qemu][qemu-integration]")
 {
     sv2_job_t source = standard_fixture();
     mining_template_t template;
@@ -183,7 +183,7 @@ TEST_CASE("Bitmain builder preserves literal version-rolled midstates",
 }
 
 TEST_CASE("SV2 adapters preserve standard and extended submission metadata",
-          "[asic][template][sv2]")
+          "[asic][template][sv2][qemu-integration]")
 {
     sv2_job_t standard = standard_fixture();
     mining_template_t template;
@@ -248,7 +248,7 @@ static mining_template_t owned_template(mining_protocol_t protocol,
 }
 
 TEST_CASE("Job store snapshots own metadata and generated handles reject reuse",
-          "[asic][store]")
+          "[asic][store][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     mining_template_t original = owned_template(
@@ -280,7 +280,7 @@ TEST_CASE("Job store snapshots own metadata and generated handles reject reuse",
 }
 
 TEST_CASE("Compatibility slots retain hardware slot handles",
-          "[asic][store][bitmain]")
+          "[asic][store][bitmain][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     mining_template_t template = owned_template(
@@ -414,7 +414,7 @@ static void exercise_protocol(mining_protocol_t protocol,
 }
 
 TEST_CASE("Generic result routing uses stored protocol metadata only",
-          "[asic][result][routing]")
+          "[asic][result][routing][qemu-integration]")
 {
     callback_capture_t capture = {0};
     exercise_protocol(MINING_PROTOCOL_SV1, &capture);
@@ -440,7 +440,7 @@ static bool reject_retired_generation(void *context, uint64_t generation)
 }
 
 TEST_CASE("Result generation rejects an old job before submission and accounting",
-          "[asic][result][generation]")
+          "[asic][result][generation][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     callback_capture_t capture = {.transport_ready = true};
@@ -469,7 +469,7 @@ TEST_CASE("Result generation rejects an old job before submission and accounting
 }
 
 TEST_CASE("Generic result rejects stale work and accounts low difficulty",
-          "[asic][result]")
+          "[asic][result][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     callback_capture_t capture = {.transport_ready = true};
@@ -510,7 +510,7 @@ TEST_CASE("Generic result rejects stale work and accounts low difficulty",
 }
 
 TEST_CASE("Bitmain raw adapter keeps share and register events distinct",
-          "[asic][bitmain][result]")
+          "[asic][bitmain][result][qemu-integration]")
 {
     task_result raw = {
         .job_id = 8,
@@ -538,7 +538,7 @@ TEST_CASE("Bitmain raw adapter keeps share and register events distinct",
 }
 
 TEST_CASE("ASIC driver table exposes operations without switch dispatch",
-          "[asic][driver]")
+          "[asic][driver][qemu-integration]")
 {
     TEST_ASSERT_EQUAL_UINT32(6, asic_driver_count());
     const char *names[] = {"BM1372/BM1373", "BM1397", "BM1366", "BM1368", "BM1370", "BZM"};
@@ -569,7 +569,7 @@ TEST_CASE("ASIC driver table exposes operations without switch dispatch",
 }
 
 TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
-          "[asic][template][pool-slot]")
+          "[asic][template][pool-slot][qemu-integration]")
 {
     uint8_t branches[32];
     mining_notify legacy = sv1_fixture(branches);
@@ -625,7 +625,7 @@ TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
     TEST_ASSERT_NULL(rejected.share.job_id);
 }
 
-TEST_CASE("Zero pool difficulty does not submit shares", "[asic][result][routing]")
+TEST_CASE("Zero pool difficulty does not submit shares", "[asic][result][routing][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
     mining_template_t template = owned_template(MINING_PROTOCOL_SV1, "42", "00", 0);

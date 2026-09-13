@@ -8,7 +8,8 @@
 static const char *const mining_debug_tags[] = {
     "asic_result",
     "scoreboard",
-    "stratum_api",
+    "sv1_client",
+    "sv1_protocol",
     "stratum_v1_client",
     "stratum_v2_client",
 };

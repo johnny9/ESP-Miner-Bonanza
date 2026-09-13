@@ -4,8 +4,9 @@
 #include <lwip/tcpip.h>
 #include "stratum_v1_client.h"
 #include "stratum_task.h"
-#include "stratum_api.h"
 #include "asic.h"
+#include "sv1_client.h"
+#include "sv1_protocol.h"
 #include "stratum_socket.h"
 #include "connect.h"
 #include <esp_sntp.h>

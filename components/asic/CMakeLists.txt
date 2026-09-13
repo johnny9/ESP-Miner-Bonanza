@@ -31,6 +31,7 @@ SRCS
     "bzm_topology.c"
     "bzm_reactor.c"
     "bzm_transport.c"
+    "bzm_work.c"
     "bzm_bridge.c"
     "bzm_bridge_swd.c"
     "bzm_bridge_update.c"

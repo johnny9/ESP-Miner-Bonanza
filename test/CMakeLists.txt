@@ -12,8 +12,7 @@ set(EXTRA_COMPONENT_DIRS "../components")
 #
 set(TEST_COMPONENTS "stratum stratum_v2 asic bonanza_display_protocol button_input identify_mode log_level_config hashrate_counter_window" CACHE STRING "List of components to test")
 
-
-set(IDF_TARGET "esp32s3")
+set(IDF_TARGET "esp32s3" CACHE STRING "IDF target")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include "esp_log.h"
 #include "mining.h"
-#include "stratum_api.h"
 #include "utils.h"
 
 static const char *TAG = "mining";
@@ -90,19 +89,15 @@ void calculate_merkle_root_hash(const uint8_t coinbase_tx_hash[32], const uint8_
     memcpy(dest, both_merkles, 32);
 }
 
-void extranonce_2_generate(uint64_t extranonce_2, uint32_t length, char dest[static length * 2 + 1])
+void extranonce_2_generate(uint64_t extranonce_2, uint32_t length, char *dest)
 {
-    // Allocate buffer to hold the extranonce_2 value in bytes
-    uint8_t extranonce_2_bytes[length];
-    memset(extranonce_2_bytes, 0, length);
-    
-    // Copy the extranonce_2 value into the buffer, handling endianness
-    // Copy up to the size of uint64_t or the requested length, whichever is smaller
-    size_t copy_len = (length < sizeof(uint64_t)) ? length : sizeof(uint64_t);
-    memcpy(extranonce_2_bytes, &extranonce_2, copy_len);
-    
-    // Convert the bytes to hex string
-    bin2hex(extranonce_2_bytes, length, dest, length * 2 + 1);
+    static const char digits[] = "0123456789abcdef";
+    for (uint32_t i = 0; i < length; ++i) {
+        uint8_t byte = i < sizeof(extranonce_2) ? (uint8_t)(extranonce_2 >> (8U * i)) : 0;
+        dest[2U * i] = digits[byte >> 4];
+        dest[2U * i + 1U] = digits[byte & 0x0f];
+    }
+    dest[2U * length] = '\0';
 }
 
 #include <math.h>
@@ -169,7 +164,13 @@ void calculate_coinbase_tx_hash(const char *coinbase_1, const char *coinbase_2, 
 
     size_t coinbase_tx_bin_len = (len1 + len2 + len3 + len4) / 2;
 
-    uint8_t coinbase_tx_bin[coinbase_tx_bin_len];
+    uint8_t stack_buf[1024];
+    uint8_t *coinbase_tx_bin = coinbase_tx_bin_len <= sizeof(stack_buf)
+        ? stack_buf : malloc(coinbase_tx_bin_len);
+    if (coinbase_tx_bin == NULL) {
+        memset(dest, 0, 32);
+        return;
+    }
 
     size_t bin_offset = 0;
     bin_offset += hex2bin(coinbase_1, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
@@ -178,4 +179,5 @@ void calculate_coinbase_tx_hash(const char *coinbase_1, const char *coinbase_2, 
     bin_offset += hex2bin(coinbase_2, coinbase_tx_bin + bin_offset, coinbase_tx_bin_len - bin_offset);
 
     double_sha256_bin(coinbase_tx_bin, coinbase_tx_bin_len, dest);
+    if (coinbase_tx_bin != stack_buf) free(coinbase_tx_bin);
 }

@@ -27,7 +27,7 @@
 #include "nvs_config.h"
 #include "stratum_task.h"
 #include "statistics_task.h"
-#include "stratum_api.h"
+#include "sv1_client.h"
 #include "thermal.h"
 #include "vcore.h"
 

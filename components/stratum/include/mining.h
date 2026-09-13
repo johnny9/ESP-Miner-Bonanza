@@ -63,7 +63,7 @@ double mining_test_nonce_value(const mining_template_t *template,
                                uint32_t nonce, uint32_t final_ntime,
                                uint32_t final_version);
 
-void extranonce_2_generate(uint64_t extranonce_2, uint32_t length, char dest[static length * 2 + 1]);
+void extranonce_2_generate(uint64_t extranonce_2, uint32_t length, char *dest);
 
 uint32_t increment_bitmask(const uint32_t value, const uint32_t mask);
 

@@ -57,7 +57,11 @@ the two-second runtime freshness limit.
 
 Stratum V1 rejects malformed hexadecimal fields, non-boolean clean flags, and
 invalid or fractional extranonce sizes before applying them. Both zero and
-32-byte extranonce2 values remain supported. After inserting the connection's
+32-byte extranonce2 values remain supported. Parsing and escaped JSON encoding
+live in the portable `sv1_protocol.c`; ESP transport and the verified-safe
+restart callback live in `sv1_client.c`. Actual coinbase-buffer capacities and
+connection pool identity remain attached to their existing owners.
+After inserting the connection's
 extranonce lengths, coinbase admission checks the input, script boundaries,
 output lengths and exact locktime before retiring active work or advancing
 `workReceived`. This structural check does not decode payout addresses or cap

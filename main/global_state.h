@@ -16,6 +16,7 @@
 #include "esp_transport.h"
 #include "asic_job_store.h"
 #include "identify_mode.h"
+#include "stratum_protocol.h"
 #include "system.h"
 
 typedef struct bm_job bm_job;

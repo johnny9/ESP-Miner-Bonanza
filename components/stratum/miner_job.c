@@ -9,7 +9,7 @@ static miner_job_t s_job_pool[MINER_JOB_POOL_SIZE];
 bool miner_job_ensure_buffers(miner_job_t *job)
 {
     if (!job) return false;
-#if CONFIG_SPIRAM
+#if defined(CONFIG_SPIRAM) && CONFIG_SPIRAM
     bool has_psram = esp_psram_is_initialized();
 #else
     bool has_psram = false;

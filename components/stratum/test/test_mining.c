@@ -1,7 +1,6 @@
 #include "unity.h"
 #include "mining.h"
 #include "mining_template.h"
-#include "stratum_api.h"
 #include "utils.h"
 
 #include <limits.h>
@@ -16,9 +15,9 @@ TEST_CASE("Check coinbase tx construction", "[mining]")
     uint8_t coinbase_tx_hash[32];
     calculate_coinbase_tx_hash(coinbase_1, coinbase_2, extranonce, extranonce_2, coinbase_tx_hash);
 
-    char expected_coinbase_tx[] = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff20020862062f503253482f04b8864e5008e969579199999999072f736c7573682f000000000100f2052a010000001976a914d23fcdf86f7e756a64a7a9688ef9903327048ed988ac00000000";
-    size_t expected_coinbase_tx_len = strlen(expected_coinbase_tx) / 2;
-    uint8_t expected_coinbase_tx_bin[expected_coinbase_tx_len];
+    static const char expected_coinbase_tx[] = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff20020862062f503253482f04b8864e5008e969579199999999072f736c7573682f000000000100f2052a010000001976a914d23fcdf86f7e756a64a7a9688ef9903327048ed988ac00000000";
+    const size_t expected_coinbase_tx_len = (sizeof(expected_coinbase_tx) - 1) / 2;
+    uint8_t expected_coinbase_tx_bin[(sizeof(expected_coinbase_tx) - 1) / 2];
     hex2bin(expected_coinbase_tx, expected_coinbase_tx_bin, expected_coinbase_tx_len);
 
     uint8_t expected_coinbase_tx_hash[32];
@@ -206,4 +205,32 @@ TEST_CASE("Test nonce diff checking 2", "[mining test_nonce][not-on-qemu]")
     double diff = mining_test_nonce_value(
         &template, nonce, template.ntime, rolled_version);
     TEST_ASSERT_EQUAL_INT(683, (int)diff);
+}
+
+TEST_CASE("Extranonce hex generation handles zero short and padded lengths", "[mining]")
+{
+    char output[65];
+    extranonce_2_generate(UINT64_C(0x0123456789abcdef), 0, output);
+    TEST_ASSERT_EQUAL_STRING("", output);
+    extranonce_2_generate(UINT64_C(0x0123456789abcdef), 1, output);
+    TEST_ASSERT_EQUAL_STRING("ef", output);
+    extranonce_2_generate(UINT64_C(0x0123456789abcdef), 8, output);
+    TEST_ASSERT_EQUAL_STRING("efcdab8967452301", output);
+    extranonce_2_generate(UINT64_C(0x0123456789abcdef), 32, output);
+    TEST_ASSERT_EQUAL_STRING("efcdab8967452301000000000000000000000000000000000000000000000000", output);
+}
+
+TEST_CASE("Coinbase hashing supports payloads larger than the stack buffer", "[mining]")
+{
+    char coinbase1[2051];
+    for (size_t i = 0; i < 1025; ++i) {
+        coinbase1[2 * i] = 'a';
+        coinbase1[2 * i + 1] = 'b';
+    }
+    coinbase1[2050] = '\0';
+    uint8_t result[32];
+    char hex_result[65];
+    calculate_coinbase_tx_hash(coinbase1, "ef", "cd", "12", result);
+    bin2hex(result, sizeof(result), hex_result, sizeof(hex_result));
+    TEST_ASSERT_EQUAL_STRING("8fefd08a46473979637b98b2aa2dbf9286cc4e47570cc42e3749e10ffb187cee", hex_result);
 }

@@ -5,8 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static bzm_runtime_health_result_t health_result(bzm_runtime_health_status_t status, bzm_runtime_health_fault_t fault,
-                                                 const char * format, ...)
+static __attribute__((format(printf, 3, 4))) bzm_runtime_health_result_t
+health_result(bzm_runtime_health_status_t status, bzm_runtime_health_fault_t fault, const char * format, ...)
 {
     bzm_runtime_health_result_t result = {
         .status = status,
@@ -26,7 +26,8 @@ static bzm_runtime_health_result_t good(const char * detail)
     return health_result(BZM_RUNTIME_HEALTH_GOOD, BZM_RUNTIME_HEALTH_FAULT_NONE, "%s", detail);
 }
 
-static bzm_runtime_health_result_t bad(bzm_runtime_health_fault_t fault, const char * format, ...)
+static __attribute__((format(printf, 2, 3))) bzm_runtime_health_result_t
+bad(bzm_runtime_health_fault_t fault, const char * format, ...)
 {
     bzm_runtime_health_result_t result = {
         .status = BZM_RUNTIME_HEALTH_BAD,

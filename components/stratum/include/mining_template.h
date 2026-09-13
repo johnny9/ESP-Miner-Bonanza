@@ -6,7 +6,6 @@
 
 #include "mining.h"
 #include "miner_job.h"
-#include "stratum_api.h"
 
 // Legacy hexadecimal template input, retained for offline vectors.
 typedef struct mining_notify

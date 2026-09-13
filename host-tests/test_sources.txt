@@ -1,0 +1,36 @@
+# Shared by CMake and tools/test_inventory.py.
+# One repository-relative test source per line; # starts a comment.
+components/stratum/test/test_stratum_json.c
+components/stratum/test/test_sv1_protocol_encode.c
+components/stratum/test/test_miner_job.c
+components/stratum/test/test_coinbase_decoder.c
+components/stratum/test/test_base58.c
+components/stratum/test/test_bech32.c
+components/stratum/test/test_mining.c
+components/stratum/test/test_utils.c
+components/stratum_v2/test/test_sv2.c
+components/asic/test/test_pll.c
+components/asic/test/test_timeout.c
+
+# Bonanza portable policy and protocol tests.
+components/asic/test/test_bzm_balanced_ramp.c
+components/asic/test/test_bzm_bringup.c
+components/asic/test/test_bzm_dispatch_gate.c
+components/asic/test/test_bzm_frequency.c
+components/asic/test/test_bzm_frequency_qualification.c
+components/asic/test/test_bzm_lease_guard.c
+components/asic/test/test_bzm_ota_guard.c
+components/asic/test/test_bzm_overheat_recovery.c
+components/asic/test/test_bzm_power.c
+components/asic/test/test_bzm_running_evidence.c
+components/asic/test/test_bzm_runtime_health.c
+components/asic/test/test_bzm_supervisor.c
+components/asic/test/test_bzm_topology.c
+components/asic/test/test_bzm_tps546_verify.c
+components/asic/test/test_bzm_validation.c
+components/asic/test/test_capabilities.c
+components/bonanza_display_protocol/test/test_bonanza_display_protocol.c
+components/button_input/test/test_button_input.c
+components/hashrate_counter_window/test/test_hashrate_counter_window.c
+components/identify_mode/test/test_identify_mode.c
+components/log_level_config/test/test_log_level_config.c
