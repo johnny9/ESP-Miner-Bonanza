@@ -31,7 +31,7 @@ typedef struct {
 } job_pipeline_harness_event_t;
 
 typedef struct {
-    mining_template_t *jobs[JOB_PIPELINE_HARNESS_MAX_JOBS];
+    asic_job_t *jobs[JOB_PIPELINE_HARNESS_MAX_JOBS];
     size_t job_count;
     size_t send_attempts;
     uint32_t version_masks[JOB_PIPELINE_HARNESS_MAX_JOBS];
@@ -44,7 +44,7 @@ typedef struct {
 
 /*
  * Run the real create_jobs_task() against a deterministic event
- * script and recording ASIC boundary. The producer lends common work to ASIC_send_work(); captured jobs own
+ * script and recording ASIC boundary. The producer lends common work to ASIC_send_job(); captured jobs own
  * independent copies after the call, like the production driver store.
  */
 void job_pipeline_harness_run(

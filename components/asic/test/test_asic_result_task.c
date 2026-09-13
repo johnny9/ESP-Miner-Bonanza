@@ -29,7 +29,7 @@ typedef struct {
     uint64_t sent_time;
     uint32_t final_ntime;
     uint64_t work_generation;
-    mining_protocol_t protocol;
+    mining_job_source_t protocol;
 } result_case_t;
 
 static jmp_buf fixture_done;
@@ -78,7 +78,7 @@ asic_event_t *result_task_fake_process_work(GlobalState *state)
     longjmp(fixture_done, 1);
 }
 
-int result_task_fake_submit_share(GlobalState *state, const mining_template_t *job,
+int result_task_fake_submit_share(GlobalState *state, const asic_job_t *job,
                                   uint32_t nonce, uint32_t version,
                                   uint64_t *sent_time)
 {
@@ -86,18 +86,18 @@ int result_task_fake_submit_share(GlobalState *state, const mining_template_t *j
     TEST_ASSERT_EQUAL_HEX32(7, nonce);
     TEST_ASSERT_EQUAL_HEX32(0x20000004, version);
     TEST_ASSERT_EQUAL_UINT32(fixture_case.final_ntime ? fixture_case.final_ntime : 123, job->ntime);
-    TEST_ASSERT_EQUAL(fixture_case.protocol, job->share.protocol);
-    TEST_ASSERT_NOT_NULL(job->share.job_id);
-    TEST_ASSERT_NOT_NULL(job->share.extranonce2);
+    TEST_ASSERT_EQUAL(fixture_case.protocol, job->source_type);
+    TEST_ASSERT_NOT_NULL(job->job_id);
+    TEST_ASSERT_NOT_NULL(job->extranonce2);
     snprintf(fixture_submitted_id, sizeof(fixture_submitted_id), "%s",
-             job->share.job_id);
+             job->job_id);
 
     fixture_submissions++;
     if (fixture_case.replace_during_submit) {
         asic_job_store_release(&fixture_state.asic_job_store, 8);
         /* The callback's metadata remains owned after slot invalidation. */
-        TEST_ASSERT_EQUAL_STRING("42", job->share.job_id);
-        TEST_ASSERT_EQUAL_STRING("aabb", job->share.extranonce2);
+        TEST_ASSERT_EQUAL_STRING("42", job->job_id);
+        TEST_ASSERT_EQUAL_STRING("aabb", job->extranonce2);
     }
     *sent_time = fixture_case.sent_time;
     return fixture_case.submit_result;
@@ -171,12 +171,12 @@ static void run_result_case(result_case_t test_case)
     fixture_state.ASIC_initalized = !fixture_case.paused;
     fixture_state.SELF_TEST_MODULE.is_active = fixture_case.self_test;
     TEST_ASSERT_TRUE(asic_job_store_init(&fixture_state.asic_job_store));
-    mining_template_t work = {
-        .version = 0x20000004, .ntime = 123, .target = 0x1705dd01,
-        .share = {.pool_difficulty = fixture_case.pool_diff,
-                  .protocol = fixture_case.protocol, .job_id = "42",
-                  .extranonce2 = "aabb", .job_version = 0x20000004,
-                  .work_generation = fixture_case.work_generation},
+    asic_job_t work = {
+        .version = 0x20000004, .ntime = 123, .nbits = 0x1705dd01,
+        .pool_diff = fixture_case.pool_diff,
+        .source_type = fixture_case.protocol, .job_id = "42",
+        .extranonce2 = "aabb", .job_version = 0x20000004,
+        .work_generation = fixture_case.work_generation,
     };
     if (!fixture_case.missing) {
         TEST_ASSERT_TRUE(asic_job_store_store_slot(&fixture_state.asic_job_store, 8, &work, NULL));
@@ -214,11 +214,11 @@ static void run_result_case(result_case_t test_case)
 TEST_CASE("result task keeps owned snapshots through submission for every protocol",
           "[asic][result][ownership][characterization]")
 {
-    for (int type = MINING_PROTOCOL_SV1; type <= MINING_PROTOCOL_SV2_EXTENDED; ++type) {
+    for (int type = JOB_TYPE_V1; type <= JOB_TYPE_SV2_EXTENDED; ++type) {
         run_result_case((result_case_t) {
             .paused = true,
             .pool_diff = 1e-30,
-            .protocol = (mining_protocol_t)type,
+            .protocol = (mining_job_source_t)type,
             .sent_time = 2000,
             .replace_during_submit = false,
         });
@@ -231,7 +231,7 @@ TEST_CASE("result task keeps owned snapshots through submission for every protoc
         TEST_ASSERT_EQUAL_FLOAT(1.0f,
                                 fixture_state.SYSTEM_MODULE.process_time);
         run_result_case((result_case_t) {
-            .pool_diff = 1e-30, .protocol = (mining_protocol_t)type,
+            .pool_diff = 1e-30, .protocol = (mining_job_source_t)type,
             .sent_time = 2000, .replace_during_submit = true,
         });
         TEST_ASSERT_EQUAL_UINT32(1, fixture_submissions);
@@ -294,9 +294,9 @@ TEST_CASE("result task preserves thresholds self test and repeated delivery",
 
 TEST_CASE("Common results preserve actual header time for every pool protocol", "[asic][common-work]")
 {
-    for (int protocol = MINING_PROTOCOL_SV1; protocol <= MINING_PROTOCOL_SV2_EXTENDED; ++protocol) {
+    for (int protocol = JOB_TYPE_V1; protocol <= JOB_TYPE_SV2_EXTENDED; ++protocol) {
         run_result_case((result_case_t) {
-            .pool_diff = 1e-30, .protocol = (mining_protocol_t)protocol,
+            .pool_diff = 1e-30, .protocol = (mining_job_source_t)protocol,
             .final_ntime = 124, .sent_time = 2000,
         });
         TEST_ASSERT_EQUAL_UINT32(1, fixture_submissions);

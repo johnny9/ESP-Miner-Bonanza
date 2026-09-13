@@ -6,7 +6,7 @@
 #include "asic_common.h"
 #include "asic_capabilities.h"
 #include "asic_driver.h"
-#include "mining.h"
+#include "asic_job.h"
 
 asic_capabilities_t ASIC_get_capabilities(const GlobalState *GLOBAL_STATE);
 
@@ -18,8 +18,9 @@ typedef struct {
 uint8_t ASIC_init(GlobalState * GLOBAL_STATE);
 asic_event_t * ASIC_process_work(GlobalState * GLOBAL_STATE);
 int ASIC_set_max_baud(GlobalState * GLOBAL_STATE);
-bool ASIC_send_work(GlobalState *GLOBAL_STATE,
-                    const mining_template_t *template);
+/* Borrow work for this call. On acceptance the driver retains its own copy.
+ * False means retry without advancing work or consuming its clean boundary. */
+bool ASIC_send_job(GlobalState *GLOBAL_STATE, const asic_job_t *job);
 // Apply a chip-specific clean-job barrier before shared work handles are
 // invalidated. Drivers without an explicit barrier have no persistent
 // hardware assignment state and therefore succeed as a no-op.

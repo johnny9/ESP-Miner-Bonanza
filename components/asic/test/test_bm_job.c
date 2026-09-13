@@ -11,8 +11,8 @@
 #include "bzm_driver.h"
 #include "device_config.h"
 #include "global_state.h"
-#include "mining_template.h"
-#include "sv2_mining_template.h"
+#include "mining_job.h"
+#include "sv2_mining_job.h"
 #include "unity.h"
 #include "utils.h"
 
@@ -134,39 +134,39 @@ TEST_CASE("SV1 adapter owns neutral metadata before Bitmain packet building",
 {
     uint8_t branches[32];
     mining_notify source = sv1_fixture(branches);
-    mining_template_t template;
+    asic_job_t template;
     bm_job job;
 
-    TEST_ASSERT_TRUE(mining_template_build_sv1(
+    TEST_ASSERT_TRUE(mining_build_asic_job_sv1(
         &source, "aabb", 4, 0x11223344, 0x00006000, 1234.5,
         &template));
-    TEST_ASSERT_EQUAL(MINING_PROTOCOL_SV1, template.share.protocol);
-    TEST_ASSERT_EQUAL_STRING("sv1-job", template.share.job_id);
-    TEST_ASSERT_EQUAL_STRING("44332211", template.share.extranonce2);
-    TEST_ASSERT_EQUAL_DOUBLE(1234.5, template.share.pool_difficulty);
-    TEST_ASSERT_TRUE(bm_job_build(&template, &job));
+    TEST_ASSERT_EQUAL(JOB_TYPE_V1, template.source_type);
+    TEST_ASSERT_EQUAL_STRING("sv1-job", template.job_id);
+    TEST_ASSERT_EQUAL_STRING("44332211", template.extranonce2);
+    TEST_ASSERT_EQUAL_DOUBLE(1234.5, template.pool_diff);
+    TEST_ASSERT_TRUE(bm_job_build_from_asic_job(&template, &job));
     TEST_ASSERT_EQUAL_UINT8(4, job.num_midstates);
     TEST_ASSERT_EQUAL_HEX32(template.version, job.version);
     TEST_ASSERT_EQUAL_HEX32(template.ntime, job.ntime);
-    TEST_ASSERT_EQUAL_HEX32(template.target, job.target);
+    TEST_ASSERT_EQUAL_HEX32(template.nbits, job.target);
     assert_hex("1f1e1d1c1b1a19181716151413121110"
                "0f0e0d0c0b0a09080706050403020100",
                job.prev_block_hash, 32);
     assert_hex("bfcf764af84aaaf42a6574d6301ac259"
                "daa4e94d2c1569a4c9ed38b1a9c8d31c",
                job.merkle_root, 32);
-    mining_template_free(&template);
+
 }
 
 TEST_CASE("Bitmain builder preserves literal version-rolled midstates",
           "[asic][bitmain][not-on-qemu][qemu-integration]")
 {
     sv2_job_t source = standard_fixture();
-    mining_template_t template;
+    asic_job_t template;
     bm_job job;
-    TEST_ASSERT_TRUE(mining_template_build_sv2_standard(
+    TEST_ASSERT_TRUE(mining_build_asic_job_sv2_standard(
         &source, 0x00006000, 99.25, &template));
-    TEST_ASSERT_TRUE(bm_job_build(&template, &job));
+    TEST_ASSERT_TRUE(bm_job_build_from_asic_job(&template, &job));
     assert_hex("5575b33221dca8b17f0dbad2bae7a27a"
                "db80bad10d806a114f427a126ee1317f",
                job.midstate, 32);
@@ -179,71 +179,59 @@ TEST_CASE("Bitmain builder preserves literal version-rolled midstates",
     assert_hex("9d94523f7a43b1cd9149fd80d68de132"
                "5c0c6da6026c767102244a53211a7d99",
                job.midstate3, 32);
-    mining_template_free(&template);
+
 }
 
 TEST_CASE("SV2 adapters preserve standard and extended submission metadata",
           "[asic][template][sv2][qemu-integration]")
 {
     sv2_job_t standard = standard_fixture();
-    mining_template_t template;
-    TEST_ASSERT_TRUE(mining_template_build_sv2_standard(
+    asic_job_t template;
+    TEST_ASSERT_TRUE(mining_build_asic_job_sv2_standard(
         &standard, 0, 99.25, &template));
-    TEST_ASSERT_EQUAL(MINING_PROTOCOL_SV2_STANDARD,
-                      template.share.protocol);
-    TEST_ASSERT_EQUAL_STRING("4294967295", template.share.job_id);
-    TEST_ASSERT_EQUAL_STRING("", template.share.extranonce2);
+    TEST_ASSERT_EQUAL(JOB_TYPE_SV2_STANDARD,
+                      template.source_type);
+    TEST_ASSERT_EQUAL_STRING("4294967295", template.job_id);
+    TEST_ASSERT_EQUAL_STRING("", template.extranonce2);
     TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,
-                             template.share.numeric_job_id);
-    mining_template_free(&template);
+                             (uint32_t)strtoul(template.job_id, NULL, 10));
 
     sv2_ext_job_t extended;
     sv2_conn_t connection;
     extended_fixture(&extended, &connection);
-    TEST_ASSERT_TRUE(mining_template_build_sv2_extended(
+    TEST_ASSERT_TRUE(mining_build_asic_job_sv2_extended(
         &extended, &connection, 0x1122334455ULL, 0x00006000,
         456.75, &template));
-    TEST_ASSERT_EQUAL(MINING_PROTOCOL_SV2_EXTENDED,
-                      template.share.protocol);
-    TEST_ASSERT_EQUAL_STRING("123456789", template.share.job_id);
-    TEST_ASSERT_EQUAL_STRING("22334455", template.share.extranonce2);
-    TEST_ASSERT_EQUAL_UINT8(4, template.share.extranonce2_len);
-    assert_hex("22334455", template.share.extranonce2_bin, 4);
-    assert_hex("09185a699f02d14d71232eafae6f0d45"
-               "e5f48afcd2c0560724c26608f07f507f",
+    TEST_ASSERT_EQUAL(JOB_TYPE_SV2_EXTENDED,
+                      template.source_type);
+    TEST_ASSERT_EQUAL_STRING("123456789", template.job_id);
+    TEST_ASSERT_EQUAL_STRING("22334455", template.extranonce2);
+    assert_hex("f07f507f24c26608d2c05607e5f48afc"
+               "ae6f0d4571232eaf9f02d14d09185a69",
                template.merkle_root, 32);
-    mining_template_free(&template);
 
     extended.merkle_path_count = SV2_MAX_MERKLE_BRANCHES + 1;
-    TEST_ASSERT_FALSE(mining_template_build_sv2_extended(
+    TEST_ASSERT_FALSE(mining_build_asic_job_sv2_extended(
         &extended, &connection, 0, 0, 1, &template));
 }
 
-static mining_template_t owned_template(mining_protocol_t protocol,
+static asic_job_t owned_template(mining_job_source_t protocol,
                                         const char *job_id,
                                         const char *extranonce2,
                                         double difficulty)
 {
-    mining_template_t template = {
+    asic_job_t template = {
         .version = 0x20000004,
         .version_mask = 0x00006000,
         .ntime = 0x65010203,
-        .target = 0x1705dd01,
-        .share = {
-            .protocol = protocol,
-            .numeric_job_id = 42,
-            .extranonce2_len = 4,
-            .pool_difficulty = difficulty,
-        },
+        .nbits = 0x1705dd01,
+        .source_type = protocol,
+        .pool_diff = difficulty,
     };
-    fill_sequence(template.prev_block_hash, 32, 0);
+    fill_sequence(template.prev_hash, 32, 0);
     fill_sequence(template.merkle_root, 32, 0x20);
-    memcpy(template.share.extranonce2_bin,
-           (uint8_t[]){0x11, 0x22, 0x33, 0x44}, 4);
-    template.share.job_id = strdup(job_id);
-    template.share.extranonce2 = strdup(extranonce2);
-    TEST_ASSERT_NOT_NULL(template.share.job_id);
-    TEST_ASSERT_NOT_NULL(template.share.extranonce2);
+    strcpy(template.job_id, job_id);
+    strcpy(template.extranonce2, extranonce2);
     return template;
 }
 
@@ -251,26 +239,25 @@ TEST_CASE("Job store snapshots own metadata and generated handles reject reuse",
           "[asic][store][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
-    mining_template_t original = owned_template(
-        MINING_PROTOCOL_SV1, "old-job", "aabb", 1);
+    asic_job_t original = owned_template(
+        JOB_TYPE_V1, "old-job", "aabb", 1);
     asic_work_handle_t old_handle;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(
         store, &original, &old_handle));
     TEST_ASSERT_TRUE(asic_job_store_contains(store, old_handle));
 
-    mining_template_t snapshot;
+    asic_job_t snapshot;
     TEST_ASSERT_TRUE(asic_job_store_snapshot(store, old_handle, &snapshot));
-    TEST_ASSERT_NOT_EQUAL(original.share.job_id, snapshot.share.job_id);
-    mining_template_free(&original);
-    TEST_ASSERT_EQUAL_STRING("old-job", snapshot.share.job_id);
-    mining_template_free(&snapshot);
+    TEST_ASSERT_NOT_EQUAL(original.job_id, snapshot.job_id);
+
+    TEST_ASSERT_EQUAL_STRING("old-job", snapshot.job_id);
 
     for (size_t i = 0; i < ASIC_JOB_STORE_CAPACITY; ++i) {
-        mining_template_t replacement = owned_template(
-            MINING_PROTOCOL_SV1, "new-job", "ccdd", 1);
+        asic_job_t replacement = owned_template(
+            JOB_TYPE_V1, "new-job", "ccdd", 1);
         TEST_ASSERT_TRUE(asic_job_store_store_generated(
             store, &replacement, NULL));
-        mining_template_free(&replacement);
+
     }
     TEST_ASSERT_FALSE(asic_job_store_snapshot(store, old_handle, &snapshot));
     TEST_ASSERT_FALSE(asic_job_store_contains(store, old_handle));
@@ -283,17 +270,16 @@ TEST_CASE("Compatibility slots retain hardware slot handles",
           "[asic][store][bitmain][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
-    mining_template_t template = owned_template(
-        MINING_PROTOCOL_SV1, "slot", "00", 1);
+    asic_job_t template = owned_template(
+        JOB_TYPE_V1, "slot", "00", 1);
     asic_work_handle_t handle = ASIC_WORK_HANDLE_INVALID;
     TEST_ASSERT_TRUE(asic_job_store_store_slot(
         store, 12, &template, &handle));
     TEST_ASSERT_EQUAL_UINT32(12, (uint32_t)handle);
-    mining_template_t snapshot;
+    asic_job_t snapshot;
     TEST_ASSERT_TRUE(asic_job_store_snapshot(store, 12, &snapshot));
-    TEST_ASSERT_EQUAL_STRING("slot", snapshot.share.job_id);
-    mining_template_free(&snapshot);
-    mining_template_free(&template);
+    TEST_ASSERT_EQUAL_STRING("slot", snapshot.job_id);
+
     delete_store(store);
 }
 
@@ -379,13 +365,13 @@ static asic_result_t result_for(asic_work_handle_t handle)
     };
 }
 
-static void exercise_protocol(mining_protocol_t protocol,
+static void exercise_protocol(mining_job_source_t protocol,
                               callback_capture_t *capture)
 {
     asic_job_store_t *store = new_store();
-    mining_template_t template = owned_template(
+    asic_job_t template = owned_template(
         protocol, "42", "11223344", DBL_MIN);
-    template.share.pool_id = 7;
+    template.pool_id = 7;
     asic_work_handle_t handle;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(
         store, &template, &handle));
@@ -409,7 +395,7 @@ static void exercise_protocol(mining_protocol_t protocol,
     TEST_ASSERT_EQUAL_UINT32(result.version_bits,
                              capture->share.version_bits);
     TEST_ASSERT_EQUAL_UINT32(result.nonce, capture->share.nonce);
-    mining_template_free(&template);
+
     delete_store(store);
 }
 
@@ -417,17 +403,17 @@ TEST_CASE("Generic result routing uses stored protocol metadata only",
           "[asic][result][routing][qemu-integration]")
 {
     callback_capture_t capture = {0};
-    exercise_protocol(MINING_PROTOCOL_SV1, &capture);
+    exercise_protocol(JOB_TYPE_V1, &capture);
     TEST_ASSERT_EQUAL(1, capture.sv1_count);
     TEST_ASSERT_EQUAL(1, capture.account_count);
 
     memset(&capture, 0, sizeof(capture));
-    exercise_protocol(MINING_PROTOCOL_SV2_STANDARD, &capture);
+    exercise_protocol(JOB_TYPE_SV2_STANDARD, &capture);
     TEST_ASSERT_EQUAL(1, capture.standard_count);
     TEST_ASSERT_EQUAL_UINT32(42, capture.share.numeric_job_id);
 
     memset(&capture, 0, sizeof(capture));
-    exercise_protocol(MINING_PROTOCOL_SV2_EXTENDED, &capture);
+    exercise_protocol(JOB_TYPE_SV2_EXTENDED, &capture);
     TEST_ASSERT_EQUAL(1, capture.extended_count);
     TEST_ASSERT_EQUAL_UINT8(4, capture.share.extranonce2_len);
     assert_hex("11223344", capture.share.extranonce2_bin, 4);
@@ -448,23 +434,23 @@ TEST_CASE("Result generation rejects an old job before submission and accounting
         .job_store = store, .callback_context = &capture,
         .work_is_current = reject_retired_generation,
     };
-    mining_template_t template = owned_template(MINING_PROTOCOL_SV1, "reused-id", "00", 1e-20);
-    template.share.work_generation = 7;
-    template.share.job_version = 0x20002000;
+    asic_job_t template = owned_template(JOB_TYPE_V1, "reused-id", "00", 1e-20);
+    template.work_generation = 7;
+    template.job_version = 0x20002000;
     asic_result_t result = result_for(0);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
     TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(0, capture.sv1_count);
     TEST_ASSERT_EQUAL(0, capture.account_count);
     // Identical pool/job identity in the new generation remains usable.
-    template.share.work_generation = 8;
+    template.work_generation = 8;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(1, capture.sv1_count);
     TEST_ASSERT_EQUAL(1, capture.account_count);
     TEST_ASSERT_EQUAL_UINT32(8, capture.share.work_generation);
     TEST_ASSERT_EQUAL_HEX32(0x20002000, capture.share.job_version);
-    mining_template_free(&template);
+
     delete_store(store);
 }
 
@@ -482,8 +468,8 @@ TEST_CASE("Generic result rejects stale work and accounts low difficulty",
                       asic_result_handle(&result, &context,
                                          &RESULT_CALLBACKS));
 
-    mining_template_t template = owned_template(
-        MINING_PROTOCOL_SV1, "job", "00", DBL_MAX);
+    asic_job_t template = owned_template(
+        JOB_TYPE_V1, "job", "00", DBL_MAX);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(
         store, &template, &result.work_handle));
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED,
@@ -505,7 +491,7 @@ TEST_CASE("Generic result rejects stale work and accounts low difficulty",
                                          &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(1, capture.self_test_count);
     TEST_ASSERT_GREATER_THAN_DOUBLE(0, capture.self_test_diff);
-    mining_template_free(&template);
+
     delete_store(store);
 }
 
@@ -549,7 +535,7 @@ TEST_CASE("ASIC driver table exposes operations without switch dispatch",
         TEST_ASSERT_EQUAL(driver, asic_driver_for_id(driver->id));
         TEST_ASSERT_NOT_NULL(driver->ops.init);
         TEST_ASSERT_NOT_NULL(driver->ops.process_work);
-        TEST_ASSERT_NOT_NULL(driver->ops.send_work);
+        TEST_ASSERT_NOT_NULL(driver->ops.send_job);
         if (driver->id == BZM) {
             TEST_ASSERT_NOT_NULL(driver->ops.clear_work);
             TEST_ASSERT_NOT_NULL(driver->ops.job_frequency_ms);
@@ -573,8 +559,8 @@ TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
 {
     uint8_t branches[32];
     mining_notify legacy = sv1_fixture(branches);
-    mining_template_t expected;
-    TEST_ASSERT_TRUE(mining_template_build_sv1(
+    asic_job_t expected;
+    TEST_ASSERT_TRUE(mining_build_asic_job_sv1(
         &legacy, "aabb", 4, 0x11223344, 0x00006000, 1234.5, &expected));
 
     miner_job_t slot = {
@@ -597,38 +583,37 @@ TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
 
     for (int protocol = JOB_TYPE_V1; protocol <= JOB_TYPE_SV2_EXTENDED; ++protocol) {
         slot.type = protocol;
-        reverse_32bit_words(expected.merkle_root, slot.merkle_root);
-        mining_template_t actual;
-        TEST_ASSERT_TRUE(mining_template_build_miner_job(
+        memcpy(slot.merkle_root, expected.merkle_root, 32);
+        asic_job_t actual;
+        TEST_ASSERT_TRUE(mining_build_asic_job(
             &slot, 0x11223344, slot.version, &actual));
-        TEST_ASSERT_EQUAL_UINT8(protocol, actual.share.protocol);
-        TEST_ASSERT_EQUAL_UINT8(7, actual.share.pool_id);
-        TEST_ASSERT_EQUAL_UINT32(123, actual.share.work_generation);
-        TEST_ASSERT_EQUAL_HEX32(slot.version, actual.share.job_version);
-        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.prev_block_hash, actual.prev_block_hash, 32);
+        TEST_ASSERT_EQUAL_UINT8(protocol, actual.source_type);
+        TEST_ASSERT_EQUAL_UINT8(7, actual.pool_id);
+        TEST_ASSERT_EQUAL_UINT32(123, actual.work_generation);
+        TEST_ASSERT_EQUAL_HEX32(slot.version, actual.job_version);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.prev_hash, actual.prev_hash, 32);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.merkle_root, actual.merkle_root, 32);
-        TEST_ASSERT_EQUAL_STRING("42", actual.share.job_id);
+        TEST_ASSERT_EQUAL_STRING("42", actual.job_id);
         TEST_ASSERT_EQUAL_STRING(protocol == JOB_TYPE_SV2_STANDARD ? "" : "44332211",
-                                 actual.share.extranonce2);
-        TEST_ASSERT_EQUAL_UINT32(42, actual.share.numeric_job_id);
+                                 actual.extranonce2);
+        TEST_ASSERT_EQUAL_UINT32(42, (uint32_t)strtoul(actual.job_id, NULL, 10));
         TEST_ASSERT_TRUE(actual.clean_jobs);
         slot.job_id[0] = '9';
-        TEST_ASSERT_EQUAL_STRING("42", actual.share.job_id);
+        TEST_ASSERT_EQUAL_STRING("42", actual.job_id);
         slot.job_id[0] = '4';
-        mining_template_free(&actual);
-    }
-    mining_template_free(&expected);
 
-    mining_template_t rejected;
-    slot.extranonce2_len = MINING_MAX_EXTRANONCE2_SIZE + 1;
-    TEST_ASSERT_FALSE(mining_template_build_miner_job(&slot, 0, slot.version, &rejected));
-    TEST_ASSERT_NULL(rejected.share.job_id);
+    }
+
+    asic_job_t rejected = {.job_id = "unchanged"};
+    slot.extranonce2_len = ASIC_JOB_EXTRANONCE2_SIZE + 1;
+    TEST_ASSERT_FALSE(mining_build_asic_job(&slot, 0, slot.version, &rejected));
+    TEST_ASSERT_EQUAL_STRING("unchanged", rejected.job_id);
 }
 
 TEST_CASE("Zero pool difficulty does not submit shares", "[asic][result][routing][qemu-integration]")
 {
     asic_job_store_t *store = new_store();
-    mining_template_t template = owned_template(MINING_PROTOCOL_SV1, "42", "00", 0);
+    asic_job_t template = owned_template(JOB_TYPE_V1, "42", "00", 0);
     asic_work_handle_t handle;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &handle));
     callback_capture_t capture = {.transport_ready = true};
@@ -637,6 +622,6 @@ TEST_CASE("Zero pool difficulty does not submit shares", "[asic][result][routing
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(0, capture.sv1_count);
     TEST_ASSERT_EQUAL(1, capture.account_count);
-    mining_template_free(&template);
+
     delete_store(store);
 }

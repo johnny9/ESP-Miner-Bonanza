@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include "asic_result.h"
-#include "mining.h"
+#include "asic_job.h"
 
 typedef struct GlobalState GlobalState;
 
@@ -65,8 +65,8 @@ typedef struct {
     uint8_t (*init)(GlobalState *state);
     asic_event_t *(*process_work)(GlobalState *state);
     int (*set_max_baud)(void);
-    bool (*send_work)(GlobalState *state,
-                      const mining_template_t *template);
+    bool (*send_job)(GlobalState *state,
+                      const asic_job_t *template);
     bool (*clear_work)(GlobalState *state);
     double (*job_frequency_ms)(GlobalState *state);
     void (*set_version_mask)(uint32_t mask);

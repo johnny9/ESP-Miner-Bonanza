@@ -1,3 +1,4 @@
+#include "bm_job.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -255,7 +256,7 @@ int BM1397_set_max_baud(void)
 static uint8_t id = 0;
 
 bool BM1397_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
-                      const mining_template_t *template)
+                      const asic_job_t *template)
 {
     job_packet job = { 0 };
     // max job number is 128
@@ -313,7 +314,7 @@ task_result *BM1397_process_work(GlobalState * GLOBAL_STATE)
     uint8_t rx_job_id = asic_result.job.id & 0xfc;
     uint8_t rx_midstate_index = asic_result.job.id & 0x03;
 
-    mining_template_t template;
+    asic_job_t template;
     if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, rx_job_id,
                                  &template)) {
         ESP_LOGW(TAG, "Invalid job nonce found, id=%d", rx_job_id);
@@ -322,7 +323,6 @@ task_result *BM1397_process_work(GlobalState * GLOBAL_STATE)
     uint32_t base_version = template.version;
     uint32_t version_mask = template.version_mask;
     uint32_t final_ntime = template.ntime;
-    mining_template_free(&template);
 
     uint32_t rolled_version = base_version;
     for (int i = 0; i < rx_midstate_index; i++)

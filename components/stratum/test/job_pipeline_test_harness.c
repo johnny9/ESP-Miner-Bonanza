@@ -1,6 +1,6 @@
 #include "job_test_state.h"
 #include "mining_allocator_fault_injector.h"
-#include "mining_template.h"
+#include "mining_job.h"
 #include "unity.h"
 #include "job_pipeline_test_harness.h"
 
@@ -50,7 +50,7 @@ static void spy_task_delay(TickType_t ticks)
     harness_result->delay_count++;
 }
 
-static bool spy_asic_send_work(GlobalState *state, const mining_template_t *job)
+static bool spy_asic_send_work(GlobalState *state, const asic_job_t *job)
 {
     (void)state;
     harness_result->send_attempts++;
@@ -59,9 +59,9 @@ static bool spy_asic_send_work(GlobalState *state, const mining_template_t *job)
         return false;
     }
     TEST_ASSERT_LESS_THAN_UINT(JOB_PIPELINE_HARNESS_MAX_JOBS, harness_result->job_count);
-    mining_template_t *owned = malloc(sizeof(*owned));
+    asic_job_t *owned = malloc(sizeof(*owned));
     TEST_ASSERT_NOT_NULL(owned);
-    TEST_ASSERT_TRUE(mining_template_clone(job, owned));
+    *owned = *job;
     harness_result->jobs[harness_result->job_count++] = owned;
     return true;
 }
@@ -79,7 +79,7 @@ static asic_capabilities_t fake_capabilities(const GlobalState *state)
 }
 
 bool mining_test_template_build_miner_job(const miner_job_t *job, uint64_t extranonce2,
-                                         uint32_t version, mining_template_t *work);
+                                         uint32_t version, asic_job_t *work);
 
 static void spy_asic_set_version_mask(GlobalState *state, uint32_t mask)
 {
@@ -113,12 +113,12 @@ static void spy_decode_coinbase(GlobalState *state, const miner_job_t *job)
 #endif
 #define stratum_work_is_current fake_work_is_current
 #define ASIC_get_capabilities fake_capabilities
-#define mining_template_build_miner_job mining_test_template_build_miner_job
+#define mining_build_asic_job mining_test_template_build_miner_job
 void job_pipeline_test_create_jobs_task(void *context);
 #define create_jobs_task job_pipeline_test_create_jobs_task
 #define xTaskNotifyWait fake_task_notify_wait
 #define vTaskDelay spy_task_delay
-#define ASIC_send_work spy_asic_send_work
+#define ASIC_send_job spy_asic_send_work
 #define ASIC_set_version_mask spy_asic_set_version_mask
 #define ASIC_get_asic_job_frequency_ms stub_asic_get_job_frequency
 #define SYSTEM_decode_and_apply_coinbase spy_decode_coinbase
@@ -126,7 +126,7 @@ void job_pipeline_test_create_jobs_task(void *context);
 #undef SYSTEM_decode_and_apply_coinbase
 #undef ASIC_get_asic_job_frequency_ms
 #undef ASIC_set_version_mask
-#undef ASIC_send_work
+#undef ASIC_send_job
 #undef vTaskDelay
 #undef xTaskNotifyWait
 
@@ -176,7 +176,7 @@ void job_pipeline_harness_result_free(job_pipeline_harness_result_t *result)
 {
     if (result == NULL) return;
     for (size_t index = 0; index < result->job_count; ++index) {
-        mining_template_free(result->jobs[index]);
+
         free(result->jobs[index]);
         result->jobs[index] = NULL;
     }

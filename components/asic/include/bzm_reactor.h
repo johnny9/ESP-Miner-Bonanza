@@ -95,13 +95,13 @@ bool bzm_reactor_init(bzm_reactor_t *reactor, asic_job_store_t *job_store,
                       void *transport_context);
 
 bzm_assign_status_t bzm_reactor_assign(bzm_reactor_t *reactor,
-                                       const mining_template_t *template,
+                                       const asic_job_t *template,
                                        bzm_work_t *assigned_work);
 
 // Distribute one stored upstream template to every configured engine. All
 // engine assignments share one generation-bearing handle.
 bzm_assign_status_t bzm_reactor_dispatch(bzm_reactor_t *reactor,
-                                         const mining_template_t *template,
+                                         const asic_job_t *template,
                                          size_t *assigned_count);
 
 bool bzm_reactor_begin_flush(bzm_reactor_t *reactor);

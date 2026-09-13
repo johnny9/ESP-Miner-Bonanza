@@ -48,15 +48,15 @@ int ASIC_set_max_baud(GlobalState *state)
         ? driver->ops.set_max_baud() : 0;
 }
 
-bool ASIC_send_work(GlobalState *state, const mining_template_t *template)
+bool ASIC_send_job(GlobalState *state, const asic_job_t *template)
 {
     const asic_driver_t *driver = active_driver(state);
-    if (driver == NULL || driver->ops.send_work == NULL) {
+    if (driver == NULL || driver->ops.send_job == NULL) {
         ESP_LOGE(TAG, "No work operation for ASIC id %d",
                  state ? state->DEVICE_CONFIG.family.asic.id : -1);
         return false;
     }
-    return driver->ops.send_work(state, template);
+    return driver->ops.send_job(state, template);
 }
 
 bool ASIC_clear_work(GlobalState *state)

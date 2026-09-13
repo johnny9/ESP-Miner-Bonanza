@@ -60,8 +60,8 @@ job-task code with controlled inputs and recorded outputs.
 
 ## Bonanza ownership contract
 
-The producer lends a `mining_template_t` to the driver; the capture owns a real
-clone after acceptance. Allocation or send failure preserves extranonce and
+The producer lends an `asic_job_t` to the driver; the capture owns a complete
+value copy after acceptance. Coinbase allocation or send failure preserves extranonce and
 clean-job state. Retired sessions stop before allocation. Bitmain-specific
 midstate vectors are checked through an ASIC test helper, without adding
 packet types to common work. See [the interface alignment](../../../doc/asic-common-interface.md).

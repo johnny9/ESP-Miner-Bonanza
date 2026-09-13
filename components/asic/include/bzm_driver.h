@@ -27,7 +27,7 @@ typedef struct
 
 uint8_t BZM_init(GlobalState * state);
 int BZM_set_max_baud(void);
-bool BZM_send_work(GlobalState * state, const mining_template_t * template);
+bool BZM_send_work(GlobalState * state, const asic_job_t * template);
 bool BZM_clear_work(GlobalState * state);
 double BZM_job_frequency_ms(GlobalState *state);
 asic_event_t * BZM_process_work(GlobalState * state);

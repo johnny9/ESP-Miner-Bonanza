@@ -7,7 +7,6 @@
 #include "esp_system.h"
 #include "mining.h"
 #include "miner_job.h"
-#include "mining_template.h"
 #include "string.h"
 #include "esp_timer.h"
 
@@ -25,21 +24,18 @@ static bool generate_work_from_miner_job(GlobalState *state, const miner_job_t *
 {
     if (!state->ASIC_initalized ||
         !stratum_work_is_current(state, job->work_generation)) return false;
-    mining_template_t template;
-    if (!mining_template_build_miner_job(job, extranonce2, version, &template)) {
+    asic_job_t template;
+    if (!mining_build_asic_job(job, extranonce2, version, &template)) {
         ESP_LOGE(TAG, "Unable to materialize pool job");
         return false;
     }
     template.clean_jobs = clean_jobs;
-    bool sent = ASIC_send_work(state, &template);
-    mining_template_free(&template);
-    return sent;
+    return ASIC_send_job(state, &template);
 }
 
 void create_jobs_task(void *pvParameters)
 {
     GlobalState *GLOBAL_STATE = (GlobalState *)pvParameters;
-
 
     uint32_t current_version_mask = 0;
     miner_job_t *current_work = NULL;

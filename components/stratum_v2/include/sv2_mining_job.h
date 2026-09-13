@@ -1,5 +1,5 @@
-#ifndef SV2_MINING_TEMPLATE_H_
-#define SV2_MINING_TEMPLATE_H_
+#ifndef SV2_MINING_JOB_H_
+#define SV2_MINING_JOB_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -34,16 +34,16 @@ typedef struct {
     uint16_t coinbase_suffix_len;
 } sv2_ext_job_t;
 
-bool mining_template_build_sv2_standard(const sv2_job_t *source,
+bool mining_build_asic_job_sv2_standard(const sv2_job_t *source,
                                         uint32_t version_mask,
                                         double difficulty,
-                                        mining_template_t *template);
+                                        asic_job_t *template);
 
-bool mining_template_build_sv2_extended(const sv2_ext_job_t *source,
+bool mining_build_asic_job_sv2_extended(const sv2_ext_job_t *source,
                                         const sv2_conn_t *connection,
                                         uint64_t extranonce2_counter,
                                         uint32_t version_mask,
                                         double difficulty,
-                                        mining_template_t *template);
+                                        asic_job_t *template);
 
-#endif // SV2_MINING_TEMPLATE_H_
+#endif // SV2_MINING_JOB_H_

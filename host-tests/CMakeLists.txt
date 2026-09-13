@@ -113,13 +113,14 @@ add_executable(
     ../components/hashrate_counter_window/hashrate_counter_window.c
     ../components/identify_mode/identify_mode.c
     ../components/log_level_config/log_level_config.c
-    ../components/stratum/mining_template.c
+    ../components/stratum/mining_job.c
     ../main/http_server/bzm_ota_guard.c
     ../components/stratum/stratum_protocol.c
     ../components/stratum/sv1_protocol.c
     ../components/stratum/miner_job.c
     ../components/stratum/coinbase_decoder.c
     ../components/stratum/base58.c
+    ../components/mining_job/asic_job.c
     ../components/stratum/mining.c
     ../components/stratum/utils.c
     ../components/stratum/segwit_addr.c
@@ -208,9 +209,11 @@ target_include_directories(
     PRIVATE
         include
         ${cjson_SOURCE_DIR}
+        ../components/mining_job/include
         ../components/stratum/include
         ../components/stratum_v2/include
         ../components/asic/include
+        ../components/asic/private_include
         ../components/bonanza_display_protocol/include
         ../components/button_input/include
         ../components/hashrate_counter_window/include

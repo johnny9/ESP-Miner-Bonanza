@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-// Bitmain-family packet material. Pool metadata remains in mining_template_t
+// Bitmain-family packet material. Pool metadata remains in asic_job_t
 // and is never copied into this private representation.
 typedef struct bm_job {
     uint32_t version;

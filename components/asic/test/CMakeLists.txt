@@ -5,7 +5,7 @@ list(APPEND ASIC_TEST_SOURCES
      "../../../main/power/TPS546.c")
 
 idf_component_register(SRCS ${ASIC_TEST_SOURCES}
-                       INCLUDE_DIRS "." "../../../main"
+                       INCLUDE_DIRS "." "../private_include" "../../../main"
                                     "../../../main/http_server" "../../../main/power"
                                     "../../../main/tasks" "../../../main/self_test"
                                     "../../stratum/test"

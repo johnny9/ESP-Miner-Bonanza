@@ -1,4 +1,5 @@
 #include "unity.h"
+#include "utils.h"
 
 #include "bm13xx_test_harness.h"
 #include "bm1397_test_harness.h"
@@ -27,34 +28,36 @@ static bm_job *make_job(void)
     return job;
 }
 
-static mining_template_t packet_work(const bm_job *job)
+static asic_job_t packet_work(const bm_job *job)
 {
-    mining_template_t work = {
+    asic_job_t work = {
         .version = job->version, .version_mask = job->version_mask,
-        .ntime = job->ntime, .target = job->target,
+        .ntime = job->ntime, .nbits = job->target,
         .starting_nonce = job->starting_nonce,
-        .share = {.protocol = MINING_PROTOCOL_SV1, .pool_id = UINT8_MAX,
-                  .pool_difficulty = 256.125, .job_id = "packet-job",
-                  .extranonce2 = "0001020304050607"},
+        .source_type = JOB_TYPE_V1, .pool_id = UINT8_MAX,
+        .pool_diff = 256.125, .job_id = "packet-job",
+        .extranonce2 = "0001020304050607",
     };
-    memcpy(work.prev_block_hash, job->prev_block_hash, 32);
-    memcpy(work.merkle_root, job->merkle_root, 32);
+    reverse_32bit_words(job->prev_block_hash, work.prev_hash);
+    reverse_32bit_words(job->merkle_root, work.merkle_root);
     return work;
 }
 
-static void assert_saved_job(bool (*snapshot)(uint8_t, mining_template_t *),
+static void assert_saved_job(bool (*snapshot)(uint8_t, asic_job_t *),
                              uint8_t slot, const bm_job *job)
 {
-    mining_template_t saved;
+    asic_job_t saved;
     TEST_ASSERT_TRUE(snapshot(slot, &saved));
     TEST_ASSERT_EQUAL_HEX32(job->version, saved.version);
     TEST_ASSERT_EQUAL_HEX32(job->ntime, saved.ntime);
-    TEST_ASSERT_EQUAL_STRING("packet-job", saved.share.job_id);
-    TEST_ASSERT_EQUAL_STRING("0001020304050607", saved.share.extranonce2);
-    TEST_ASSERT_EQUAL_UINT8(UINT8_MAX, saved.share.pool_id);
-    TEST_ASSERT_EQUAL_DOUBLE(256.125, saved.share.pool_difficulty);
-    TEST_ASSERT_EQUAL_HEX8_ARRAY(job->merkle_root, saved.merkle_root, 32);
-    mining_template_free(&saved);
+    TEST_ASSERT_EQUAL_STRING("packet-job", saved.job_id);
+    TEST_ASSERT_EQUAL_STRING("0001020304050607", saved.extranonce2);
+    TEST_ASSERT_EQUAL_UINT8(UINT8_MAX, saved.pool_id);
+    TEST_ASSERT_EQUAL_DOUBLE(256.125, saved.pool_diff);
+    uint8_t expected_merkle[32];
+    reverse_32bit_words(job->merkle_root, expected_merkle);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected_merkle, saved.merkle_root, 32);
+
 }
 
 static void queue_bm1397_job_response(uint8_t job_id, uint8_t midstate_index,
@@ -100,7 +103,7 @@ TEST_CASE("BM13xx work packets preserve complete header fields byte exact",
         const bm13xx_harness_driver_t *driver = &bm13xx_harness_drivers[index];
         GlobalState *state = bm13xx_harness_begin();
         bm_job *job = make_job();
-        mining_template_t job_work = packet_work(job);
+        asic_job_t job_work = packet_work(job);
         TEST_ASSERT_TRUE(driver->send_work(state, job, &job_work));
 
         TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, bm13xx_harness_packet_count(),
@@ -154,7 +157,7 @@ TEST_CASE("BM1397 work packet and returned midstate preserve version mapping",
     TEST_ASSERT_EQUAL_UINT8(2, bm1397_harness_driver.init(state));
     bm1397_harness_clear_packets();
     bm_job *job = make_job();
-    mining_template_t job_work = packet_work(job);
+    asic_job_t job_work = packet_work(job);
     TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, job, &job_work));
 
     TEST_ASSERT_EQUAL_UINT32(1, bm1397_harness_packet_count());
@@ -187,7 +190,7 @@ TEST_CASE("Bitmain occupied work slots retain owned common replacements",
         const bm13xx_harness_driver_t *driver = &bm13xx_harness_drivers[index];
         GlobalState *state = bm13xx_harness_begin();
         bm_job *first = make_job();
-        mining_template_t first_work = packet_work(first);
+        asic_job_t first_work = packet_work(first);
         TEST_ASSERT_TRUE(driver->send_work(state, first, &first_work));
         uint8_t first_id = bm13xx_harness_packet(0)->bytes[4];
         uint8_t replacement_id =
@@ -195,7 +198,7 @@ TEST_CASE("Bitmain occupied work slots retain owned common replacements",
         bm13xx_harness_install_job(replacement_id, &first_work);
 
         bm_job *replacement = make_job();
-        mining_template_t replacement_work = packet_work(replacement);
+        asic_job_t replacement_work = packet_work(replacement);
         TEST_ASSERT_TRUE(driver->send_work(state, replacement, &replacement_work));
 
         TEST_ASSERT_EQUAL_HEX8_MESSAGE(
@@ -210,14 +213,14 @@ TEST_CASE("Bitmain occupied work slots retain owned common replacements",
     TEST_ASSERT_EQUAL_UINT8(2, bm1397_harness_driver.init(state));
     bm1397_harness_clear_packets();
     bm_job *first = make_job();
-    mining_template_t first_work = packet_work(first);
+    asic_job_t first_work = packet_work(first);
     TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, first, &first_work));
     uint8_t first_id = bm1397_harness_packet(0)->bytes[4];
     uint8_t replacement_id = (uint8_t)((first_id + 4) % 128);
     bm1397_harness_install_job(replacement_id, &first_work);
 
     bm_job *replacement = make_job();
-    mining_template_t replacement_work = packet_work(replacement);
+    asic_job_t replacement_work = packet_work(replacement);
     TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, replacement, &replacement_work));
 
     TEST_ASSERT_EQUAL_HEX8(replacement_id, bm1397_harness_packet(1)->bytes[4]);
@@ -271,7 +274,7 @@ TEST_CASE("BM1397 rejects inactive job results and repeated nonces",
     TEST_ASSERT_NULL(bm1397_harness_driver.process_work(state));
 
     bm_job *job = make_job();
-    mining_template_t job_work = packet_work(job);
+    asic_job_t job_work = packet_work(job);
     TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, job, &job_work));
     free(job);
     uint8_t job_id = bm1397_harness_packet(0)->bytes[4];

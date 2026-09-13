@@ -49,7 +49,7 @@ bool bzm_work_build(const asic_work_t *source, uint16_t engine_id,
         return false;
     }
 
-    const mining_template_t *template = source->template;
+    const asic_job_t *template = source->template;
     memset(work, 0, sizeof(*work));
     work->source = *source;
     work->engine_id = engine_id;
@@ -57,29 +57,22 @@ bool bzm_work_build(const asic_work_t *source, uint16_t engine_id,
     work->starting_nonce = template->starting_nonce;
     work->end_nonce = UINT32_MAX;
     work->start_ntime = template->ntime;
-    work->target = template->target;
+    work->target = template->nbits;
     work->logical_sequence = logical_sequence;
     work->lead_zeros = lead_zeros;
 
-    uint8_t header_prev_hash[32];
-    uint8_t header_merkle_root[32];
-    reverse_32bit_words(template->prev_block_hash, header_prev_hash);
-    reverse_32bit_words(template->merkle_root, header_merkle_root);
-    memcpy(&work->merkle_residue, header_merkle_root + 28,
+    memcpy(&work->merkle_residue, template->merkle_root + 28,
            sizeof(work->merkle_residue));
-
-    uint8_t midstate_data[64];
+    uint8_t midstate_data[80];
     uint8_t digest[32];
-    memcpy(midstate_data + 4, header_prev_hash, sizeof(header_prev_hash));
-    memcpy(midstate_data + 36, header_merkle_root, 28);
 
     size_t count = bzm_build_versions(template->version,
                                       template->version_mask,
                                       enhanced_mode, work->versions);
     for (size_t i = 0; i < count; ++i) {
         uint32_t version = work->versions[i];
-        memcpy(midstate_data, &version, sizeof(version));
-        midstate_sha256_bin(midstate_data, sizeof(midstate_data), digest);
+        asic_job_header(template, template->starting_nonce, version, midstate_data);
+        midstate_sha256_bin(midstate_data, 64, digest);
         /* mbedTLS exposes each SHA-256 state word as big-endian bytes.
          * BIRDS/cgminer writes native little-endian uint32_t h0..h7 words to
          * Bonanza, so swap bytes within each word while preserving the word

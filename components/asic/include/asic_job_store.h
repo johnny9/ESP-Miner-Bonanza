@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include "asic_result.h"
-#include "mining.h"
+#include "asic_job.h"
 
 /* BZM keeps one independently generated job active for each of its 236
  * logical engines. Keep a full 8-bit hardware-handle slot space so every
@@ -16,7 +16,7 @@
 typedef struct {
     bool valid;
     asic_work_handle_t handle;
-    mining_template_t template;
+    asic_job_t template;
 } asic_job_store_entry_t;
 
 typedef struct {
@@ -34,17 +34,17 @@ void asic_job_store_destroy(asic_job_store_t *store);
 
 // Compatibility mode for ASICs whose hardware result contains only a slot id.
 bool asic_job_store_store_slot(asic_job_store_t *store, uint8_t slot,
-                               const mining_template_t *template,
+                               const asic_job_t *template,
                                asic_work_handle_t *handle);
 
 // Generation-bearing handles reject stale results after reuse or invalidation.
 bool asic_job_store_store_generated(asic_job_store_t *store,
-                                    const mining_template_t *template,
+                                    const asic_job_t *template,
                                     asic_work_handle_t *handle);
 
 bool asic_job_store_snapshot(asic_job_store_t *store,
                              asic_work_handle_t handle,
-                             mining_template_t *snapshot);
+                             asic_job_t *snapshot);
 // Read-only identity check used by drivers before emitting a delayed result.
 bool asic_job_store_contains(asic_job_store_t *store,
                              asic_work_handle_t handle);

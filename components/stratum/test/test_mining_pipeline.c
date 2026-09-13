@@ -11,9 +11,9 @@
 #include <string.h>
 
 /*
- * Golden characterization fixtures for the boundary that exists before the
- * ASIC refactor: Stratum input -> miner_job_t -> mining_template_t.  mining_template_t is currently
- * the value consumed by every ASIC_send_work implementation.
+ * Golden characterization fixtures adapted to the common interface:
+ * Stratum input -> miner_job_t -> asic_job_t -> ASIC_send_job.
+ * Common hashes use header byte order; hardware midstate vectors are unchanged.
  *
  * The SV1 fixture, merkle root, and base-version midstate are also documented
  * in the upstream characterization fixtures. The additional midstates
@@ -56,22 +56,22 @@ static void assert_hex32(const char *expected_hex, const uint8_t actual[32])
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, actual, sizeof(expected));
 }
 
-static void assert_common_asic_job(const mining_template_t *job, uint32_t expected_version,
+static void assert_common_asic_job(const asic_job_t *job, uint32_t expected_version,
                                    miner_job_type_t type,
                                    uint8_t pool_id, double pool_diff,
                                    const char *expected_merkle_root)
 {
     TEST_ASSERT_EQUAL_HEX32(expected_version, job->version);
     TEST_ASSERT_EQUAL_HEX32(0x1fffe000, job->version_mask);
-    TEST_ASSERT_EQUAL_HEX32(0x1705dd01, job->target);
+    TEST_ASSERT_EQUAL_HEX32(0x1705dd01, job->nbits);
     TEST_ASSERT_EQUAL_HEX32(0x64658bd8, job->ntime);
     TEST_ASSERT_EQUAL_UINT32(0, job->starting_nonce);
-    TEST_ASSERT_EQUAL_UINT8(pool_id, job->share.pool_id);
-    TEST_ASSERT_EQUAL_INT(type, job->share.protocol);
-    TEST_ASSERT_EQUAL_DOUBLE(pool_diff, job->share.pool_difficulty);
+    TEST_ASSERT_EQUAL_UINT8(pool_id, job->pool_id);
+    TEST_ASSERT_EQUAL_INT(type, job->source_type);
+    TEST_ASSERT_EQUAL_DOUBLE(pool_diff, job->pool_diff);
     assert_hex32(
-        "000000000000000049070000a804d248b472b528c6e5607d837bdc1335fd44bf",
-        job->prev_block_hash);
+        "35fd44bf837bdc13c6e5607db472b528a804d248490700000000000000000000",
+        job->prev_hash);
     assert_hex32(expected_merkle_root, job->merkle_root);
 }
 
@@ -136,21 +136,21 @@ TEST_CASE("SV1 notify reaches the ASIC job boundary byte exact",
     TEST_ASSERT_EQUAL_HEX32(BIP320_VERSION_ROLLING_MASK,
                             result.version_masks[0]);
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
-    mining_template_t *asic_job = result.jobs[0];
+    asic_job_t *asic_job = result.jobs[0];
     TEST_ASSERT_NOT_NULL(asic_job);
 
     assert_common_asic_job(
         asic_job, 0x20000004, JOB_TYPE_V1, 3, 2048.0,
-        "c604a846ea9ef9b4dbd3eb32cfdb61d41fa0247f053dcece32ef0d12cd1be821");
-    TEST_ASSERT_EQUAL_STRING("1f9a56282c", asic_job->share.job_id);
-    TEST_ASSERT_EQUAL_STRING("0000000000000000", asic_job->share.extranonce2);
+        "cd1be82132ef0d12053dcece1fa0247fcfdb61d4dbd3eb32ea9ef9b4c604a846");
+    TEST_ASSERT_EQUAL_STRING("1f9a56282c", asic_job->job_id);
+    TEST_ASSERT_EQUAL_STRING("0000000000000000", asic_job->extranonce2);
 
     bitmain_assert_midstate_vector(asic_job, 0, "4d3185f25f7d5de0e3591741cb21cae11574ddd65d490d3d68739f8a52eadf91");
     bitmain_assert_midstate_vector(asic_job, 1, "1223a956e9ef56cb49d27f0829c7afead0908ead93772919d4bc33efcb699658");
     bitmain_assert_midstate_vector(asic_job, 2, "4176317ef2641293a3effca4188675380c97daa32f37d00d3228f08966c0b97d");
     bitmain_assert_midstate_vector(asic_job, 3, "73828ae1e589678bc3f03b5a863835599cd73c42e3b67bbdc47f5b51eaec465a");
     miner_job->job_id[0] = 'x';
-    TEST_ASSERT_EQUAL_STRING("1f9a56282c", asic_job->share.job_id);
+    TEST_ASSERT_EQUAL_STRING("1f9a56282c", asic_job->job_id);
 
     job_pipeline_harness_result_free(&result);
     STRATUM_V1_reset_message(&message);
@@ -252,14 +252,14 @@ TEST_CASE("SV2 standard messages reach the ASIC job boundary byte exact",
     TEST_ASSERT_EQUAL_UINT32(1, result.job_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.version_mask_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
-    mining_template_t *asic_job = result.jobs[0];
+    asic_job_t *asic_job = result.jobs[0];
     TEST_ASSERT_NOT_NULL(asic_job);
 
     assert_common_asic_job(
         asic_job, 0x20000004, JOB_TYPE_SV2_STANDARD, 3, 2048.0,
-        "c604a846ea9ef9b4dbd3eb32cfdb61d41fa0247f053dcece32ef0d12cd1be821");
-    TEST_ASSERT_EQUAL_STRING("42", asic_job->share.job_id);
-    TEST_ASSERT_EQUAL_STRING("", asic_job->share.extranonce2);
+        "cd1be82132ef0d12053dcece1fa0247fcfdb61d4dbd3eb32ea9ef9b4c604a846");
+    TEST_ASSERT_EQUAL_STRING("42", asic_job->job_id);
+    TEST_ASSERT_EQUAL_STRING("", asic_job->extranonce2);
     job_pipeline_harness_result_free(&result);
 
     const job_pipeline_harness_event_t software_events[] = {
@@ -282,14 +282,14 @@ TEST_CASE("SV2 standard messages reach the ASIC job boundary byte exact",
     TEST_ASSERT_NOT_NULL(asic_job);
     assert_common_asic_job(
         asic_job, 0x20008004, JOB_TYPE_SV2_STANDARD, 3, 2048.0,
-        "c604a846ea9ef9b4dbd3eb32cfdb61d41fa0247f053dcece32ef0d12cd1be821");
+        "cd1be82132ef0d12053dcece1fa0247fcfdb61d4dbd3eb32ea9ef9b4c604a846");
     bitmain_assert_midstate_vector(asic_job, 0, "d3e7e0f843a5eab9d8738ebae0845dc947140afd1a9e9aba63782cb00fdfee73");
     bitmain_assert_midstate_vector(asic_job, 1, "bfd330725e5483e19f51a3d51bf2658bbfd65d20a7a468675e3e5569d669f1d3");
     bitmain_assert_midstate_vector(asic_job, 2, "ec7ed22beb004cfedbe0afb5afe6d3674f70bbe9c99e163709d4dee2ce2d4837");
     bitmain_assert_midstate_vector(asic_job, 3, "e964893f25e3f5cd668bb03bcfa87808728cd01574fe8c8ff0ec030db715a936");
     miner_job->job_id[0] = 'x';
-    TEST_ASSERT_EQUAL_STRING("42", result.jobs[0]->share.job_id);
-    TEST_ASSERT_EQUAL_STRING("42", result.jobs[1]->share.job_id);
+    TEST_ASSERT_EQUAL_STRING("42", result.jobs[0]->job_id);
+    TEST_ASSERT_EQUAL_STRING("42", result.jobs[1]->job_id);
     miner_job->job_id[0] = '4';
     job_pipeline_harness_result_free(&result);
 
@@ -401,25 +401,25 @@ TEST_CASE("SV2 extended messages roll extranonce into the ASIC job byte exact",
     TEST_ASSERT_EQUAL_UINT32(2, result.job_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.version_mask_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
-    mining_template_t *asic_job = result.jobs[0];
+    asic_job_t *asic_job = result.jobs[0];
     TEST_ASSERT_NOT_NULL(asic_job);
 
     assert_common_asic_job(
         asic_job, 0x20000004, JOB_TYPE_SV2_EXTENDED, 4, 1024.0,
-        "3d5cb9a424a72f7686e8a96375cfda9bcbc74745878ad7127cdd0425ad14b09f");
-    TEST_ASSERT_EQUAL_STRING("43", asic_job->share.job_id);
-    TEST_ASSERT_EQUAL_STRING("0000000000000000", asic_job->share.extranonce2);
+        "ad14b09f7cdd0425878ad712cbc7474575cfda9b86e8a96324a72f763d5cb9a4");
+    TEST_ASSERT_EQUAL_STRING("43", asic_job->job_id);
+    TEST_ASSERT_EQUAL_STRING("0000000000000000", asic_job->extranonce2);
 
     asic_job = result.jobs[1];
     TEST_ASSERT_NOT_NULL(asic_job);
     assert_common_asic_job(
         asic_job, 0x20000004, JOB_TYPE_SV2_EXTENDED, 4, 1024.0,
-        "6ad7452efa2fbcd0bbb6e22201100fb9cdd4af18c63791d309a9b74ce706f708");
-    TEST_ASSERT_EQUAL_STRING("43", asic_job->share.job_id);
-    TEST_ASSERT_EQUAL_STRING("0100000000000000", asic_job->share.extranonce2);
+        "e706f70809a9b74cc63791d3cdd4af1801100fb9bbb6e222fa2fbcd06ad7452e");
+    TEST_ASSERT_EQUAL_STRING("43", asic_job->job_id);
+    TEST_ASSERT_EQUAL_STRING("0100000000000000", asic_job->extranonce2);
     miner_job->job_id[0] = 'x';
-    TEST_ASSERT_EQUAL_STRING("43", result.jobs[0]->share.job_id);
-    TEST_ASSERT_EQUAL_STRING("43", result.jobs[1]->share.job_id);
+    TEST_ASSERT_EQUAL_STRING("43", result.jobs[0]->job_id);
+    TEST_ASSERT_EQUAL_STRING("43", result.jobs[1]->job_id);
     job_pipeline_harness_result_free(&result);
 }
 
@@ -466,7 +466,7 @@ TEST_CASE("job task harness preserves idle and staged work behavior",
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
     TEST_ASSERT_EQUAL_UINT32(0, result.version_mask_count);
     TEST_ASSERT_EQUAL_UINT8(5, result.active_job_slot);
-    TEST_ASSERT_EQUAL_STRING("staged", result.jobs[0]->share.job_id);
+    TEST_ASSERT_EQUAL_STRING("staged", result.jobs[0]->job_id);
     job_pipeline_harness_result_free(&result);
 }
 
@@ -544,25 +544,25 @@ TEST_CASE("job task preserves maximum accepted metadata and detached ownership",
     memset(job->job_id, 'x', sizeof(job->job_id));
     memset(job->coinbase_prefix, 0, job->coinbase_prefix_len);
     memset(job->coinbase_suffix, 0, job->coinbase_suffix_len);
-    TEST_ASSERT_EQUAL_STRING(job_id, result.jobs[0]->share.job_id);
-    TEST_ASSERT_EQUAL_STRING(job_id, result.jobs[1]->share.job_id);
+    TEST_ASSERT_EQUAL_STRING(job_id, result.jobs[0]->job_id);
+    TEST_ASSERT_EQUAL_STRING(job_id, result.jobs[1]->job_id);
     TEST_ASSERT_EQUAL_STRING(
         "0000000000000000000000000000000000000000000000000000000000000000",
-        result.jobs[0]->share.extranonce2);
+        result.jobs[0]->extranonce2);
     TEST_ASSERT_EQUAL_STRING(
         "0100000000000000000000000000000000000000000000000000000000000000",
-        result.jobs[1]->share.extranonce2);
-    TEST_ASSERT_EQUAL_UINT8(UINT8_MAX, result.jobs[0]->share.pool_id);
-    TEST_ASSERT_EQUAL_DOUBLE(256.125, result.jobs[0]->share.pool_difficulty);
-    assert_hex32("e7154b58fec3d73f1e4b8a80535df7bd7e4e0a98228be8375762ed1f77eb40de",
+        result.jobs[1]->extranonce2);
+    TEST_ASSERT_EQUAL_UINT8(UINT8_MAX, result.jobs[0]->pool_id);
+    TEST_ASSERT_EQUAL_DOUBLE(256.125, result.jobs[0]->pool_diff);
+    assert_hex32("77eb40de5762ed1f228be8377e4e0a98535df7bd1e4b8a80fec3d73fe7154b58",
                  result.jobs[0]->merkle_root);
     job_pipeline_harness_result_free(&result);
 }
 
-TEST_CASE("job allocation failure skips a send and permits the next cycle",
+TEST_CASE("coinbase allocation failure skips a send and permits the next cycle",
           "[mining][job-building][job-task]")
 {
-    (void)prepare_followup_job(1, false);
+    (void)prepare_followup_job(1, true);
     const job_pipeline_harness_event_t events[] = {
         { .type = JOB_PIPELINE_HARNESS_NOTIFY, .slot = 0 },
         { .type = JOB_PIPELINE_HARNESS_TIMEOUT },
@@ -576,13 +576,13 @@ TEST_CASE("job allocation failure skips a send and permits the next cycle",
             .allocation_failure_at = 1,
         }, events, sizeof(events) / sizeof(events[0]), &result);
 
-    TEST_ASSERT_EQUAL_UINT32(4, result.allocation_count);
+    TEST_ASSERT_EQUAL_UINT32(2, result.allocation_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.job_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.version_mask_count);
-    TEST_ASSERT_EQUAL_STRING("followup", result.jobs[0]->share.job_id);
-    TEST_ASSERT_EQUAL_STRING("00", result.jobs[0]->share.extranonce2);
-    assert_hex32("b8073c4275adaadf5c087905a32efcd090049b54da417b1f7685cdc89d891e00",
+    TEST_ASSERT_EQUAL_STRING("followup", result.jobs[0]->job_id);
+    TEST_ASSERT_EQUAL_STRING("00", result.jobs[0]->extranonce2);
+    assert_hex32("69f306a3dbbebbadb0c68650fa9a52e7e30f6081e3390d9ed6a5716f8f15704d",
                  result.jobs[0]->merkle_root);
     job_pipeline_harness_result_free(&result);
 }
@@ -605,17 +605,17 @@ TEST_CASE("zero-length extranonce waits for new work and preserves owned metadat
         }, events, sizeof(events) / sizeof(events[0]), &result);
 
     TEST_ASSERT_EQUAL_UINT32(2, result.job_count);
-    TEST_ASSERT_EQUAL_UINT32(4, result.allocation_count);
+    TEST_ASSERT_EQUAL_UINT32(0, result.allocation_count);
     TEST_ASSERT_EQUAL_UINT32(2, result.coinbase_decode_count);
     job->job_id[0] = 'x';
     for (size_t i = 0; i < result.job_count; ++i) {
-        TEST_ASSERT_EQUAL_STRING("followup", result.jobs[i]->share.job_id);
-        TEST_ASSERT_EQUAL_STRING("", result.jobs[i]->share.extranonce2);
+        TEST_ASSERT_EQUAL_STRING("followup", result.jobs[i]->job_id);
+        TEST_ASSERT_EQUAL_STRING("", result.jobs[i]->extranonce2);
         TEST_ASSERT_EQUAL_HEX32(0x20000004, result.jobs[i]->version);
         TEST_ASSERT_EQUAL_HEX32(0x1fffe000, result.jobs[i]->version_mask);
         TEST_ASSERT_EQUAL_HEX32(0x64658bd8, result.jobs[i]->ntime);
-        TEST_ASSERT_EQUAL_HEX32(0x1705dd01, result.jobs[i]->target);
-        assert_hex32("3a649bdbf2ac5b0eb5b71ca2aa5cd632c378b2e83dcd84c2d915d25176a56ace",
+        TEST_ASSERT_EQUAL_HEX32(0x1705dd01, result.jobs[i]->nbits);
+        assert_hex32("76a56aced915d2513dcd84c2c378b2e8aa5cd632b5b71ca2f2ac5b0e3a649bdb",
                      result.jobs[i]->merkle_root);
     }
     job_pipeline_harness_result_free(&result);
@@ -638,13 +638,13 @@ TEST_CASE("large coinbase job uses heap hashing and retains extranonce order",
         }, events, sizeof(events) / sizeof(events[0]), &result);
 
     TEST_ASSERT_EQUAL_UINT32(2, result.job_count);
-    TEST_ASSERT_EQUAL_UINT32(6, result.allocation_count);
+    TEST_ASSERT_EQUAL_UINT32(2, result.allocation_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
-    TEST_ASSERT_EQUAL_STRING("00", result.jobs[0]->share.extranonce2);
-    TEST_ASSERT_EQUAL_STRING("01", result.jobs[1]->share.extranonce2);
-    assert_hex32("8f15704dd6a5716fe3390d9ee30f6081fa9a52e7b0c68650dbbebbad69f306a3",
+    TEST_ASSERT_EQUAL_STRING("00", result.jobs[0]->extranonce2);
+    TEST_ASSERT_EQUAL_STRING("01", result.jobs[1]->extranonce2);
+    assert_hex32("69f306a3dbbebbadb0c68650fa9a52e7e30f6081e3390d9ed6a5716f8f15704d",
                  result.jobs[0]->merkle_root);
-    assert_hex32("81d3867d9d36bed64c0a3ecdae4792715cb93cd46f02f9dc3720d004b2850a23",
+    assert_hex32("b2850a233720d0046f02f9dc5cb93cd4ae4792714c0a3ecd9d36bed681d3867d",
                  result.jobs[1]->merkle_root);
     job_pipeline_harness_result_free(&result);
 }
@@ -667,11 +667,11 @@ TEST_CASE("Common work retries retain extranonce and the clean generation", "[mi
     TEST_ASSERT_EQUAL_UINT32(3, result.send_attempts);
     TEST_ASSERT_EQUAL_UINT32(2, result.job_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
-    TEST_ASSERT_EQUAL_STRING("00", result.jobs[0]->share.extranonce2);
-    TEST_ASSERT_EQUAL_STRING("01", result.jobs[1]->share.extranonce2);
+    TEST_ASSERT_EQUAL_STRING("00", result.jobs[0]->extranonce2);
+    TEST_ASSERT_EQUAL_STRING("01", result.jobs[1]->extranonce2);
     TEST_ASSERT_TRUE(result.jobs[0]->clean_jobs);
     TEST_ASSERT_FALSE(result.jobs[1]->clean_jobs);
-    TEST_ASSERT_TRUE(result.jobs[0]->share.work_generation == 7);
+    TEST_ASSERT_TRUE(result.jobs[0]->work_generation == 7);
     job_pipeline_harness_result_free(&result);
 }
 

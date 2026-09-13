@@ -30,7 +30,7 @@ void stratum_notify_pool_modified(GlobalState *gs, uint16_t pool_idx);
 void stratum_notify_pool_selection_changed(GlobalState *gs);
 
 // Submit a found share to the active pool (dispatches to SV1 or SV2).
-int stratum_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *active_job,
+int stratum_submit_share(GlobalState *GLOBAL_STATE, const asic_job_t *active_job,
                          uint32_t nonce, uint32_t rolled_version, uint64_t *sent_time_us);
 
 #endif /* STRATUM_TASK_H_ */

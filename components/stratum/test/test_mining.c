@@ -1,6 +1,6 @@
 #include "unity.h"
 #include "mining.h"
-#include "mining_template.h"
+#include "mining_job.h"
 #include "utils.h"
 
 #include <limits.h>
@@ -131,16 +131,16 @@ TEST_CASE("Test nonce diff checking", "[mining test_nonce][not-on-qemu]")
     notify_message.ntime = 0x646ff1a9;
     uint8_t merkle_root[32];
     hex2bin("6d0359c451434605c52a5a9ce074340be47c2c63840731f9edf1db3f26b1cdd9", merkle_root, 32);
-    mining_template_t template = {
+    asic_job_t template = {
         .version = notify_message.version,
-        .target = notify_message.target,
+        .nbits = notify_message.target,
         .ntime = notify_message.ntime,
     };
-    reverse_32bit_words(merkle_root, template.merkle_root);
+    memcpy(template.merkle_root, merkle_root, 32);
     uint8_t prev_hash[32];
     hex2bin(notify_message.prev_block_hash, prev_hash, 32);
     reverse_endianness_per_word(prev_hash);
-    reverse_32bit_words(prev_hash, template.prev_block_hash);
+    memcpy(template.prev_hash, prev_hash, 32);
 
     uint32_t nonce = 0x276E8947;
     uint32_t version_bits = 0;
@@ -188,16 +188,16 @@ TEST_CASE("Test nonce diff checking 2", "[mining test_nonce][not-on-qemu]")
     bin2hex(merkle_root_hash, 32, merkle_root, 65);
     TEST_ASSERT_EQUAL_STRING("5bdc1968499c3393873edf8e07a1c3a50a97fc3a9d1a376bbf77087dd63778eb", merkle_root);
 
-    mining_template_t template = {
+    asic_job_t template = {
         .version = notify_message.version,
-        .target = notify_message.target,
+        .nbits = notify_message.target,
         .ntime = notify_message.ntime,
     };
-    reverse_32bit_words(merkle_root_hash, template.merkle_root);
+    memcpy(template.merkle_root, merkle_root_hash, 32);
     uint8_t prev_hash[32];
     hex2bin(notify_message.prev_block_hash, prev_hash, 32);
     reverse_endianness_per_word(prev_hash);
-    reverse_32bit_words(prev_hash, template.prev_block_hash);
+    memcpy(template.prev_hash, prev_hash, 32);
 
     uint32_t nonce = 0x0a029ed1;
     uint32_t version_bits = 0;

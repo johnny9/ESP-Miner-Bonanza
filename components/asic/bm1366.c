@@ -1,3 +1,4 @@
+#include "bm_job.h"
 #include "bm1366.h"
 
 #include "crc.h"
@@ -305,7 +306,7 @@ int BM1366_set_max_baud(void)
 static uint8_t id = 0;
 
 bool BM1366_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
-                      const mining_template_t *template)
+                      const asic_job_t *template)
 {
     BM1366_job job;
     id = (id + 8) % 128;
@@ -362,7 +363,7 @@ task_result * BM1366_process_work(GlobalState * GLOBAL_STATE)
     uint8_t small_core_id = asic_result.job.id & 0x07; // BM1366 has 8 small cores, so it should be coded on 3 bits
     uint32_t hardware_version_bits = (ntohs(asic_result.job.version) << 13); // shift the 16 bit value left 13
 
-    mining_template_t template;
+    asic_job_t template;
     if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, job_id,
                                  &template)) {
         ESP_LOGW(TAG, "Invalid job nonce found, 0x%02X", job_id);
@@ -371,7 +372,6 @@ task_result * BM1366_process_work(GlobalState * GLOBAL_STATE)
     uint32_t base_version = template.version;
     uint32_t final_ntime = template.ntime;
     uint32_t rolled_version = base_version | hardware_version_bits;
-    mining_template_free(&template);
 
     result.job_id = job_id;
     result.nonce = asic_result.job.nonce;

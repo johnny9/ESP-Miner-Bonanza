@@ -44,11 +44,11 @@ static asic_event_t *process_bm1370(GlobalState *state)
 
 #define DEFINE_BM_SEND_WRAPPER(suffix)                                      \
     static bool send_bm##suffix(GlobalState *state,                         \
-                                const mining_template_t *template)          \
-    {                                                                       \
-        bm_job job;                                                         \
-        if (!bm_job_build(template, &job)) return false;                    \
-        return BM##suffix##_send_work(state, &job, template);               \
+                                const asic_job_t *job)                     \
+    {                                                                      \
+        bm_job packet;                                                     \
+        if (!bm_job_build_from_asic_job(job, &packet)) return false;         \
+        return BM##suffix##_send_work(state, &packet, job);                 \
     }
 
 DEFINE_BM_SEND_WRAPPER(1397)
@@ -75,7 +75,7 @@ static const asic_driver_t DRIVERS[] = {
             .init = BM1373_init,
             .process_work = process_bm1373,
             .set_max_baud = BM1373_set_max_baud,
-            .send_work = send_bm1373,
+            .send_job = send_bm1373,
             .set_version_mask = BM1373_set_version_mask,
             .set_hash_frequency = BM1373_send_hash_frequency,
             .set_nonce_space = BM1373_set_nonce_space,
@@ -90,7 +90,7 @@ static const asic_driver_t DRIVERS[] = {
             .init = BM1397_init,
             .process_work = process_bm1397,
             .set_max_baud = BM1397_set_max_baud,
-            .send_work = send_bm1397,
+            .send_job = send_bm1397,
             .set_version_mask = BM1397_set_version_mask,
             .set_hash_frequency = BM1397_send_hash_frequency,
             .read_registers = BM1397_read_registers,
@@ -104,7 +104,7 @@ static const asic_driver_t DRIVERS[] = {
             .init = BM1366_init,
             .process_work = process_bm1366,
             .set_max_baud = BM1366_set_max_baud,
-            .send_work = send_bm1366,
+            .send_job = send_bm1366,
             .set_version_mask = BM1366_set_version_mask,
             .set_hash_frequency = BM1366_send_hash_frequency,
             .set_nonce_space = BM1366_set_nonce_space,
@@ -119,7 +119,7 @@ static const asic_driver_t DRIVERS[] = {
             .init = BM1368_init,
             .process_work = process_bm1368,
             .set_max_baud = BM1368_set_max_baud,
-            .send_work = send_bm1368,
+            .send_job = send_bm1368,
             .set_version_mask = BM1368_set_version_mask,
             .set_hash_frequency = BM1368_send_hash_frequency,
             .set_nonce_space = BM1368_set_nonce_space,
@@ -134,7 +134,7 @@ static const asic_driver_t DRIVERS[] = {
             .init = BM1370_init,
             .process_work = process_bm1370,
             .set_max_baud = BM1370_set_max_baud,
-            .send_work = send_bm1370,
+            .send_job = send_bm1370,
             .set_version_mask = BM1370_set_version_mask,
             .set_hash_frequency = BM1370_send_hash_frequency,
             .set_nonce_space = BM1370_set_nonce_space,
@@ -149,7 +149,7 @@ static const asic_driver_t DRIVERS[] = {
             .init = BZM_init,
             .process_work = BZM_process_work,
             .set_max_baud = BZM_set_max_baud,
-            .send_work = BZM_send_work,
+            .send_job = BZM_send_work,
             .clear_work = BZM_clear_work,
             .job_frequency_ms = BZM_job_frequency_ms,
             .hashrate_counter_snapshot = BZM_hashrate_counter_snapshot,

@@ -12,7 +12,7 @@ typedef struct {
     const char *username;
     const char *job_id;
     const char *extranonce2;
-    uint8_t extranonce2_bin[MINING_MAX_EXTRANONCE2_SIZE];
+    uint8_t extranonce2_bin[ASIC_JOB_EXTRANONCE2_SIZE];
     uint8_t extranonce2_len;
     uint32_t numeric_job_id;
     uint32_t nonce;
@@ -23,7 +23,7 @@ typedef struct {
     uint32_t version_bits;
     double pool_difficulty;
     uint32_t target;
-    mining_protocol_t protocol;
+    mining_job_source_t protocol;
     uint8_t pool_id;
     uint64_t work_generation;
     uint32_t job_version;

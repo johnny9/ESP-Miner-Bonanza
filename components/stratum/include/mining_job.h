@@ -1,5 +1,5 @@
-#ifndef MINING_TEMPLATE_H_
-#define MINING_TEMPLATE_H_
+#ifndef MINING_JOB_H_
+#define MINING_JOB_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -22,16 +22,11 @@ typedef struct mining_notify
     bool clean_jobs;
 } mining_notify;
 
-bool mining_template_build_sv1(const mining_notify *notification,
+bool mining_build_asic_job_sv1(const mining_notify *notification,
                                const char *extranonce_prefix,
                                uint32_t extranonce2_len,
                                uint64_t extranonce2_counter,
                                uint32_t version_mask, double difficulty,
-                               mining_template_t *template);
+                               asic_job_t *template);
 
-bool mining_template_build_miner_job(const miner_job_t *job,
-                                      uint64_t extranonce2_counter,
-                                      uint32_t version,
-                                      mining_template_t *template);
-
-#endif // MINING_TEMPLATE_H_
+#endif // MINING_JOB_H_

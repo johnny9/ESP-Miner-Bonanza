@@ -19,8 +19,6 @@
 #include "stratum_protocol.h"
 #include "system.h"
 
-typedef struct bm_job bm_job;
-
 typedef struct PoolConfig
 {
     char * url;

@@ -7,7 +7,6 @@
 static void clear_entry(asic_job_store_entry_t *entry)
 {
     if (entry == NULL) return;
-    if (entry->valid) mining_template_free(&entry->template);
     memset(entry, 0, sizeof(*entry));
 }
 
@@ -49,13 +48,13 @@ void asic_job_store_destroy(asic_job_store_t *store)
 
 static bool store_entry(asic_job_store_t *store, uint8_t slot,
                         asic_work_handle_t handle,
-                        const mining_template_t *template)
+                        const asic_job_t *template)
 {
     asic_job_store_entry_t replacement = {
         .valid = true,
         .handle = handle,
     };
-    if (!mining_template_clone(template, &replacement.template)) return false;
+    replacement.template = *template;
 
     clear_entry(&store->entries[slot]);
     store->entries[slot] = replacement;
@@ -63,7 +62,7 @@ static bool store_entry(asic_job_store_t *store, uint8_t slot,
 }
 
 bool asic_job_store_store_slot(asic_job_store_t *store, uint8_t slot,
-                               const mining_template_t *template,
+                               const asic_job_t *template,
                                asic_work_handle_t *handle)
 {
     if (store == NULL || store->entries == NULL ||
@@ -79,7 +78,7 @@ bool asic_job_store_store_slot(asic_job_store_t *store, uint8_t slot,
 }
 
 bool asic_job_store_store_generated(asic_job_store_t *store,
-                                    const mining_template_t *template,
+                                    const asic_job_t *template,
                                     asic_work_handle_t *handle)
 {
     if (store == NULL || store->entries == NULL || store->capacity == 0 ||
@@ -98,7 +97,7 @@ bool asic_job_store_store_generated(asic_job_store_t *store,
 
 bool asic_job_store_snapshot(asic_job_store_t *store,
                              asic_work_handle_t handle,
-                             mining_template_t *snapshot)
+                             asic_job_t *snapshot)
 {
     if (store == NULL || store->entries == NULL || snapshot == NULL ||
         handle == ASIC_WORK_HANDLE_INVALID) {
@@ -110,8 +109,8 @@ bool asic_job_store_snapshot(asic_job_store_t *store,
     memset(snapshot, 0, sizeof(*snapshot));
     pthread_mutex_lock(&store->lock);
     asic_job_store_entry_t *entry = &store->entries[slot];
-    bool found = entry->valid && entry->handle == handle &&
-                 mining_template_clone(&entry->template, snapshot);
+    bool found = entry->valid && entry->handle == handle;
+    if (found) *snapshot = entry->template;
     pthread_mutex_unlock(&store->lock);
     return found;
 }

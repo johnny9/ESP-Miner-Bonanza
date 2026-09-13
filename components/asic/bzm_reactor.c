@@ -264,7 +264,7 @@ bool bzm_reactor_clear_work(bzm_reactor_t *reactor)
 }
 
 bzm_assign_status_t bzm_reactor_assign(bzm_reactor_t *reactor,
-                                       const mining_template_t *template,
+                                       const asic_job_t *template,
                                        bzm_work_t *assigned_work)
 {
     if (reactor == NULL || template == NULL || reactor->job_store == NULL) {
@@ -365,7 +365,7 @@ bzm_assign_status_t bzm_reactor_assign(bzm_reactor_t *reactor,
 }
 
 bzm_assign_status_t bzm_reactor_dispatch(bzm_reactor_t *reactor,
-                                         const mining_template_t *template,
+                                         const asic_job_t *template,
                                          size_t *assigned_count)
 {
     if (assigned_count != NULL) *assigned_count = 0;

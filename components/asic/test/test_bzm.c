@@ -177,29 +177,24 @@ static void delete_store(asic_job_store_t *store)
     free(store);
 }
 
-static mining_template_t bzm_template(const char *job_id, bool clean_jobs)
+static asic_job_t bzm_template(const char *job_id, bool clean_jobs)
 {
-    mining_template_t template = {
+    asic_job_t template = {
         .version = 0x20000004,
         .version_mask = 0x00006000,
         .ntime = 0x65010203,
-        .target = 0x1705dd01,
+        .nbits = 0x1705dd01,
         .starting_nonce = 0x10203040,
         .clean_jobs = clean_jobs,
-        .share = {
-            .protocol = MINING_PROTOCOL_SV2_STANDARD,
-            .numeric_job_id = 42,
-            .pool_difficulty = 1,
-        },
+        .source_type = JOB_TYPE_SV2_STANDARD,
+        .pool_diff = 1,
     };
     for (size_t i = 0; i < 32; ++i) {
-        template.prev_block_hash[i] = i;
-        template.merkle_root[i] = 0x20 + i;
+        template.prev_hash[i] = 28 - (i / 4) * 4 + i % 4;
+        template.merkle_root[i] = 0x20 + 28 - (i / 4) * 4 + i % 4;
     }
-    template.share.job_id = strdup(job_id);
-    template.share.extranonce2 = strdup("");
-    TEST_ASSERT_NOT_NULL(template.share.job_id);
-    TEST_ASSERT_NOT_NULL(template.share.extranonce2);
+    strcpy(template.job_id, job_id);
+    strcpy(template.extranonce2, "");
     return template;
 }
 
@@ -305,7 +300,7 @@ static bzm_reactor_t *new_reactor(asic_job_store_t *store,
 TEST_CASE("BZM work builder derives four family-private midstates",
           "[asic][bzm][work][qemu-integration]")
 {
-    mining_template_t template = bzm_template("work", true);
+    asic_job_t template = bzm_template("work", true);
     template.version_mask = 0x1fffe000;
     asic_work_t source = {
         .handle = 0x1234,
@@ -322,12 +317,12 @@ TEST_CASE("BZM work builder derives four family-private midstates",
     TEST_ASSERT_EQUAL_HEX32(0x3fff0004, work.versions[2]);
     TEST_ASSERT_EQUAL_HEX32(0x3fffe004, work.versions[3]);
     TEST_ASSERT_EQUAL_HEX32(template.ntime, work.start_ntime);
-    TEST_ASSERT_EQUAL_HEX32(template.target, work.target);
+    TEST_ASSERT_EQUAL_HEX32(template.nbits, work.target);
     TEST_ASSERT_EQUAL_HEX32(template.starting_nonce, work.starting_nonce);
     TEST_ASSERT_EQUAL_HEX32(UINT32_MAX, work.end_nonce);
 
     bm_job bm;
-    TEST_ASSERT_TRUE(bm_job_build(&template, &bm));
+    TEST_ASSERT_TRUE(bm_job_build_from_asic_job(&template, &bm));
     for (size_t word = 0; word < 8; ++word) {
         const uint8_t *big_endian_word = bm.midstate + (7 - word) * 4;
         const uint8_t expected_birds_word[4] = {
@@ -337,7 +332,7 @@ TEST_CASE("BZM work builder derives four family-private midstates",
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected_birds_word,
                                       work.midstates[0] + word * 4, 4);
     }
-    mining_template_free(&template);
+
 }
 
 TEST_CASE("BZM keeps enhanced sequence identity when version rolling is unavailable",
@@ -346,7 +341,7 @@ TEST_CASE("BZM keeps enhanced sequence identity when version rolling is unavaila
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    mining_template_t template = bzm_template("no-version-mask", false);
+    asic_job_t template = bzm_template("no-version-mask", false);
     template.version_mask = 0;
     for (unsigned assignment = 0; assignment < 2; ++assignment) {
         bzm_work_t work;
@@ -364,7 +359,7 @@ TEST_CASE("BZM keeps enhanced sequence identity when version rolling is unavaila
             TEST_ASSERT_EQUAL_HEX32(0, event.data.share.version_bits);
         }
     }
-    mining_template_free(&template);
+
     free(transport);
     free(reactor);
     delete_store(store);
@@ -556,7 +551,7 @@ TEST_CASE("BZM transport partitions an engine nonce range across ASICs",
 TEST_CASE("BZM transport programs ordered enhanced work and flush jobs",
           "[asic][bzm][transport][program][qemu-integration]")
 {
-    mining_template_t template = bzm_template("transport", false);
+    asic_job_t template = bzm_template("transport", false);
     asic_work_t source = {
         .handle = 0x1234,
         .template = &template,
@@ -646,7 +641,6 @@ TEST_CASE("BZM transport programs ordered enhanced work and flush jobs",
     TEST_ASSERT_EQUAL_UINT16(0, capture.writes[0].engine_id);
     TEST_ASSERT_EQUAL_UINT16(10, capture.writes[12].engine_id);
 
-    mining_template_free(&template);
 }
 
 TEST_CASE("BZM reactor dispatches one stored generation to every engine",
@@ -655,7 +649,7 @@ TEST_CASE("BZM reactor dispatches one stored generation to every engine",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 4);
-    mining_template_t template = bzm_template("dispatch", false);
+    asic_job_t template = bzm_template("dispatch", false);
 
     size_t assigned = 0;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
@@ -688,11 +682,10 @@ TEST_CASE("BZM reactor dispatches one stored generation to every engine",
                                 transport->work[i].end_nonce);
     }
 
-    mining_template_t snapshot;
+    asic_job_t snapshot;
     TEST_ASSERT_TRUE(asic_job_store_snapshot(store, shared, &snapshot));
-    TEST_ASSERT_EQUAL_STRING("dispatch", snapshot.share.job_id);
-    mining_template_free(&snapshot);
-    mining_template_free(&template);
+    TEST_ASSERT_EQUAL_STRING("dispatch", snapshot.job_id);
+
     free(transport);
     free(reactor);
     delete_store(store);
@@ -705,7 +698,7 @@ TEST_CASE("BZM full dispatch covers 236 engines in balanced write order",
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(
         store, transport, BZM_ENGINES_PER_ASIC);
-    mining_template_t template = bzm_template("full-topology", false);
+    asic_job_t template = bzm_template("full-topology", false);
     bool seen[BZM_ENGINE_GRID_COUNT] = {false};
 
     size_t assigned = 0;
@@ -746,7 +739,6 @@ TEST_CASE("BZM full dispatch covers 236 engines in balanced write order",
     TEST_ASSERT_FALSE(seen[5 * BZM_ENGINE_ROWS + 19]);
     TEST_ASSERT_FALSE(seen[11 * BZM_ENGINE_ROWS + 19]);
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -768,7 +760,7 @@ TEST_CASE("BZM incremental assignments retain compact IDs in balanced order",
     };
     TEST_ASSERT_TRUE(bzm_reactor_init(reactor, store, &config,
                                       &SIMULATED_OPS, transport));
-    mining_template_t template = bzm_template("incremental", false);
+    asic_job_t template = bzm_template("incremental", false);
 
     for (uint16_t schedule_index = 0; schedule_index < 4;
          ++schedule_index) {
@@ -798,7 +790,6 @@ TEST_CASE("BZM incremental assignments retain compact IDs in balanced order",
     TEST_ASSERT_TRUE(bzm_reactor_map_result(reactor, &raw, &event));
     TEST_ASSERT_EQUAL_UINT16(10, event.data.share.engine_id);
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -811,9 +802,9 @@ TEST_CASE("BZM assigns independent templates and retains one prior job per engin
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
 
-    mining_template_t engine0_first = bzm_template("engine0-first", false);
-    mining_template_t engine1_first = bzm_template("engine1-first", false);
-    mining_template_t engine0_next = bzm_template("engine0-next", false);
+    asic_job_t engine0_first = bzm_template("engine0-first", false);
+    asic_job_t engine1_first = bzm_template("engine1-first", false);
+    asic_job_t engine0_next = bzm_template("engine0-next", false);
     engine0_first.ntime = 100;
     engine1_first.ntime = 200;
     engine0_next.ntime = 300;
@@ -860,9 +851,6 @@ TEST_CASE("BZM assigns independent templates and retains one prior job per engin
         (uint32_t)event.data.share.work_handle);
     TEST_ASSERT_EQUAL_HEX32(300, event.data.share.final_ntime);
 
-    mining_template_free(&engine0_next);
-    mining_template_free(&engine1_first);
-    mining_template_free(&engine0_first);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -875,7 +863,7 @@ TEST_CASE("BZM rejects delayed assignments after their bounded store slot is reu
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(
         store, transport, BZM_ENGINES_PER_ASIC);
-    mining_template_t template = bzm_template("bounded-history", false);
+    asic_job_t template = bzm_template("bounded-history", false);
 
     for (size_t index = 0; index < BZM_ENGINES_PER_ASIC; ++index) {
         TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
@@ -905,7 +893,6 @@ TEST_CASE("BZM rejects delayed assignments after their bounded store slot is reu
     TEST_ASSERT_FALSE(bzm_reactor_map_result(reactor, &stale, &event));
     TEST_ASSERT_FALSE(asic_job_store_contains(store, first.source.handle));
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -917,7 +904,7 @@ TEST_CASE("BZM reactor resolves microstate version and timestamp rolling",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 21);
-    mining_template_t template = bzm_template("result", false);
+    asic_job_t template = bzm_template("result", false);
     template.version_mask = 0x1fffe000;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
@@ -969,7 +956,6 @@ TEST_CASE("BZM reactor resolves microstate version and timestamp rolling",
     raw.time = 17;
     TEST_ASSERT_FALSE(bzm_reactor_map_result(reactor, &raw, &event));
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -981,8 +967,8 @@ TEST_CASE("BZM reactor retains both enhanced sequence generations",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    mining_template_t first = bzm_template("first", false);
-    mining_template_t second = bzm_template("second", false);
+    asic_job_t first = bzm_template("first", false);
+    asic_job_t second = bzm_template("second", false);
     first.ntime = 100;
     second.ntime = 200;
 
@@ -1018,8 +1004,6 @@ TEST_CASE("BZM reactor retains both enhanced sequence generations",
                       bzm_reactor_dispatch(reactor, &second, NULL));
     TEST_ASSERT_TRUE(bzm_reactor_is_flush_pending(reactor));
 
-    mining_template_free(&second);
-    mining_template_free(&first);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1028,17 +1012,17 @@ TEST_CASE("BZM reactor retains both enhanced sequence generations",
 TEST_CASE("BZM 1002 nonce gap reproduces captured Stage 7 hardware proof",
           "[asic][bzm][reactor][result][hardware-vector][qemu-integration]")
 {
-    mining_template_t template = {
+    asic_job_t template = {
         .version = 0x20000000,
         .version_mask = 0x1fffe000,
         .ntime = 0x6a5dcd19,
-        .target = 0x1702369d,
+        .nbits = 0x1702369d,
     };
     TEST_ASSERT_EQUAL_UINT32(32, hex2bin(
-        "0000000000000000208701005e2b873f7a0a2c50613cf7d5ae390721a3617ee3",
-        template.prev_block_hash, sizeof(template.prev_block_hash)));
+        "a3617ee3ae390721613cf7d57a0a2c505e2b873f208701000000000000000000",
+        template.prev_hash, sizeof(template.prev_hash)));
     TEST_ASSERT_EQUAL_UINT32(32, hex2bin(
-        "6c96a113f1dba64f8d6f1b9767e5770801955e00f112cfeb26a07d3224f9e611",
+        "24f9e61126a07d32f112cfeb01955e0067e577088d6f1b97f1dba64f6c96a113",
         template.merkle_root, sizeof(template.merkle_root)));
 
     const uint32_t raw_nonce = 0x2d6dac84;
@@ -1072,7 +1056,7 @@ TEST_CASE("BZM failed flush remains a barrier until transport recovers",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    mining_template_t template = bzm_template("flush-error", false);
+    asic_job_t template = bzm_template("flush-error", false);
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
 
@@ -1096,7 +1080,6 @@ TEST_CASE("BZM failed flush remains a barrier until transport recovers",
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1108,7 +1091,7 @@ TEST_CASE("BZM clean-job barrier rejects stale results and invalidates handles",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    mining_template_t template = bzm_template("old", false);
+    asic_job_t template = bzm_template("old", false);
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
     asic_work_handle_t old_handle = transport->work[0].source.handle;
@@ -1125,10 +1108,9 @@ TEST_CASE("BZM clean-job barrier rejects stale results and invalidates handles",
     TEST_ASSERT_TRUE(bzm_reactor_results_quarantined(reactor));
     TEST_ASSERT_EQUAL_UINT32(1, transport->flush_count);
     TEST_ASSERT_FALSE(bzm_reactor_map_result(reactor, &old_result, &event));
-    mining_template_t snapshot;
+    asic_job_t snapshot;
     TEST_ASSERT_FALSE(asic_job_store_snapshot(store, old_handle, &snapshot));
 
-    mining_template_free(&template);
     template = bzm_template("new", false);
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
@@ -1138,7 +1120,6 @@ TEST_CASE("BZM clean-job barrier rejects stale results and invalidates handles",
     TEST_ASSERT_NOT_EQUAL((uint32_t)old_handle, (uint32_t)new_handle);
     TEST_ASSERT_FALSE(asic_job_store_snapshot(store, old_handle, &snapshot));
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1150,7 +1131,7 @@ TEST_CASE("BZM idle clean-job barrier does not disturb the hardware link",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    mining_template_t template = bzm_template("queued-only", false);
+    asic_job_t template = bzm_template("queued-only", false);
     asic_work_handle_t handle = ASIC_WORK_HANDLE_INVALID;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template,
                                                      &handle));
@@ -1159,10 +1140,9 @@ TEST_CASE("BZM idle clean-job barrier does not disturb the hardware link",
     TEST_ASSERT_EQUAL_UINT32(0, transport->flush_count);
     TEST_ASSERT_FALSE(bzm_reactor_is_flush_pending(reactor));
     TEST_ASSERT_TRUE(bzm_reactor_results_quarantined(reactor));
-    mining_template_t snapshot;
+    asic_job_t snapshot;
     TEST_ASSERT_FALSE(asic_job_store_snapshot(store, handle, &snapshot));
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1174,7 +1154,7 @@ TEST_CASE("BZM quarantines clean-job results through the full engine rotation",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    mining_template_t template = bzm_template("replacement", false);
+    asic_job_t template = bzm_template("replacement", false);
 
     TEST_ASSERT_TRUE(bzm_reactor_clear_work(reactor));
     TEST_ASSERT_TRUE(bzm_reactor_results_quarantined(reactor));
@@ -1185,7 +1165,6 @@ TEST_CASE("BZM quarantines clean-job results through the full engine rotation",
                       bzm_reactor_assign(reactor, &template, NULL));
     TEST_ASSERT_FALSE(bzm_reactor_results_quarantined(reactor));
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1204,7 +1183,7 @@ TEST_CASE("BZM repeated clean refreshes preserve frequency replacement proof",
         simulated_transport_t *transport = new_transport();
         bzm_reactor_t *reactor = new_reactor(
             store, transport, BZM_ENGINES_PER_ASIC);
-        mining_template_t template = bzm_template("refresh-proof", false);
+        asic_job_t template = bzm_template("refresh-proof", false);
         bzm_running_stats_t baseline = {0};
         bzm_running_stats_t current = {
             /* Valid results can precede the first clean replacement, as in
@@ -1251,7 +1230,7 @@ TEST_CASE("BZM repeated clean refreshes preserve frequency replacement proof",
         TEST_ASSERT_GREATER_THAN_UINT32(0, current.dispatch_batches);
         TEST_ASSERT_FALSE(bzm_reactor_results_quarantined(reactor));
         TEST_ASSERT_EQUAL(BZM_RUNNING_EVIDENCE_GOOD, evidence.status);
-        mining_template_free(&template);
+
         free(transport);
         free(reactor);
         delete_store(store);
@@ -1264,7 +1243,7 @@ TEST_CASE("BZM clean jobs retire delayed results without resetting engine order"
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    mining_template_t template = bzm_template("old", false);
+    asic_job_t template = bzm_template("old", false);
     bzm_work_t old_work, new_work;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK, bzm_reactor_assign(reactor, &template, &old_work));
     bzm_raw_result_t old = {
@@ -1302,7 +1281,7 @@ TEST_CASE("BZM clean jobs retire delayed results without resetting engine order"
     fresh.sequence_id = 40 << 2; // Never issued: remains a mapping error.
     TEST_ASSERT_FALSE(bzm_reactor_map_result(reactor, &fresh, &event));
     TEST_ASSERT_FALSE(bzm_reactor_result_is_stale(reactor, &fresh));
-    mining_template_free(&template);
+
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1314,7 +1293,7 @@ TEST_CASE("BZM incremental sequence reuse requires a hardware barrier",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    mining_template_t template = bzm_template("wrap", false);
+    asic_job_t template = bzm_template("wrap", false);
     for (unsigned rotation = 0; rotation < 63; ++rotation) {
         TEST_ASSERT_TRUE(bzm_reactor_invalidate_work(reactor));
         for (unsigned engine = 0; engine < 2; ++engine) {
@@ -1342,7 +1321,7 @@ TEST_CASE("BZM incremental sequence reuse requires a hardware barrier",
         TEST_ASSERT_EQUAL_UINT8(0, work.logical_sequence);
         TEST_ASSERT_EQUAL(engine == 0, bzm_reactor_results_quarantined(reactor));
     }
-    mining_template_free(&template);
+
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1356,12 +1335,12 @@ TEST_CASE("BZM sequence wrap forces a flush before identity reuse",
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
 
     for (size_t i = 0; i < 2; ++i) {
-        mining_template_t template = bzm_template("wrap", false);
+        asic_job_t template = bzm_template("wrap", false);
         TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                           bzm_reactor_dispatch(reactor, &template, NULL));
-        mining_template_free(&template);
+
     }
-    mining_template_t template = bzm_template("wrapped", false);
+    asic_job_t template = bzm_template("wrapped", false);
     TEST_ASSERT_EQUAL(BZM_ASSIGN_FLUSH_REQUIRED,
                       bzm_reactor_dispatch(reactor, &template, NULL));
     TEST_ASSERT_TRUE(bzm_reactor_is_flush_pending(reactor));
@@ -1381,7 +1360,6 @@ TEST_CASE("BZM sequence wrap forces a flush before identity reuse",
     TEST_ASSERT_EQUAL_UINT8(0,
         transport->work[transport->write_count - 1].logical_sequence);
 
-    mining_template_free(&template);
     free(transport);
     free(reactor);
     delete_store(store);
@@ -1394,14 +1372,14 @@ TEST_CASE("BZM partial dispatch is flushed and never publishes a handle",
     simulated_transport_t *transport = new_transport();
     transport->fail_after = 1;
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    mining_template_t template = bzm_template("partial", false);
+    asic_job_t template = bzm_template("partial", false);
     size_t assigned;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_TRANSPORT_ERROR,
                       bzm_reactor_dispatch(reactor, &template, &assigned));
     TEST_ASSERT_EQUAL_UINT32(0, assigned);
     TEST_ASSERT_EQUAL_UINT32(1, transport->flush_count);
     TEST_ASSERT_FALSE(bzm_reactor_is_flush_pending(reactor));
-    mining_template_t snapshot;
+    asic_job_t snapshot;
     TEST_ASSERT_FALSE(asic_job_store_snapshot(
         store, transport->work[0].source.handle, &snapshot));
     free(transport);
@@ -1448,7 +1426,6 @@ TEST_CASE("BZM partial dispatch is flushed and never publishes a handle",
     TEST_ASSERT_FALSE(bzm_reactor_init(invalid, store, &bad,
                                        &SIMULATED_OPS, transport2));
 
-    mining_template_free(&template);
     free(transport2);
     free(invalid);
     delete_store(store);

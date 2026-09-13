@@ -60,12 +60,12 @@ const bm1397_harness_packet_t *bm1397_harness_packet(size_t index)
     return &packets[index];
 }
 
-bool bm1397_harness_snapshot(uint8_t job_id, mining_template_t *work)
+bool bm1397_harness_snapshot(uint8_t job_id, asic_job_t *work)
 {
     return asic_job_store_snapshot(&fixture_state.asic_job_store, job_id, work);
 }
 
-void bm1397_harness_install_job(uint8_t job_id, const mining_template_t *job)
+void bm1397_harness_install_job(uint8_t job_id, const asic_job_t *job)
 {
     TEST_ASSERT_TRUE(asic_job_store_store_slot(&fixture_state.asic_job_store, job_id, job, NULL));
 }

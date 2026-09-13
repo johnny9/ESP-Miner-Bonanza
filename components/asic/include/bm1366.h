@@ -2,8 +2,9 @@
 #define BM1366_H_
 
 #include "asic_common.h"
-#include "bm_job.h"
-#include "mining.h"
+#include "asic_job.h"
+
+typedef struct bm_job bm_job;
 
 #define BM1366_SERIALTX_DEBUG false
 #define BM1366_SERIALRX_DEBUG false
@@ -24,7 +25,7 @@ typedef struct __attribute__((__packed__))
 
 uint8_t BM1366_init(GlobalState *GLOBAL_STATE);
 bool BM1366_send_work(GlobalState *GLOBAL_STATE, const bm_job *job,
-                      const mining_template_t *template);
+                      const asic_job_t *template);
 void BM1366_set_version_mask(uint32_t version_mask);
 int BM1366_set_max_baud(void);
 float BM1366_send_hash_frequency(float frequency);

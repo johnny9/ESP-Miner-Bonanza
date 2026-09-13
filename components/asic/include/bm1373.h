@@ -2,7 +2,7 @@
 #define BM1373_H_
 
 #include "asic_common.h"
-#include "mining.h"
+#include "asic_job.h"
 
 typedef struct GlobalState GlobalState;
 typedef struct bm_job bm_job;
@@ -26,7 +26,7 @@ typedef struct __attribute__((__packed__))
 
 uint8_t BM1373_init(GlobalState * GLOBAL_STATE);
 bool BM1373_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
-                       const mining_template_t *template);
+                       const asic_job_t *template);
 void BM1373_set_version_mask(uint32_t version_mask);
 int BM1373_set_max_baud(void);
 float BM1373_send_hash_frequency(float frequency);

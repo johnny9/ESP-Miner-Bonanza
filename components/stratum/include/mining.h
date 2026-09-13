@@ -5,43 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef enum {
-    MINING_PROTOCOL_SV1 = 0,
-    MINING_PROTOCOL_SV2_STANDARD,
-    MINING_PROTOCOL_SV2_EXTENDED,
-} mining_protocol_t;
+#include "asic_job.h"
+#include "miner_job.h"
 
-#define MINING_MAX_EXTRANONCE2_SIZE 32
-
-typedef struct {
-    mining_protocol_t protocol;
-    uint8_t pool_id;
-    uint64_t work_generation;
-    uint32_t job_version;
-    char *job_id;
-    char *extranonce2;
-    uint32_t numeric_job_id;
-    uint8_t extranonce2_bin[MINING_MAX_EXTRANONCE2_SIZE];
-    uint8_t extranonce2_len;
-    double pool_difficulty;
-} mining_share_metadata_t;
-
-typedef struct {
-    uint32_t version;
-    uint32_t version_mask;
-    // Stored in the same word order used by Bitcoin's 80-byte header helpers.
-    uint8_t prev_block_hash[32];
-    uint8_t merkle_root[32];
-    uint32_t ntime;
-    uint32_t target;
-    uint32_t starting_nonce;
-    bool clean_jobs;
-    mining_share_metadata_t share;
-} mining_template_t;
-
-void mining_template_free(mining_template_t *template);
-bool mining_template_clone(const mining_template_t *source,
-                           mining_template_t *destination);
+/* Complete owned work; destination is unchanged on failure.
+ * A zero version selects the source version, matching the upstream contract. */
+bool mining_build_asic_job(const miner_job_t *source, uint64_t extranonce2,
+                           uint32_t version, asic_job_t *destination);
 
 void calculate_coinbase_tx_hash(const char *coinbase_1, const char *coinbase_2,
                                 const char *extranonce, const char *extranonce_2, uint8_t dest[32]);
@@ -59,7 +29,7 @@ void calculate_merkle_root_hash(const uint8_t coinbase_tx_hash[32], const uint8_
 // and SV2 (target). Returns a double to preserve fractional difficulty.
 double hash_to_pdiff(const uint8_t hash[32]);
 
-double mining_test_nonce_value(const mining_template_t *template,
+double mining_test_nonce_value(const asic_job_t *template,
                                uint32_t nonce, uint32_t final_ntime,
                                uint32_t final_version);
 

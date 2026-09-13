@@ -167,7 +167,6 @@ static bzm_driver_state_t *BZM_STATE;
 #define RESULT_DEDUP (*BZM_STATE).result_dedup
 #define RESULT_DEDUP_NEXT (*BZM_STATE).result_dedup_next
 
-
 enum
 {
     BZM_PARSER_SETTLE_WINDOW_MS = 100,
@@ -406,7 +405,7 @@ uint8_t BZM_init(GlobalState * state)
     return detected_asics;
 }
 
-bool BZM_send_work(GlobalState * state, const mining_template_t * template)
+bool BZM_send_work(GlobalState * state, const asic_job_t * template)
 {
     (void) state;
     if (!INITIALIZED || template == NULL) {
@@ -421,7 +420,6 @@ bool BZM_send_work(GlobalState * state, const mining_template_t * template)
         if (!running || !bzm_dispatch_gate_is_authorized(&gate))
             return false;
     }
-
 
     pthread_mutex_lock(&REACTOR_LOCK);
     if (template->clean_jobs) {

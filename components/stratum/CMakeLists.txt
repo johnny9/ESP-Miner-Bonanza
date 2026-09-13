@@ -2,7 +2,7 @@ idf_component_register(
 SRCS
     "utils.c"
     "mining.c"
-    "mining_template.c"
+    "mining_job.c"
     "stratum_protocol.c"
     "sv1_protocol.c"
     "sv1_client.c"
@@ -16,6 +16,7 @@ INCLUDE_DIRS
     "include"
 
 REQUIRES
+    "mining_job"
     "mbedtls"
     "app_update"
     "esp_timer"

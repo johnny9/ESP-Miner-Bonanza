@@ -70,21 +70,21 @@ static void stratum_v1_reset_uid(GlobalState *GLOBAL_STATE)
     pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
 }
 
-int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *active_job,
+int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const asic_job_t *active_job,
                             uint32_t nonce, uint32_t rolled_version, uint64_t *sent_time_us)
 {
     if (!GLOBAL_STATE || !active_job) return -1;
     pthread_mutex_lock(&GLOBAL_STATE->transport_mutex);
     esp_transport_handle_t transport = GLOBAL_STATE->transport;
     if (transport == NULL || s_v1_conn == NULL ||
-        active_job->share.work_generation != GLOBAL_STATE->stratum_work_generation ||
-        s_v1_conn->pool_idx != active_job->share.pool_id) {
+        active_job->work_generation != GLOBAL_STATE->stratum_work_generation ||
+        s_v1_conn->pool_idx != active_job->pool_id) {
         pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
         return -1;
     }
 
     uint32_t mask = s_v1_conn->version_mask;
-    if (((rolled_version ^ active_job->share.job_version) & ~mask) != 0) {
+    if (((rolled_version ^ active_job->job_version) & ~mask) != 0) {
         pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
         return -1; // A new connection mask can invalidate outstanding results.
     }
@@ -94,8 +94,8 @@ int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *
         transport,
         uid,
         s_v1_conn->user,
-        active_job->share.job_id,
-        active_job->share.extranonce2,
+        active_job->job_id,
+        active_job->extranonce2,
         active_job->ntime,
         nonce,
         s_v1_conn->version_rolling_enabled ? &version_bits : NULL,

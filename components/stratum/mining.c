@@ -8,35 +8,6 @@
 
 static const char *TAG = "mining";
 
-void mining_template_free(mining_template_t *template)
-{
-    if (template == NULL) return;
-    free(template->share.job_id);
-    free(template->share.extranonce2);
-    memset(template, 0, sizeof(*template));
-}
-
-bool mining_template_clone(const mining_template_t *source,
-                           mining_template_t *destination)
-{
-    if (source == NULL || destination == NULL) return false;
-
-    memset(destination, 0, sizeof(*destination));
-    *destination = *source;
-    destination->share.job_id = source->share.job_id
-        ? strdup(source->share.job_id) : NULL;
-    destination->share.extranonce2 = source->share.extranonce2
-        ? strdup(source->share.extranonce2) : NULL;
-    if ((source->share.job_id != NULL && destination->share.job_id == NULL) ||
-        (source->share.extranonce2 != NULL &&
-         destination->share.extranonce2 == NULL)) {
-        mining_template_free(destination);
-        return false;
-    }
-    return true;
-}
-
-
 bool calculate_coinbase_tx_hash_bin(const uint8_t *prefix, size_t prefix_len,
                                     const uint8_t *extranonce_prefix, size_t ep_len,
                                     const uint8_t *extranonce_2, size_t e2_len,
@@ -114,20 +85,16 @@ double hash_to_pdiff(const uint8_t hash[32])
 
 ///////cgminer nonce testing
 /* testing a nonce and return the diff - 0 means invalid */
-double mining_test_nonce_value(const mining_template_t *template,
+double mining_test_nonce_value(const asic_job_t *template,
                                uint32_t nonce, uint32_t final_ntime,
                                uint32_t final_version)
 {
     if (template == NULL) return 0;
     uint8_t header[80];
 
-    // copy data from job to header
-    memcpy(header, &final_version, 4);
-    reverse_32bit_words(template->prev_block_hash, header + 4);
-    reverse_32bit_words(template->merkle_root, header + 36);
-    memcpy(header + 68, &final_ntime, 4);
-    memcpy(header + 72, &template->target, 4);
-    memcpy(header + 76, &nonce, 4);
+    asic_job_t resolved = *template;
+    resolved.ntime = final_ntime;
+    asic_job_header(&resolved, nonce, final_version, header);
 
     uint8_t hash_result[32];
     double_sha256_bin(header, 80, hash_result);
