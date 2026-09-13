@@ -9,6 +9,7 @@
 #include "bzm_dispatch_gate.h"
 #include "bzm_lease_guard.h"
 #include "bzm_reactor.h"
+#include "bzm_result_dedup.h"
 #include "bzm_registers.h"
 #include "bzm_runtime_health.h"
 #include "bzm_transport.h"
@@ -26,7 +27,6 @@ static const char * TAG = "bzm";
 #define BZM_FAST_JOB_INTERVAL_MS 10.0
 #define BZM_STEADY_JOB_INTERVAL_MS 100.0
 
-#define BZM_RESULT_DEDUP_CAPACITY 256U
 #define BZM_CONFIGURED_RESULT_DIFFICULTY \
     (UINT64_C(1) << (CONFIG_BZM_1002_LEAD_ZEROS - 32))
 
@@ -34,14 +34,6 @@ _Static_assert(
     CONFIG_BZM_1002_MIN_NONCE_DIFFICULTY ==
         BZM_CONFIGURED_RESULT_DIFFICULTY,
     "Bonanza local nonce difficulty must match the ASIC result filter");
-
-typedef struct {
-    bool valid;
-    asic_work_handle_t work_handle;
-    uint32_t nonce;
-    uint32_t final_ntime;
-    uint32_t final_version;
-} bzm_result_identity_t;
 
 typedef struct {
     bzm_reactor_t reactor;
@@ -95,8 +87,7 @@ typedef struct {
     uint32_t work_replacement_completed; // Protected by REACTOR_LOCK.
     asic_driver_health_t driver_health;
     uint16_t fast_dispatch_remaining;
-    bzm_result_identity_t result_dedup[BZM_RESULT_DEDUP_CAPACITY];
-    size_t result_dedup_next;
+    bzm_result_dedup_t result_dedup;
 } bzm_driver_state_t;
 
 static bzm_driver_state_t *BZM_STATE;
@@ -165,7 +156,6 @@ static bzm_driver_state_t *BZM_STATE;
 #define DRIVER_HEALTH (*BZM_STATE).driver_health
 #define FAST_DISPATCH_REMAINING (*BZM_STATE).fast_dispatch_remaining
 #define RESULT_DEDUP (*BZM_STATE).result_dedup
-#define RESULT_DEDUP_NEXT (*BZM_STATE).result_dedup_next
 
 enum
 {
@@ -239,8 +229,7 @@ bool BZM_driver_state_active(void)
 
 static void reset_result_dedup(void)
 {
-    memset(RESULT_DEDUP, 0, sizeof(RESULT_DEDUP));
-    RESULT_DEDUP_NEXT = 0;
+    memset(&RESULT_DEDUP, 0, sizeof(RESULT_DEDUP));
 }
 
 static void start_fast_dispatch_locked(uint16_t remaining)
@@ -254,25 +243,9 @@ static void start_fast_dispatch_locked(uint16_t remaining)
 
 static bool result_is_duplicate(const asic_result_t *result)
 {
-    for (size_t index = 0; index < BZM_RESULT_DEDUP_CAPACITY; ++index) {
-        const bzm_result_identity_t *seen = &RESULT_DEDUP[index];
-        if (seen->valid && seen->work_handle == result->work_handle &&
-            seen->nonce == result->nonce &&
-            seen->final_ntime == result->final_ntime &&
-            seen->final_version == result->final_version) {
-            return true;
-        }
-    }
-    RESULT_DEDUP[RESULT_DEDUP_NEXT] = (bzm_result_identity_t){
-        .valid = true,
-        .work_handle = result->work_handle,
-        .nonce = result->nonce,
-        .final_ntime = result->final_ntime,
-        .final_version = result->final_version,
-    };
-    RESULT_DEDUP_NEXT = (RESULT_DEDUP_NEXT + 1) %
-        BZM_RESULT_DEDUP_CAPACITY;
-    return false;
+    asic_job_t job;
+    return asic_job_store_snapshot(REACTOR.job_store, result->work_handle, &job) &&
+           bzm_result_is_duplicate(&RESULT_DEDUP, &job, result);
 }
 
 static void staged_report(bzm_bringup_report_t * report, bzm_bringup_outcome_t outcome, bzm_bringup_reason_t reason)
@@ -447,7 +420,7 @@ bool BZM_send_work(GlobalState * state, const asic_job_t * template)
             return false;
         }
         bzm_reactor_finish_flush(&REACTOR);
-        reset_result_dedup();
+        // Hardware sequence reuse does not make an already seen share new.
         start_fast_dispatch_locked(REACTOR.config.engine_count);
         results_were_quarantined = true;
         status = bzm_reactor_assign(&REACTOR, template, &assigned_work);
@@ -1602,7 +1575,7 @@ bzm_bringup_outcome_t BZM_staged_frequency_domains_step_live(
         /* Keep mining live; replace work that crossed the PLL transition. */
         bzm_reactor_invalidate_work(&REACTOR);
         bzm_serial_discard_pending_results(&TRANSPORT);
-        reset_result_dedup();
+        // A PLL transition also preserves the logical pool-job identity.
         start_fast_dispatch_locked(REACTOR.config.engine_count);
     }
     if (actual_mhz != NULL) *actual_mhz = STAGED_BRINGUP.clock_mhz;

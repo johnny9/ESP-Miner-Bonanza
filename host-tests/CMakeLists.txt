@@ -99,6 +99,7 @@ add_executable(
     ../components/asic/bzm_overheat_recovery.c
     ../components/asic/bzm_power.c
     ../components/asic/bzm.c
+    ../components/asic/bzm_result_dedup.c
     ../components/asic/bzm_work.c
     ../components/asic/bzm_registers.c
     ../components/asic/bzm_running_evidence.c

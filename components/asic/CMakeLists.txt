@@ -30,6 +30,7 @@ SRCS
     "bzm_validation.c"
     "bzm_topology.c"
     "bzm_reactor.c"
+    "bzm_result_dedup.c"
     "bzm_transport.c"
     "bzm_work.c"
     "bzm_bridge.c"

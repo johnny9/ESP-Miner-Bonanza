@@ -23,6 +23,7 @@ components/asic/test/test_bzm_ota_guard.c
 components/asic/test/test_bzm_overheat_recovery.c
 components/asic/test/test_bzm_power.c
 components/asic/test/test_bzm_running_evidence.c
+components/asic/test/test_bzm_result_dedup.c
 components/asic/test/test_bzm_runtime_health.c
 components/asic/test/test_bzm_supervisor.c
 components/asic/test/test_bzm_topology.c

@@ -63,6 +63,13 @@ The wire format, midstate byte order, and result microstate mapping remain the
 same; only the four selected versions change. Zero-mask work retains four
 identical FIFO entries for enhanced-mode sequence identity.
 
+The private BZM duplicate cache identifies the actual mined header and its
+pool/session/job/extranonce identity, rather than an engine assignment handle.
+This rejects repeated shares when both extranonce and version rolling are
+disabled. Its 256-entry bound is unchanged, and physical sequence reuse or PLL
+transitions do not reset logical share identity. Work retirement still uses the
+existing opaque handles and generation checks.
+
 ## Existing interfaces BZM must retain
 
 The `03-common-jobs` proposal deliberately retains upstream's older result and
