@@ -121,7 +121,7 @@ builds use the same test bodies. See [the test guide](unit_testing.md) for comma
 Validation on 2026-09-13:
 
 - 395 tests under each of GCC and Clang with address, undefined-behavior, and
-  leak checks; 489 QEMU tests pass. The existing five hardware/device-only
+  leak checks; 492 QEMU tests pass. The existing five hardware/device-only
   exclusions remain outside QEMU.
 - All 17 inventory/coverage tooling tests, 99 Axe-OS tests, and the Bitaxe 1002
   factory-configuration check pass.
@@ -136,18 +136,19 @@ logs are also retained with the testcode artifacts described below.
 
 ### Network hardware validation
 
-Firmware commit `781b5846` was built with ESP-IDF 6.0.2 as
-`bzm-common-781b5846` and installed on a physical Bitaxe Bonanza 1002 through
+Firmware commit `670f58f3` was built with ESP-IDF 6.0.2 as
+`bzm-common-670f58f3` and installed on a physical Bitaxe Bonanza 1002 through
 testcode's bounded HTTP OTA flow. Identity and the running version were verified;
 USB/serial access was disabled. Testcode was pinned to `ec36db4`.
 
 | Python testcode suite | Result | Run ID |
 | --- | --- | --- |
-| SV1 protocol regression | 12 passed | `20260913T172451.873260Z` |
-| SV2 standard channel | 7 passed | `20260913T173056.028407Z` |
-| SV2 extended channel | 7 passed | `20260913T173325.149744Z` |
+| SV1 protocol regression | 12 passed | `20260913T182612.148626Z` |
+| SV2 standard channel | 7 passed | `20260913T183101.289870Z` |
+| SV2 extended channel | 7 passed | `20260913T183310.403656Z` |
+| Focused SV1 fallback | 3 passed | `20260913T183536.559220Z` |
 
-An additional offline Python SHA256d audit verified 43 SV1 submissions across
+An additional offline Python SHA256d audit verified 42 SV1 submissions across
 40 jobs and six SV2 standard submissions across four jobs, with no duplicates.
 One SV1 raw-frame case omits its job payload from the transcript and cannot be
 independently rehashed. The SV2 standard audit combines recorded submissions
@@ -157,20 +158,29 @@ ACK policy alone does not independently verify proof of work.
 The hardware runs exposed and now cover finite-midstate producer progression,
 overlapping BZM versions, mask carry outside the negotiated bits, and duplicate
 fixed-header shares across different engine assignments. These fixes add no
-common job or capability fields. All three protocol suites restored the original
-pool entries and operating settings; a separate API check then observed fresh
+common job or capability fields. All protocol suites and the focused fallback
+run restored the original pool entries and operating settings; a separate API check then observed fresh
 accepted shares on the original public pool with four ASICs and 944 engines.
 
-The pool-fallback run `20260913T173814.368457Z` passed seven cases, skipped
-the optional browser form case (no CDP session), and failed silent-primary
+The earlier `781b5846` pool-fallback run `20260913T173814.368457Z` passed seven
+cases, skipped the optional browser form case (no CDP session), and failed silent-primary
 failover after 900 seconds. Cleanup restored the original pools. SV1's transport
 read loop retried zero-byte polling timeouts indefinitely, bypassing the socket's
 three-minute receive policy. The follow-up enforces a three-minute deadline for
 a complete line, including partial frames, while preserving short pauses. Three
 QEMU transport regressions cover silent reads, a short pause with fragmentation,
 and partial-frame expiry with clean subsequent framing. Hardware revalidation
-of that fix is pending.
+of normal failover, short silence and sustained silence uses the unchanged testcode methods selected through `unittest.load_tests`.
+All three cases and their cleanup passed.
+Silent-primary failover produced fresh accepted shares in 738.344 seconds
+(900-second limit), and primary recovery passed in 85.668 seconds without a
+reboot. The other five previously passing cases have not been repeated after
+this transport-only fix.
 
 Detailed local reports, immutable firmware provenance, failure analysis and hash
-audits are retained in testcode's ignored `artifacts/common-interface-781b5846/`
-directory.
+audits are retained in testcode's ignored `artifacts/common-interface-670f58f3/`
+directory, with earlier failures retained in their revision-specific directories.
+The initial OTA setup run `20260913T181928.624574Z` timed out awaiting its HTTP
+response after the image had installed and rebooted. An independent API read
+verified the new version, and the successful SV1 rerun recognized it without
+another upload. That setup error remains in the artifact history.
