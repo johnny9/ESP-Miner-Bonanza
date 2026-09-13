@@ -107,7 +107,9 @@ bridge lifecycle fields nor a BZM-specific diagnostic enum belong in this job.
 
 All existing packet, midstate, nonce-difficulty, clean-generation, retry,
 retained-work, and result-routing regressions are retained. Common hash fixtures
-now express header bytes; captured hardware packet/midstate vectors are unchanged.
+now express header bytes. Captured nonce proofs and base-version midstate vectors
+are unchanged; BZM's selected-version and microstate expectations now cover the
+consecutive version ranges required to avoid duplicate headers.
 The allocation-failure regression now injects failure into large-coinbase hashing,
 since ordinary job metadata no longer allocates.
 
@@ -118,17 +120,57 @@ builds use the same test bodies. See [the test guide](unit_testing.md) for comma
 
 Validation on 2026-09-13:
 
-- 385 tests under each of GCC and Clang with address, undefined-behavior, and
-  leak checks; 479 QEMU tests pass. The existing five hardware/device-only
+- 395 tests under each of GCC and Clang with address, undefined-behavior, and
+  leak checks; 489 QEMU tests pass. The existing five hardware/device-only
   exclusions remain outside QEMU.
 - All 17 inventory/coverage tooling tests, 99 Axe-OS tests, and the Bitaxe 1002
   factory-configuration check pass.
 - ESP-IDF 6.0.2 builds `esp-miner.bin` with 31% application-partition space free.
-- Unchanged coverage gates pass: 77.1% line and 64.5% branch coverage within
-  instrumented files; 50/128 first-party source files are instrumented. SV1
+- Unchanged coverage gates pass: 78.1% line and 65.1% branch coverage within
+  instrumented files; 51/129 first-party source files are instrumented. SV1
   protocol remains at 100% line/function and 92.4% branch coverage.
 
 Logs are retained locally in `.cache/common-jobs-validation/`; coverage reports
-are under `build/host-coverage/coverage/`. This validation did not flash a
-physical miner or run the migrated image on `bonanza.local`; hardware mining
-validation remains a separate gate.
+are under `build/host-coverage/coverage/`. The hardware follow-up build and native
+logs are also retained with the testcode artifacts described below.
+
+### Network hardware validation
+
+Firmware commit `781b5846` was built with ESP-IDF 6.0.2 as
+`bzm-common-781b5846` and installed on a physical Bitaxe Bonanza 1002 through
+testcode's bounded HTTP OTA flow. Identity and the running version were verified;
+USB/serial access was disabled. Testcode was pinned to `ec36db4`.
+
+| Python testcode suite | Result | Run ID |
+| --- | --- | --- |
+| SV1 protocol regression | 12 passed | `20260913T172451.873260Z` |
+| SV2 standard channel | 7 passed | `20260913T173056.028407Z` |
+| SV2 extended channel | 7 passed | `20260913T173325.149744Z` |
+
+An additional offline Python SHA256d audit verified 43 SV1 submissions across
+40 jobs and six SV2 standard submissions across four jobs, with no duplicates.
+One SV1 raw-frame case omits its job payload from the transcript and cannot be
+independently rehashed. The SV2 standard audit combines recorded submissions
+with the pinned suite's fixed merkle-root/previous-hash fixture. The fake pools'
+ACK policy alone does not independently verify proof of work.
+
+The hardware runs exposed and now cover finite-midstate producer progression,
+overlapping BZM versions, mask carry outside the negotiated bits, and duplicate
+fixed-header shares across different engine assignments. These fixes add no
+common job or capability fields. All three protocol suites restored the original
+pool entries and operating settings; a separate API check then observed fresh
+accepted shares on the original public pool with four ASICs and 944 engines.
+
+The pool-fallback run `20260913T173814.368457Z` passed seven cases, skipped
+the optional browser form case (no CDP session), and failed silent-primary
+failover after 900 seconds. Cleanup restored the original pools. SV1's transport
+read loop retried zero-byte polling timeouts indefinitely, bypassing the socket's
+three-minute receive policy. The follow-up enforces a three-minute deadline for
+a complete line, including partial frames, while preserving short pauses. Three
+QEMU transport regressions cover silent reads, a short pause with fragmentation,
+and partial-frame expiry with clean subsequent framing. Hardware revalidation
+of that fix is pending.
+
+Detailed local reports, immutable firmware provenance, failure analysis and hash
+audits are retained in testcode's ignored `artifacts/common-interface-781b5846/`
+directory.
