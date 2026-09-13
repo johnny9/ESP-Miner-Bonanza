@@ -75,6 +75,20 @@ add_executable(
     src/host_platform_stubs.c
     src/esp_log_host.c
     ${host_test_sources}
+    ../components/asic/test/bm1366_test_instance.c
+    ../components/asic/test/bm1368_test_instance.c
+    ../components/asic/test/bm1370_test_instance.c
+    ../components/asic/test/bm1373_test_instance.c
+    ../components/asic/test/bm1397_test_instance.c
+    ../components/asic/test/bm13xx_test_harness.c
+    ../components/asic/test/bm1397_test_harness.c
+    ../components/asic/test/result_task_test_instance.c
+    ../components/stratum/test/job_pipeline_test_harness.c
+    ../components/stratum/test/mining_allocator_fault_injector.c
+    ../components/stratum/test/mining_test_instance.c
+    ../components/asic/asic_job_store.c
+    ../components/asic/asic_result_handler.c
+    ../components/asic/bm_job_builder.c
     ../components/asic/asic_capabilities.c
     ../components/asic/bzm_balanced_ramp.c
     ../components/asic/bzm_bringup.c
@@ -121,6 +135,15 @@ set_source_files_properties(
     ../components/stratum/base58.c
     PROPERTIES COMPILE_OPTIONS -Wno-vla
 )
+
+# Characterization compiles complete, unchanged driver sources. BM1368's
+# legacy loop counters compare against sizeof; BM1397's no-op version-mask
+# entry point intentionally ignores its argument. Keep these accommodations
+# confined to those instances; test bodies retain the strict warning set.
+set_source_files_properties(../components/asic/test/bm1368_test_instance.c
+    PROPERTIES COMPILE_OPTIONS -Wno-sign-compare)
+set_source_files_properties(../components/asic/test/bm1397_test_instance.c
+    PROPERTIES COMPILE_OPTIONS -Wno-unused-parameter)
 
 target_compile_features(esp_miner_host_tests PRIVATE c_std_11)
 target_compile_definitions(
@@ -194,6 +217,10 @@ target_include_directories(
         ../components/identify_mode/include
         ../components/log_level_config/include
         ../main/http_server
+        ../main
+        ../main/tasks
+        ../main/self_test
+        ../components/stratum/test
 )
 
 target_link_libraries(

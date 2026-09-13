@@ -44,6 +44,8 @@ ctest --test-dir "$build_dir" --output-on-failure
 
 mkdir -p "$report_dir"
 
+# Test-instance objects live below test/ and include complete production files.
+# Scan those objects too; --exclude still removes fixture source coverage.
 # Inventory every repository-owned production source in the two firmware
 # source roots. Do not enumerate first-party modules: new files must enter the
 # denominator automatically. Only copied third-party sources are excluded.
@@ -62,7 +64,6 @@ gcovr \
     --exclude '.*/node_modules/.*' \
     --exclude-directory '.*/libsecp256k1($|/)' \
     --exclude-directory '.*/node_modules($|/)' \
-    --exclude-directory '.*/test($|/)' \
     --exclude-directory "$build_dir/_deps($|/)" \
     --txt "$report_dir/coverage.txt" \
     --html-details "$report_dir/index.html" \

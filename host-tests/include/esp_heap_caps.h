@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #define MALLOC_CAP_SPIRAM 0
+#define MALLOC_CAP_DEFAULT 0
 
 static inline void *heap_caps_malloc(size_t size, unsigned capabilities)
 {
@@ -16,6 +17,11 @@ static inline void *heap_caps_calloc(size_t count, size_t size, unsigned capabil
 {
     (void)capabilities;
     return calloc(count, size);
+}
+
+static inline void heap_caps_free(void *pointer)
+{
+    free(pointer);
 }
 
 #endif

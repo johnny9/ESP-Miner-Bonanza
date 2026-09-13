@@ -34,3 +34,12 @@ components/button_input/test/test_button_input.c
 components/hashrate_counter_window/test/test_hashrate_counter_window.c
 components/identify_mode/test/test_identify_mode.c
 components/log_level_config/test/test_log_level_config.c
+
+# PR1969 job/result characterization through Bonanza's common work boundary.
+components/stratum/test/test_job_building.c
+components/stratum/test/test_mining_pipeline.c
+components/asic/test/test_bitmain_job_building.c
+components/asic/test/test_bitmain_job_packets.c
+components/asic/test/test_version_rolling.c
+components/asic/test/test_asic_result_task.c
+components/asic/test/test_common_work_contract.c

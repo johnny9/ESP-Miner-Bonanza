@@ -51,7 +51,11 @@ the production C sources they exercise:
 The host build enables warnings as errors and probes additional warnings before
 using them. A source-specific exception must have a comment explaining why it
 is necessary and should be removed. The imported `base58.c` implementation
-currently has the only `-Wvla` exception.
+has a `-Wvla` exception. PR #1969 characterization also keeps narrow
+instance-only exceptions for BM1368 signed loop comparisons and BM1397's
+unused version-mask argument. The native state fixture suppresses Clang's
+legacy empty-argument warning only while reading the existing `system.h`;
+test bodies retain strict warnings.
 
 The first configure downloads Unity, cJSON, and Mbed TLS at revisions pinned in
 `host-tests/CMakeLists.txt`. Later runs reuse the CMake build directory.
@@ -91,6 +95,16 @@ Validation on 2026-09-13 against upstream PR head `d8ad1fd6`:
   The upstream coverage floors remain unchanged.
 
 These checks do not include flashing or a new hardware/network mining run.
+
+## Job/result characterization integration
+
+The [PR #1969 integration contract](asic-common-interface.md) maps the tests to
+Bonanza's existing common work, driver, saved-job, and result interfaces and
+records the remaining planned production changes. All new cases run under both
+native compilers and QEMU. Coverage also scans test-instance objects; otherwise
+included production drivers and tasks would be incorrectly shown as uninstrumented.
+Fixture source files stay excluded. Compiler-reported inline header coverage
+is retained in the report alongside the C/C++ source inventory.
 
 ## Running host tests
 
@@ -176,7 +190,8 @@ from a compiled file whose executable lines were never reached, which displays
 as 0% and contributes to the coverage totals.
 
 The source-file instrumentation breadth is the number of report files with
-compiler coverage points divided by the complete eligible source inventory.
+compiler coverage points divided by the complete eligible report inventory:
+discovered C/C++ sources plus compiler-reported inline headers.
 The Bonanza baseline after integrating upstream PR #1940 is 37 of 125 files
 (29.6%). The inventory is discovered automatically rather than enumerated: every C or C++ source under `components`
 and `main` is eligible, subject only to the explicit exclusions below. The
@@ -216,8 +231,8 @@ percentage.
 After removing third-party sources from the measured set, CI enforces two
 different kinds of non-regression floor:
 
-- Source-file instrumentation breadth: 11.8% floor (currently 37 of 125 files,
-  or 29.6%).
+- Source-file instrumentation breadth: 11.8% floor (currently 49 of 127 report files,
+  or 38.6%, including three instrumented inline headers).
 - Coverage depth within instrumented files: 58% line and 49% branch coverage.
 - `components/stratum/sv1_protocol.c`: 100% line and function coverage and at
   least 90% branch coverage.
