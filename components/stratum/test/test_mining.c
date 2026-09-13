@@ -99,6 +99,22 @@ TEST_CASE("Validate version mask incrementing", "[mining]")
     TEST_ASSERT_EQUAL_UINT32(0x20000404, rolled_version);
 }
 
+TEST_CASE("Version increment preserves unnegotiated bits across gaps and wrap", "[mining][version]")
+{
+    const uint32_t sparse_versions[] = {
+        0x20000004, 0x20002004, 0x20008004, 0x2000a004,
+        0x30000004, 0x30002004, 0x30008004, 0x3000a004,
+    };
+    for (size_t i = 0; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_HEX32(sparse_versions[(i + 1) % 8],
+            increment_bitmask(sparse_versions[i], 0x1000a000));
+    }
+    TEST_ASSERT_EQUAL_HEX32(0x20000004, increment_bitmask(0x3fffe004, 0x1fffe000));
+    TEST_ASSERT_EQUAL_HEX32(0x20000004, increment_bitmask(0x20000004, 0));
+    TEST_ASSERT_EQUAL_HEX32(0, increment_bitmask(UINT32_MAX, UINT32_MAX));
+    TEST_ASSERT_EQUAL_HEX32(0x7fffffff, increment_bitmask(UINT32_MAX, 0x80000000));
+}
+
 TEST_CASE("Test extranonce 2 generation", "[mining extranonce2]")
 {
     char first[9];
