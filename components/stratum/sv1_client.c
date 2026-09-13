@@ -1,4 +1,5 @@
 #include "sv1_client.h"
+#include "sv1_client_internal.h"
 
 #include "sv1_protocol.h"
 
@@ -177,6 +178,12 @@ static bool ensure_json_buffer_capacity(size_t required_size)
 
 char * STRATUM_V1_receive_jsonrpc_line(esp_transport_handle_t transport)
 {
+    return sv1_receive_jsonrpc_line_with_clock(transport, esp_timer_get_time);
+}
+
+char *sv1_receive_jsonrpc_line_with_clock(esp_transport_handle_t transport,
+                                        int64_t (*now_us)(void))
+{
     if (json_rpc_buffer == NULL) {
         if (!STRATUM_V1_initialize_buffer()) {
             return NULL;
@@ -185,14 +192,22 @@ char * STRATUM_V1_receive_jsonrpc_line(esp_transport_handle_t transport)
     char *line = NULL;
     char recv_buffer[BUFFER_SIZE];
     int nbytes;
+    const int64_t deadline_us = now_us() + SV1_RECEIVE_TIMEOUT_US;
 
     char *newline_pos = memchr(json_rpc_buffer, '\n', json_rpc_buffer_len);
     while (newline_pos == NULL) {
+        int64_t remaining_us = deadline_us - now_us();
+        if (remaining_us <= 0) {
+            goto receive_timeout;
+        }
         size_t receive_capacity =
             (STRATUM_V1_MAX_JSON_LINE_SIZE + 1U) - json_rpc_buffer_len;
         size_t receive_size = MIN(sizeof(recv_buffer), receive_capacity);
         nbytes = esp_transport_read(transport, recv_buffer, receive_size,
-                                    TRANSPORT_TIMEOUT_MS);
+                                    MIN(TRANSPORT_TIMEOUT_MS, (remaining_us + 999) / 1000));
+        if (now_us() >= deadline_us) {
+            goto receive_timeout;
+        }
         if (nbytes < 0) {
             const char *err_str;
             switch(nbytes) {
@@ -258,6 +273,12 @@ char * STRATUM_V1_receive_jsonrpc_line(esp_transport_handle_t transport)
         json_rpc_buffer[json_rpc_buffer_len] = '\0';
     }
     return line;
+
+receive_timeout:
+    ESP_LOGW(TAG, "Timed out waiting for a complete JSON-RPC line");
+    json_rpc_buffer_len = 0;
+    json_rpc_buffer[0] = '\0';
+    return NULL;
 }
 
 static void stamp_tx(int request_id, uint64_t timestamp_us)

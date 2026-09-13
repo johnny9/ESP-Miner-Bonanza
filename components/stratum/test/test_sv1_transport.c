@@ -2,6 +2,7 @@
 #include "cJSON.h"
 #include "sv1_client.h"
 #include "sv1_protocol.h"
+#include "../sv1_client_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -12,13 +13,33 @@ typedef struct {
     size_t length;
     size_t offset;
     size_t max_chunk;
+    unsigned int idle_reads;
+    unsigned int read_calls;
+    int64_t read_elapsed_us;
 } mock_transport_data_t;
+
+static int64_t mock_now_us;
+
+static int64_t mock_receive_clock(void)
+{
+    return mock_now_us;
+}
 
 static int mock_transport_read(esp_transport_handle_t transport, char *buffer,
                                int len, int timeout_ms)
 {
     mock_transport_data_t *mock =
         (mock_transport_data_t *)esp_transport_get_context_data(transport);
+    if (mock != NULL) {
+        mock->read_calls++;
+        mock_now_us += mock->read_elapsed_us;
+        /* Bound regressions that would otherwise spin forever in the test. */
+        if (mock->read_elapsed_us > 0 && mock->read_calls > 50) return -1;
+        if (mock->idle_reads > 0) {
+            mock->idle_reads--;
+            return 0;
+        }
+    }
     if (mock == NULL || mock->offset >= mock->length) {
         return 0;
     }
@@ -45,6 +66,64 @@ static esp_transport_handle_t create_mock_transport(mock_transport_data_t *data)
         return NULL;
     }
     return transport;
+}
+
+TEST_CASE("SV1 silent transport expires after repeated empty reads", "[stratum][qemu-integration]")
+{
+    mock_transport_data_t mock = {.idle_reads = 100, .read_elapsed_us = 5000000};
+    esp_transport_handle_t transport = create_mock_transport(&mock);
+    TEST_ASSERT_NOT_NULL(transport);
+    TEST_ASSERT_TRUE(STRATUM_V1_initialize_buffer());
+    mock_now_us = 1234567;
+
+    TEST_ASSERT_NULL(sv1_receive_jsonrpc_line_with_clock(transport, mock_receive_clock));
+    TEST_ASSERT_EQUAL_UINT32(36, mock.read_calls);
+    TEST_ASSERT_TRUE(mock_now_us == 1234567 + SV1_RECEIVE_TIMEOUT_US);
+    esp_transport_destroy(transport);
+}
+
+TEST_CASE("SV1 short silence preserves a fragmented line", "[stratum][qemu-integration]")
+{
+    mock_transport_data_t mock = {
+        .data = "{}\n", .length = 3, .max_chunk = 1,
+        .idle_reads = 3, .read_elapsed_us = 5000000,
+    };
+    esp_transport_handle_t transport = create_mock_transport(&mock);
+    TEST_ASSERT_NOT_NULL(transport);
+    TEST_ASSERT_TRUE(STRATUM_V1_initialize_buffer());
+    mock_now_us = 0;
+
+    char *line = sv1_receive_jsonrpc_line_with_clock(transport, mock_receive_clock);
+    TEST_ASSERT_NOT_NULL(line);
+    TEST_ASSERT_EQUAL_STRING("{}", line);
+    TEST_ASSERT_EQUAL_UINT32(6, mock.read_calls);
+    free(line);
+    esp_transport_destroy(transport);
+}
+
+TEST_CASE("SV1 partial frames cannot extend the deadline or contaminate reconnects", "[stratum][qemu-integration]")
+{
+    mock_transport_data_t mock = {
+        .data = "{}\n", .length = 3, .max_chunk = 1, .read_elapsed_us = 60000000,
+    };
+    esp_transport_handle_t transport = create_mock_transport(&mock);
+    TEST_ASSERT_NOT_NULL(transport);
+    TEST_ASSERT_TRUE(STRATUM_V1_initialize_buffer());
+    mock_now_us = 0;
+
+    TEST_ASSERT_NULL(sv1_receive_jsonrpc_line_with_clock(transport, mock_receive_clock));
+    TEST_ASSERT_EQUAL_UINT32(3, mock.read_calls);
+    mock = (mock_transport_data_t){.data = "[]\n{}\n", .length = 6};
+    char *first = sv1_receive_jsonrpc_line_with_clock(transport, mock_receive_clock);
+    char *second = sv1_receive_jsonrpc_line_with_clock(transport, mock_receive_clock);
+    TEST_ASSERT_NOT_NULL(first);
+    TEST_ASSERT_NOT_NULL(second);
+    TEST_ASSERT_EQUAL_STRING("[]", first);
+    TEST_ASSERT_EQUAL_STRING("{}", second);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.read_calls);
+    free(first);
+    free(second);
+    esp_transport_destroy(transport);
 }
 
 TEST_CASE("Receive fragmented JSON-RPC line", "[stratum][security][qemu-integration]")
