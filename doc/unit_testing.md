@@ -98,9 +98,9 @@ These checks do not include flashing or a new hardware/network mining run.
 
 ## Job/result characterization integration
 
-The [PR #1969 integration contract](asic-common-interface.md) maps the tests to
-Bonanza's existing common work, driver, saved-job, and result interfaces and
-records the remaining planned production changes. All new cases run under both
+The [common-job interface contract](asic-common-interface.md) records the
+production migration from `mining_template_t` to the proposed owned `asic_job_t`,
+the small compatibility extensions, and remaining planned interface work. All new cases run under both
 native compilers and QEMU. Coverage also scans test-instance objects; otherwise
 included production drivers and tasks would be incorrectly shown as uninstrumented.
 Fixture source files stay excluded. Compiler-reported inline header coverage
