@@ -56,6 +56,13 @@ configuration flag must not suppress that progression. Version changes stay
 within the negotiated mask, and rejected sends retain their version. This
 requires no additional job fields or capability fields.
 
+BZM derives four consecutive negotiated versions for each enhanced-mode job,
+matching that producer stride. The earlier OR-based mask selection repeated
+headers across neighboring engines as soon as the producer advanced the base.
+The wire format, midstate byte order, and result microstate mapping remain the
+same; only the four selected versions change. Zero-mask work retains four
+identical FIFO entries for enhanced-mode sequence identity.
+
 ## Existing interfaces BZM must retain
 
 The `03-common-jobs` proposal deliberately retains upstream's older result and

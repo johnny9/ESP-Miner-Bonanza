@@ -28,6 +28,7 @@ components/asic/test/test_bzm_supervisor.c
 components/asic/test/test_bzm_topology.c
 components/asic/test/test_bzm_tps546_verify.c
 components/asic/test/test_bzm_validation.c
+components/asic/test/test_bzm_work.c
 components/asic/test/test_capabilities.c
 components/bonanza_display_protocol/test/test_bonanza_display_protocol.c
 components/button_input/test/test_button_input.c

@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "mining.h"
 #include "utils.h"
 
 static size_t bzm_build_versions(uint32_t base_version,
@@ -21,20 +22,12 @@ static size_t bzm_build_versions(uint32_t base_version,
         return BZM_VERSION_VARIANTS;
     }
 
-    /* Match BIRDS/cgminer's vmask_001[0,2,4,8] construction. The
-     * least-significant non-zero hex nibble is one sub-job, the remaining
-     * mask is the other, and the fourth sub-job combines both. */
-    unsigned trailing_nibbles = 0;
-    uint32_t shifted_mask = version_mask;
-    while ((shifted_mask & 0x0fU) == 0U) {
-        shifted_mask >>= 4;
-        trailing_nibbles++;
+    /* Consume the same consecutive version range that the producer skips
+     * between finite-midstate jobs. OR-ing mask fragments into each base
+     * repeats headers both within a job and across neighboring engines. */
+    for (size_t i = 1; i < BZM_VERSION_VARIANTS; ++i) {
+        versions[i] = increment_bitmask(versions[i - 1], version_mask);
     }
-    uint32_t low_nibble = (shifted_mask & 0x0fU)
-        << (trailing_nibbles * 4U);
-    versions[1] = base_version | low_nibble;
-    versions[2] = base_version | (version_mask - low_nibble);
-    versions[3] = base_version | version_mask;
     return BZM_VERSION_VARIANTS;
 }
 

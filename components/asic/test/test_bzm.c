@@ -313,9 +313,9 @@ TEST_CASE("BZM work builder derives four family-private midstates",
     TEST_ASSERT_EQUAL_UINT8(5, work.logical_sequence);
     TEST_ASSERT_EQUAL_UINT8(4, work.midstate_count);
     TEST_ASSERT_EQUAL_HEX32(0x20000004, work.versions[0]);
-    TEST_ASSERT_EQUAL_HEX32(0x2000e004, work.versions[1]);
-    TEST_ASSERT_EQUAL_HEX32(0x3fff0004, work.versions[2]);
-    TEST_ASSERT_EQUAL_HEX32(0x3fffe004, work.versions[3]);
+    TEST_ASSERT_EQUAL_HEX32(0x20002004, work.versions[1]);
+    TEST_ASSERT_EQUAL_HEX32(0x20004004, work.versions[2]);
+    TEST_ASSERT_EQUAL_HEX32(0x20006004, work.versions[3]);
     TEST_ASSERT_EQUAL_HEX32(template.ntime, work.start_ntime);
     TEST_ASSERT_EQUAL_HEX32(template.nbits, work.target);
     TEST_ASSERT_EQUAL_HEX32(template.starting_nonce, work.starting_nonce);
@@ -923,9 +923,9 @@ TEST_CASE("BZM reactor resolves microstate version and timestamp rolling",
     TEST_ASSERT_EQUAL_UINT8(2, event.data.share.asic_index);
     TEST_ASSERT_EQUAL(ASIC_EVENT_SHARE_RESULT, event.type);
     TEST_ASSERT_EQUAL_HEX32(0x2c563412, event.data.share.nonce);
-    TEST_ASSERT_EQUAL_HEX32(0x3fff0004,
+    TEST_ASSERT_EQUAL_HEX32(0x20004004,
                             event.data.share.final_version);
-    TEST_ASSERT_EQUAL_HEX32(0x1fff0000,
+    TEST_ASSERT_EQUAL_HEX32(0x00004000,
                             event.data.share.version_bits);
     TEST_ASSERT_EQUAL_HEX32(template.ntime + 3,
                             event.data.share.final_ntime);
@@ -941,7 +941,7 @@ TEST_CASE("BZM reactor resolves microstate version and timestamp rolling",
     raw.sequence_id = 3;
     raw.time = 12;
     TEST_ASSERT_TRUE(bzm_reactor_map_result(reactor, &raw, &event));
-    TEST_ASSERT_EQUAL_HEX32(0x3fffe004,
+    TEST_ASSERT_EQUAL_HEX32(0x20006004,
                             event.data.share.final_version);
     TEST_ASSERT_EQUAL_HEX32(template.ntime + 4,
                             event.data.share.final_ntime);
