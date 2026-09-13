@@ -8,6 +8,7 @@
 #include "mining.h"
 
 typedef struct {
+    uint16_t chip_id;
     bool hardware_version_rolling;
     uint8_t software_midstates;
     bool asic_initialized;

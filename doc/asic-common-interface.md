@@ -49,6 +49,13 @@ existing one/four-midstate behavior. It consequently takes a source and an
 output pointer, rather than the proposal's additional midstate-count argument.
 That difference does not enlarge the common interface or change driver packets.
 
+The producer uses `version_rolling` and `max_version_variants` from the existing
+capabilities when refreshing a fixed-merkle job. BZM and BM1397 require a new
+base version after each accepted finite-midstate job; Bonanza's legacy device
+configuration flag must not suppress that progression. Version changes stay
+within the negotiated mask, and rejected sends retain their version. This
+requires no additional job fields or capability fields.
+
 ## Existing interfaces BZM must retain
 
 The `03-common-jobs` proposal deliberately retains upstream's older result and

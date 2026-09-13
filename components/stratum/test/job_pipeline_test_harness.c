@@ -20,6 +20,7 @@ static size_t harness_event_index;
 static job_pipeline_harness_result_t *harness_result;
 static int harness_job_frequency_ms;
 static unsigned harness_failed_sends;
+static uint16_t harness_chip_id;
 static uint64_t harness_current_generation;
 static GlobalState harness_state;
 
@@ -75,7 +76,8 @@ static bool fake_work_is_current(GlobalState *state, uint64_t generation)
 static asic_capabilities_t fake_capabilities(const GlobalState *state)
 {
     return ASIC_capabilities_for_chip_id(
-        state->DEVICE_CONFIG.family.asic.hardware_version_rolling ? 1366 : 1397);
+        harness_chip_id != 0 ? harness_chip_id :
+        (state->DEVICE_CONFIG.family.asic.hardware_version_rolling ? 1366 : 1397));
 }
 
 bool mining_test_template_build_miner_job(const miner_job_t *job, uint64_t extranonce2,
@@ -155,6 +157,7 @@ void job_pipeline_harness_run(
     harness_result = result;
     harness_job_frequency_ms = config.job_frequency_ms;
     harness_failed_sends = config.failed_sends;
+    harness_chip_id = config.chip_id;
     harness_current_generation = config.current_generation;
     mining_allocator_fault_injector_reset(config.allocation_failure_at);
 

@@ -1,6 +1,7 @@
 #include "unity.h"
 
 #include "job_pipeline_test_harness.h"
+#include "bzm.h"
 #include "../../asic/test/bitmain_job_test_support.h"
 #include "mining.h"
 #include "sv1_protocol.h"
@@ -690,4 +691,75 @@ TEST_CASE("Common work rejects a retired pool session before allocation", "[mini
     TEST_ASSERT_EQUAL_UINT32(0, result.allocation_count);
     TEST_ASSERT_EQUAL_UINT32(0, result.coinbase_decode_count);
     job_pipeline_harness_result_free(&result);
+}
+
+TEST_CASE("BZM standard jobs advance versions after accepted sends", "[sv2][mining][common-work]")
+{
+    miner_job_pool_init();
+    miner_job_t *job = miner_job_get_slot(0);
+    job->type = JOB_TYPE_SV2_STANDARD;
+    strcpy(job->job_id, "1001");
+    job->version = 0x20000004;
+    job->version_mask = BIP320_VERSION_ROLLING_MASK;
+    job->ntime = 0x64658bd8;
+    job->nbits = 0x1705dd01;
+    job->pool_diff = 256;
+    job->work_generation = 7;
+    job->clean_jobs = true;
+    const job_pipeline_harness_event_t events[] = {
+        {.type = JOB_PIPELINE_HARNESS_NOTIFY, .slot = 0},
+        {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
+        {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
+        {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
+    };
+    job_pipeline_harness_result_t result;
+    job_pipeline_harness_run((job_pipeline_harness_config_t) {
+        .chip_id = BZM_CHIP_ID,
+        // Reproduce Bonanza's legacy configuration; capabilities are authoritative.
+        .hardware_version_rolling = true, .software_midstates = 0,
+        .asic_initialized = true, .job_frequency_ms = 1,
+        .failed_sends = 1, .current_generation = 7,
+    }, events, sizeof(events) / sizeof(events[0]), &result);
+    TEST_ASSERT_EQUAL_UINT32(4, result.send_attempts);
+    TEST_ASSERT_EQUAL_UINT32(3, result.job_count);
+    TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
+    const uint32_t expected_versions[] = {0x20000004, 0x20008004, 0x20010004};
+    for (size_t i = 0; i < result.job_count; ++i) {
+        const asic_job_t *sent = result.jobs[i];
+        TEST_ASSERT_EQUAL_HEX32(expected_versions[i], sent->version);
+        TEST_ASSERT_EQUAL_HEX32(job->version, sent->job_version);
+        TEST_ASSERT_EQUAL_HEX32(0, (sent->version ^ job->version) & ~job->version_mask);
+        TEST_ASSERT_EQUAL_STRING("1001", sent->job_id);
+        TEST_ASSERT_EQUAL_STRING("", sent->extranonce2);
+        TEST_ASSERT_EQUAL_HEX32(job->ntime, sent->ntime);
+        TEST_ASSERT_TRUE(sent->work_generation == 7);
+        TEST_ASSERT_EQUAL(i == 0, sent->clean_jobs);
+    }
+    job_pipeline_harness_result_free(&result);
+}
+
+TEST_CASE("Midstate job refresh respects a zero negotiated version mask", "[sv2][mining][common-work]")
+{
+    miner_job_pool_init();
+    miner_job_t *job = miner_job_get_slot(0);
+    job->type = JOB_TYPE_SV2_STANDARD;
+    strcpy(job->job_id, "1002");
+    job->version = 0x20000004;
+    job->version_mask = 0;
+    const job_pipeline_harness_event_t events[] = {
+        {.type = JOB_PIPELINE_HARNESS_NOTIFY, .slot = 0},
+        {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
+    };
+    const uint16_t chips[] = {1397, BZM_CHIP_ID};
+    for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
+        job_pipeline_harness_result_t result;
+        job_pipeline_harness_run((job_pipeline_harness_config_t) {
+            .chip_id = chips[i], .software_midstates = 4,
+            .asic_initialized = true, .job_frequency_ms = 1,
+        }, events, sizeof(events) / sizeof(events[0]), &result);
+        TEST_ASSERT_EQUAL_UINT32(2, result.job_count);
+        TEST_ASSERT_EQUAL_HEX32(job->version, result.jobs[0]->version);
+        TEST_ASSERT_EQUAL_HEX32(job->version, result.jobs[1]->version);
+        job_pipeline_harness_result_free(&result);
+    }
 }

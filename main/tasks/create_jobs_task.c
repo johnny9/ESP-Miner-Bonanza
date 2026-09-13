@@ -44,6 +44,7 @@ void create_jobs_task(void *pvParameters)
     uint64_t current_work_generation = UINT64_MAX;
     uint64_t extranonce_2 = 0;
     uint32_t current_version = 0;
+    asic_capabilities_t capabilities = ASIC_get_capabilities(GLOBAL_STATE);
     int timeout_ms = ASIC_get_asic_job_frequency_ms(GLOBAL_STATE);
 
     ESP_LOGI(TAG, "ASIC Job Interval: %d ms", timeout_ms);
@@ -83,7 +84,6 @@ void create_jobs_task(void *pvParameters)
                 continue;
             }
         } else {
-            asic_capabilities_t capabilities = ASIC_get_capabilities(GLOBAL_STATE);
             if (current_work == NULL) {
                 vTaskDelay(100 / portTICK_PERIOD_MS);
                 continue;
@@ -110,11 +110,12 @@ void create_jobs_task(void *pvParameters)
 
         if (miner_job_is_rollable(current_work)) {
             extranonce_2++;
-        } else if (!GLOBAL_STATE->DEVICE_CONFIG.family.asic.hardware_version_rolling) {
-            // Software version rolling for ASICs without hardware version rolling (e.g. BM1397) on SV2 Standard Channel
-            uint32_t mask = (current_work->version_mask != 0) ? current_work->version_mask : BIP320_VERSION_ROLLING_MASK;
-            uint8_t midstates = GLOBAL_STATE->DEVICE_CONFIG.family.asic.software_midstates;
-            for (int i = 0; i < midstates; i++) {
+        } else if (capabilities.version_rolling == ASIC_VERSION_ROLLING_MIDSTATE) {
+            // Finite-midstate drivers (BM1397 and BZM) need fresh base versions
+            // when the pool supplies a fixed merkle root. Advance only after
+            // accepted work and only within the pool's negotiated mask.
+            uint32_t mask = current_work->version_mask & capabilities.supported_version_mask;
+            for (uint32_t i = 0; i < capabilities.max_version_variants; i++) {
                 current_version = increment_bitmask(current_version, mask);
             }
         }
