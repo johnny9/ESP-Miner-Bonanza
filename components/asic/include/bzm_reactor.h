@@ -70,6 +70,9 @@ typedef struct {
      * instead of assuming every engine shares one batch identity. */
     bzm_assignment_t previous_assignments[BZM_MAX_ACTIVE_WORK];
     uint8_t next_engine_sequence[BZM_MAX_ACTIVE_WORK];
+    /* Retired wire identities remain recognizable after pool invalidation.
+     * They are expected stale work, not evidence of parser corruption. */
+    uint64_t retired_sequences[BZM_MAX_ACTIVE_WORK][4];
     /* A completed full dispatch has common job/version/time metadata across
      * all engines. Retain that compact descriptor while the next sequence is
      * programmed so in-flight results from both hardware generations map. */
@@ -81,9 +84,8 @@ typedef struct {
     uint32_t epoch;
     bool flush_pending;
     bool flush_complete;
-    /* Clean jobs invalidate every old pool handle. Results are deliberately
-     * ignored until all engines have received the replacement generation,
-     * matching the BIRDS flush boundary. */
+    /* Hardware reset / sequence-reuse barrier only. Ordinary clean jobs
+     * preserve wire identities and allow results from each updated engine. */
     bool results_quarantined;
 } bzm_reactor_t;
 
@@ -106,6 +108,11 @@ bool bzm_reactor_begin_flush(bzm_reactor_t *reactor);
 void bzm_reactor_finish_flush(bzm_reactor_t *reactor);
 bool bzm_reactor_is_flush_pending(const bzm_reactor_t *reactor);
 bool bzm_reactor_results_quarantined(const bzm_reactor_t *reactor);
+// Retire pool ownership while preserving balanced scheduling and wire IDs.
+bool bzm_reactor_invalidate_work(bzm_reactor_t *reactor);
+// True only for a recognized, retired engine/sequence identity.
+bool bzm_reactor_result_is_stale(bzm_reactor_t *reactor,
+                                const bzm_raw_result_t *raw);
 // Complete one clean-job barrier and retire every prior assignment/handle.
 // An idle reactor invalidates the store without emitting hardware flush work.
 bool bzm_reactor_clear_work(bzm_reactor_t *reactor);

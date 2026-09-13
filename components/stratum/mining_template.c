@@ -108,6 +108,7 @@ bool mining_template_build_miner_job(const miner_job_t *job,
     template->clean_jobs = job->clean_jobs;
     template->share.protocol = (mining_protocol_t)job->type;
     template->share.pool_id = job->pool_id;
+    template->share.work_generation = job->work_generation;
     template->share.pool_difficulty = job->pool_diff;
     template->share.numeric_job_id = (uint32_t)strtoul(job->job_id, NULL, 10);
     reverse_32bit_words(job->prev_hash, template->prev_block_hash);

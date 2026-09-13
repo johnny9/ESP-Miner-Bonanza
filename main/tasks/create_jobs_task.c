@@ -15,6 +15,7 @@
 #include "system.h"
 #include "esp_heap_caps.h"
 #include "utils.h"
+#include "stratum_task.h"
 
 static const char *TAG = "create_jobs_task";
 
@@ -22,7 +23,8 @@ static bool generate_work_from_miner_job(GlobalState *state, const miner_job_t *
                                          uint64_t extranonce2, uint32_t version,
                                          bool clean_jobs)
 {
-    if (!state->ASIC_initalized) return false;
+    if (!state->ASIC_initalized ||
+        !stratum_work_is_current(state, job->work_generation)) return false;
     mining_template_t template;
     if (!mining_template_build_miner_job(job, extranonce2, version, &template)) {
         ESP_LOGE(TAG, "Unable to materialize pool job");
@@ -43,6 +45,7 @@ void create_jobs_task(void *pvParameters)
     miner_job_t *current_work = NULL;
     bool current_work_sent = false;
     bool clean_jobs_pending = false;
+    uint64_t current_work_generation = UINT64_MAX;
     uint64_t extranonce_2 = 0;
     uint32_t current_version = 0;
     int timeout_ms = ASIC_get_asic_job_frequency_ms(GLOBAL_STATE);
@@ -63,7 +66,11 @@ void create_jobs_task(void *pvParameters)
             current_work = new_work;
             GLOBAL_STATE->active_job_slot_idx = (uint8_t)(slot_notify % MINER_JOB_POOL_SIZE);
             current_work_sent = false;
-            clean_jobs_pending = new_work->clean_jobs;
+            // Preserve a clean boundary even when a later non-clean notify
+            // overwrites the task notification before this task consumes it.
+            clean_jobs_pending = new_work->clean_jobs ||
+                new_work->work_generation != current_work_generation;
+            current_work_generation = new_work->work_generation;
             GLOBAL_STATE->SYSTEM_MODULE.last_work_received_us = esp_timer_get_time();
             current_version = new_work->version;
 
@@ -75,7 +82,7 @@ void create_jobs_task(void *pvParameters)
 
             extranonce_2 = 0;
 
-            if (!current_work->clean_jobs) {
+            if (!clean_jobs_pending) {
                 // Staged job for next cycle, let current ASIC cycle finish
                 continue;
             }

@@ -433,6 +433,39 @@ TEST_CASE("Generic result routing uses stored protocol metadata only",
     assert_hex("11223344", capture.share.extranonce2_bin, 4);
 }
 
+static bool reject_retired_generation(void *context, uint64_t generation)
+{
+    (void)context;
+    return generation == 8;
+}
+
+TEST_CASE("Result generation rejects an old job before submission and accounting",
+          "[asic][result][generation]")
+{
+    asic_job_store_t *store = new_store();
+    callback_capture_t capture = {.transport_ready = true};
+    asic_result_context_t context = {
+        .job_store = store, .callback_context = &capture,
+        .work_is_current = reject_retired_generation,
+    };
+    mining_template_t template = owned_template(MINING_PROTOCOL_SV1, "reused-id", "00", 1e-20);
+    template.share.work_generation = 7;
+    asic_result_t result = result_for(0);
+    TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
+    TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
+    TEST_ASSERT_EQUAL(0, capture.sv1_count);
+    TEST_ASSERT_EQUAL(0, capture.account_count);
+    // Identical pool/job identity in the new generation remains usable.
+    template.share.work_generation = 8;
+    TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
+    TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
+    TEST_ASSERT_EQUAL(1, capture.sv1_count);
+    TEST_ASSERT_EQUAL(1, capture.account_count);
+    TEST_ASSERT_EQUAL_UINT32(8, capture.share.work_generation);
+    mining_template_free(&template);
+    delete_store(store);
+}
+
 TEST_CASE("Generic result rejects stale work and accounts low difficulty",
           "[asic][result]")
 {
@@ -443,7 +476,7 @@ TEST_CASE("Generic result rejects stale work and accounts low difficulty",
         .callback_context = &capture,
     };
     asic_result_t result = result_for(0x1234);
-    TEST_ASSERT_EQUAL(ASIC_RESULT_REJECTED_WORK,
+    TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK,
                       asic_result_handle(&result, &context,
                                          &RESULT_CALLBACKS));
 
@@ -545,6 +578,7 @@ TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
     miner_job_t slot = {
         .type = JOB_TYPE_V1, .version = legacy.version, .ntime = legacy.ntime,
         .nbits = legacy.target, .clean_jobs = true, .pool_id = 7,
+        .work_generation = 123,
         .pool_diff = 1234.5, .version_mask = 0x00006000,
         .extranonce1 = {0xaa, 0xbb}, .extranonce1_len = 2,
         .extranonce2_len = 4, .merkle_path_count = 1,
@@ -567,6 +601,7 @@ TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
             &slot, 0x11223344, slot.version, &actual));
         TEST_ASSERT_EQUAL_UINT8(protocol, actual.share.protocol);
         TEST_ASSERT_EQUAL_UINT8(7, actual.share.pool_id);
+        TEST_ASSERT_EQUAL_UINT32(123, actual.share.work_generation);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.prev_block_hash, actual.prev_block_hash, 32);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.merkle_root, actual.merkle_root, 32);
         TEST_ASSERT_EQUAL_STRING("42", actual.share.job_id);

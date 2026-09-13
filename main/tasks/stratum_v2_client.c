@@ -167,6 +167,7 @@ int stratum_v2_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *
     sv2_conn_t *conn = s_v2_conn;
 
     if (!transport || !conn || !conn->noise_ctx ||
+        active_job->share.work_generation != GLOBAL_STATE->stratum_work_generation ||
         conn->pool_idx != active_job->share.pool_id) {
         pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
         return -1;
@@ -249,9 +250,7 @@ static void stratum_v2_handle_new_extended_mining_job(GlobalState *GLOBAL_STATE,
 
         GLOBAL_STATE->SYSTEM_MODULE.work_received++;
         SYSTEM_notify_new_ntime(GLOBAL_STATE, job->ntime);
-        if (GLOBAL_STATE->create_jobs_task_handle) {
-            xTaskNotify(GLOBAL_STATE->create_jobs_task_handle, slot, eSetValueWithOverwrite);
-        }
+        stratum_publish_job(GLOBAL_STATE, job, slot);
     }
 }
 
@@ -300,9 +299,7 @@ static void stratum_v2_handle_new_mining_job(GlobalState *GLOBAL_STATE, sv2_conn
 
         GLOBAL_STATE->SYSTEM_MODULE.work_received++;
         SYSTEM_notify_new_ntime(GLOBAL_STATE, job->ntime);
-        if (GLOBAL_STATE->create_jobs_task_handle) {
-            xTaskNotify(GLOBAL_STATE->create_jobs_task_handle, slot, eSetValueWithOverwrite);
-        }
+        stratum_publish_job(GLOBAL_STATE, job, slot);
     }
 }
 
@@ -356,9 +353,7 @@ static void stratum_v2_handle_set_new_prev_hash(GlobalState *GLOBAL_STATE, sv2_c
 
         GLOBAL_STATE->SYSTEM_MODULE.work_received++;
         SYSTEM_notify_new_ntime(GLOBAL_STATE, job->ntime);
-        if (GLOBAL_STATE->create_jobs_task_handle) {
-            xTaskNotify(GLOBAL_STATE->create_jobs_task_handle, slot, eSetValueWithOverwrite);
-        }
+        stratum_publish_job(GLOBAL_STATE, job, slot);
     } else {
         ESP_LOGW(TAG, "SetNewPrevHash for unknown job_id %lu", (unsigned long)job_id);
     }

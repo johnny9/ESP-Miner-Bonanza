@@ -26,6 +26,7 @@ typedef struct {
     uint32_t         ntime;
     uint32_t         nbits;
     bool             clean_jobs;
+    uint64_t         work_generation;
 
     // Multi-pool difficulty and version rolling configuration
     double           pool_diff;

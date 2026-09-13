@@ -24,6 +24,35 @@ static GlobalState *s_global_state = NULL;
 static volatile bool s_should_reconnect = false;
 static TaskHandle_t s_heartbeat_task_handle = NULL;
 
+void stratum_invalidate_work(GlobalState *state)
+{
+    pthread_mutex_lock(&state->transport_mutex);
+    if (++state->stratum_work_generation == 0)
+        ++state->stratum_work_generation;
+    pthread_mutex_unlock(&state->transport_mutex);
+}
+
+bool stratum_work_is_current(GlobalState *state, uint64_t generation)
+{
+    pthread_mutex_lock(&state->transport_mutex);
+    bool current = generation == state->stratum_work_generation;
+    pthread_mutex_unlock(&state->transport_mutex);
+    return current;
+}
+
+void stratum_publish_job(GlobalState *state, miner_job_t *job, uint8_t slot)
+{
+    /* Invalidation and the final socket write share a lock. A result already
+     * being hashed cannot escape under a reused job ID or a new session. */
+    pthread_mutex_lock(&state->transport_mutex);
+    if (job->clean_jobs && ++state->stratum_work_generation == 0)
+        ++state->stratum_work_generation;
+    job->work_generation = state->stratum_work_generation;
+    pthread_mutex_unlock(&state->transport_mutex);
+    if (state->create_jobs_task_handle)
+        xTaskNotify(state->create_jobs_task_handle, slot, eSetValueWithOverwrite);
+}
+
 void stratum_request_reconnect(void)
 {
     s_should_reconnect = true;

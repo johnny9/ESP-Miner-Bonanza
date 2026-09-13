@@ -24,6 +24,25 @@ The timestamp budget is 60, matching the BIRDS production scheduling model.
 Steady work advances every 100 ms, completing a measured full engine rotation
 in roughly 39 seconds so work is refreshed before that timestamp budget
 expires.
+
+Clean pool jobs immediately retire old submission ownership, but preserve the
+balanced engine cursor and per-engine wire sequence counters. Each newly
+programmed engine can produce attributable current results while the other
+engines are being replaced. Known retired sequences are dropped as stale;
+unrecognized or invalid current frames retain the runtime validation path.
+The reserved flush sequence is never used for normal work. Before a wire
+sequence is reused, the hardware flush, receive drain and complete replacement
+barrier still run; clean jobs arriving during that barrier do not reset its
+progress. Enhanced-mode FIFO/sequence encoding is retained when a pool declines
+version rolling, with all four variants using the permitted base version.
+When no current result is available, the result task blocks for one scheduler
+tick outside the reactor mutex. This lets lower-priority pool transitions
+acquire the mutex even while delayed results are being discarded.
+
+Pool/session generations follow owned work through nonce validation and are
+checked under the transport mutex at the final socket write. A reconnect or
+clean notification invalidates pending submissions even when the new pool
+reuses a job ID. Coalesced task notifications retain the generation boundary.
 The ASIC-facing PIO link remains at the qualified 5 Mbaud rate. The separate
 raw bridge-to-ESP UART runs at 2 Mbaud, more than twelve times its 160 kbit/s
 measured receive payload budget, to provide board-level signal margin without
@@ -64,6 +83,11 @@ saved user target in 25 MHz steps. It waits for a full work replacement after
 each step so mining remains synchronized while clocks change. The manual path
 does not apply pass-rate qualification, per-domain frequency caps, or automatic
 rollback.
+
+Clock changes retire pre-transition work and start a bounded replacement
+generation. Clean notifications do not restart that in-progress generation.
+Completion requires a full engine traversal and locally valid current work;
+the existing proof deadlines and power/bridge interlocks remain active.
 
 Changing the AxeOS target while mining starts the same process without an ESP
 restart. Downward changes use bounded 25 MHz steps. A requested voltage increase

@@ -77,6 +77,7 @@ int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const mining_template_t *
     pthread_mutex_lock(&GLOBAL_STATE->transport_mutex);
     esp_transport_handle_t transport = GLOBAL_STATE->transport;
     if (transport == NULL || s_v1_conn == NULL ||
+        active_job->share.work_generation != GLOBAL_STATE->stratum_work_generation ||
         s_v1_conn->pool_idx != active_job->share.pool_id) {
         pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
         return -1;
@@ -313,9 +314,7 @@ esp_err_t stratum_v1_run(GlobalState *GLOBAL_STATE, uint16_t pool_idx)
                     }
                     target_job->extranonce2_len = s_v1_conn->extranonce2_len;
 
-                    if (GLOBAL_STATE->create_jobs_task_handle) {
-                        xTaskNotify(GLOBAL_STATE->create_jobs_task_handle, target_slot, eSetValueWithOverwrite);
-                    }
+                    stratum_publish_job(GLOBAL_STATE, target_job, target_slot);
                 }
                 break;
             }

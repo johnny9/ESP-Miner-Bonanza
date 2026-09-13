@@ -23,6 +23,7 @@
 
 #include "global_state.h"
 #include "system.h"
+#include "stratum_task.h"
 #include "i2c_bitaxe.h"
 #include "INA260.h"
 #include "adc.h"
@@ -399,6 +400,7 @@ esp_err_t SYSTEM_init_peripherals(GlobalState * GLOBAL_STATE) {
 
 void SYSTEM_clean_jobs_queue(GlobalState * GLOBAL_STATE)
 {
+    stratum_invalidate_work(GLOBAL_STATE);
     ESP_LOGI(TAG, "Clean Jobs: clearing queue");
     if (!ASIC_clear_work(GLOBAL_STATE)) {
         ESP_LOGE(TAG, "ASIC clean-job barrier failed");

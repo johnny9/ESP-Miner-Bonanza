@@ -1388,8 +1388,9 @@ static bool frequency_task_wait_for_work_replacement(uint32_t generation)
 {
     bool pending = false;
     uint32_t replacement_generation = 0;
+    uint32_t completed_generation = 0;
     if (!BZM_work_replacement_snapshot(
-            &replacement_generation, &pending)) {
+            &replacement_generation, &completed_generation, &pending)) {
         return false;
     }
     if (pending) {
@@ -1398,13 +1399,18 @@ static bool frequency_task_wait_for_work_replacement(uint32_t generation)
                  "before the next frequency step",
                  (unsigned long)replacement_generation);
     }
+    const uint32_t required_generation = replacement_generation;
     while (pending) {
         if (!frequency_task_wait(
                 BZM_FREQUENCY_TASK_POLL_MS, generation) ||
             !BZM_work_replacement_snapshot(
-                &replacement_generation, &pending)) {
+                &replacement_generation, &completed_generation, &pending)) {
             return false;
         }
+        // A clean job can start another fast rotation after this one finishes.
+        // It must not extend the completed PLL replacement indefinitely.
+        if ((int32_t)(completed_generation - required_generation) >= 0)
+            break;
     }
     return true;
 }

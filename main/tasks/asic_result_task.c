@@ -47,6 +47,7 @@ static int submit_share(void *context, const asic_share_submission_t *share)
         .share = {
             .protocol = share->protocol,
             .pool_id = share->pool_id,
+            .work_generation = share->work_generation,
             .job_id = (char *)share->job_id,
             .extranonce2 = (char *)share->extranonce2,
         },
@@ -90,6 +91,12 @@ static const asic_result_callbacks_t RESULT_CALLBACKS = {
     .account_share = account_share,
 };
 
+static bool work_is_current(void *context, uint64_t generation)
+{
+    return stratum_work_is_current(
+        ((result_callback_context *)context)->state, generation);
+}
+
 static asic_result_status_t handle_result(GlobalState *state,
                                           const asic_result_t *result)
 {
@@ -102,6 +109,7 @@ static asic_result_status_t handle_result(GlobalState *state,
         .self_test = state->SELF_TEST_MODULE.is_active,
         .username = state->SYSTEM_MODULE.pools[active_pool_index].user,
         .callback_context = &callback_context,
+        .work_is_current = work_is_current,
     };
     return asic_result_handle(result, &context, &RESULT_CALLBACKS);
 }

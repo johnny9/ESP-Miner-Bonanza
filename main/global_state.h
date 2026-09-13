@@ -177,6 +177,8 @@ typedef struct GlobalState
 
     esp_transport_handle_t transport;
     pthread_mutex_t transport_mutex;
+    // Pool/session ownership, protected by transport_mutex through submission.
+    uint64_t stratum_work_generation;
 
     bool ASIC_initalized;
     bool psram_is_available;

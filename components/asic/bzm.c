@@ -10,8 +10,15 @@ static size_t bzm_build_versions(uint32_t base_version,
                                  uint32_t versions[BZM_VERSION_VARIANTS])
 {
     versions[0] = base_version;
-    if (!enhanced_mode || version_mask == 0) {
+    if (!enhanced_mode) {
         return 1;
+    }
+    if (version_mask == 0) {
+        // Hardware remains in enhanced mode when pool negotiation declines
+        // rolling. Keep four sequence/FIFO entries, all at the base version.
+        for (size_t i = 1; i < BZM_VERSION_VARIANTS; ++i)
+            versions[i] = base_version;
+        return BZM_VERSION_VARIANTS;
     }
 
     /* Match BIRDS/cgminer's vmask_001[0,2,4,8] construction. The

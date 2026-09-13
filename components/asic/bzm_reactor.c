@@ -6,7 +6,17 @@
 
 static uint16_t sequence_space(const bzm_reactor_t *reactor)
 {
-    return reactor->config.enhanced_mode ? 64 : 256;
+    /* The highest sequence is reserved for hardware flush/sentinel work. */
+    return reactor->config.enhanced_mode ? 63 : 255;
+}
+
+static void retire_assignment(bzm_reactor_t *reactor,
+                               const bzm_assignment_t *assignment)
+{
+    if (assignment->active) {
+        reactor->retired_sequences[assignment->logical_engine_id][assignment->logical_sequence / 64] |=
+            UINT64_C(1) << (assignment->logical_sequence % 64);
+    }
 }
 
 static uint16_t batch_sequence_space(const bzm_reactor_t *reactor)
@@ -170,6 +180,8 @@ void bzm_reactor_finish_flush(bzm_reactor_t *reactor)
            sizeof(reactor->previous_assignments));
     memset(reactor->next_engine_sequence, 0,
            sizeof(reactor->next_engine_sequence));
+    memset(reactor->retired_sequences, 0,
+           sizeof(reactor->retired_sequences));
     reactor->previous_batch = (bzm_assignment_t){0};
     reactor->previous_batch_complete = false;
     reactor->current_batch_complete = false;
@@ -188,6 +200,43 @@ bool bzm_reactor_is_flush_pending(const bzm_reactor_t *reactor)
 bool bzm_reactor_results_quarantined(const bzm_reactor_t *reactor)
 {
     return reactor != NULL && reactor->results_quarantined;
+}
+
+bool bzm_reactor_invalidate_work(bzm_reactor_t *reactor)
+{
+    if (reactor == NULL || reactor->job_store == NULL)
+        return false;
+    asic_job_store_invalidate_all(reactor->job_store);
+    for (size_t i = 0; i < BZM_MAX_ACTIVE_WORK; ++i) {
+        retire_assignment(reactor, &reactor->assignments[i]);
+        retire_assignment(reactor, &reactor->previous_assignments[i]);
+    }
+    if (++reactor->epoch == 0)
+        reactor->epoch = 1;
+    /* Keep the cursor, sequence counters and any hardware reuse barrier.
+     * New assignments become attributable individually in the new epoch. */
+    return true;
+}
+
+bool bzm_reactor_result_is_stale(bzm_reactor_t *reactor,
+                                const bzm_raw_result_t *raw)
+{
+    uint16_t engine;
+    if (reactor == NULL || raw == NULL ||
+        !bzm_engine_logical_id(raw->engine_id, &engine) ||
+        !bzm_topology_asic_index(raw->asic_id, NULL) ||
+        !bzm_raw_result_has_valid_nonce(raw))
+        return false;
+    uint8_t sequence = reactor->config.enhanced_mode
+        ? raw->sequence_id >> 2 : raw->sequence_id;
+    bzm_assignment_t *assignment = find_assignment(
+        reactor, raw->engine_id, sequence);
+    if (assignment != NULL &&
+        (assignment->epoch != reactor->epoch ||
+         !asic_job_store_contains(reactor->job_store, assignment->handle)))
+        return true;
+    return (reactor->retired_sequences[engine][sequence / 64] &
+            (UINT64_C(1) << (sequence % 64))) != 0;
 }
 
 bool bzm_reactor_clear_work(bzm_reactor_t *reactor)
@@ -223,6 +272,11 @@ bzm_assign_status_t bzm_reactor_assign(bzm_reactor_t *reactor,
     }
     if (reactor->flush_pending) return BZM_ASSIGN_FLUSH_REQUIRED;
     uint16_t schedule_index = reactor->next_engine;
+    if (reactor->next_engine_sequence[schedule_index] >= sequence_space(reactor)) {
+        /* Never alias delayed work by silently wrapping a hardware ID. The
+         * driver completes the existing flush/drain/replacement barrier. */
+        return BZM_ASSIGN_FLUSH_REQUIRED;
+    }
     bzm_engine_location_t engine;
     if (!scheduled_engine_at(schedule_index, &engine)) {
         return BZM_ASSIGN_INVALID;
@@ -277,6 +331,7 @@ bzm_assign_status_t bzm_reactor_assign(bzm_reactor_t *reactor,
     bzm_assignment_t *previous =
         &reactor->previous_assignments[assignment_index];
     if (previous->active) {
+        retire_assignment(reactor, previous);
         asic_job_store_release(reactor->job_store, previous->handle);
     }
     *previous = assignment->active ? *assignment : (bzm_assignment_t){0};
@@ -304,7 +359,7 @@ bzm_assign_status_t bzm_reactor_assign(bzm_reactor_t *reactor,
     if (reactor->next_engine == 0)
         reactor->results_quarantined = false;
     reactor->next_engine_sequence[schedule_index] =
-        (uint8_t)((logical_sequence + 1) % sequence_space(reactor));
+        (uint8_t)(logical_sequence + 1);
     if (assigned_work != NULL) *assigned_work = work;
     return BZM_ASSIGN_OK;
 }
@@ -413,7 +468,7 @@ bool bzm_reactor_map_result(bzm_reactor_t *reactor,
 {
     uint16_t logical_engine_id;
     if (reactor == NULL || raw == NULL || event == NULL ||
-        reactor->flush_pending ||
+        reactor->flush_pending || reactor->results_quarantined ||
         !bzm_engine_logical_id(raw->engine_id, &logical_engine_id) ||
         !bzm_raw_result_has_valid_nonce(raw)) {
         return false;

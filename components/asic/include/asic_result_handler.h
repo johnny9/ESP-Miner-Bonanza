@@ -25,6 +25,7 @@ typedef struct {
     uint32_t target;
     mining_protocol_t protocol;
     uint8_t pool_id;
+    uint64_t work_generation;
 } asic_share_submission_t;
 
 typedef struct {
@@ -32,6 +33,7 @@ typedef struct {
     bool self_test;
     const char *username;
     void *callback_context;
+    bool (*work_is_current)(void *context, uint64_t generation);
 } asic_result_context_t;
 
 typedef struct {
@@ -49,6 +51,7 @@ typedef struct {
 
 typedef enum {
     ASIC_RESULT_REJECTED_WORK,
+    ASIC_RESULT_STALE_WORK,
     ASIC_RESULT_RECORDED_SELF_TEST,
     ASIC_RESULT_ACCOUNTED,
 } asic_result_status_t;

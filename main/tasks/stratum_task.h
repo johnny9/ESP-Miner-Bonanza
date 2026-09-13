@@ -3,9 +3,13 @@
 
 #include "global_state.h"
 #include <stdbool.h>
+#include "miner_job.h"
 
 // Manages network connectivity, pool failover/heartbeat, and dispatches to V1/V2 protocol drivers.
 void stratum_task(void *pvParameters);
+void stratum_publish_job(GlobalState *state, miner_job_t *job, uint8_t slot);
+void stratum_invalidate_work(GlobalState *state);
+bool stratum_work_is_current(GlobalState *state, uint64_t generation);
 
 // Request the active stratum client to reconnect (e.g. on primary pool recovery or pool settings change).
 void stratum_request_reconnect(void);

@@ -92,6 +92,7 @@ typedef struct {
     atomic_uint_fast32_t running_local_rejection_streak;
     atomic_bool running_local_recovery_pending;
     atomic_uint_fast32_t work_replacement_generation;
+    uint32_t work_replacement_completed; // Protected by REACTOR_LOCK.
     asic_driver_health_t driver_health;
     uint16_t fast_dispatch_remaining;
     bzm_result_identity_t result_dedup[BZM_RESULT_DEDUP_CAPACITY];
@@ -346,6 +347,7 @@ uint8_t BZM_init(GlobalState * state)
     atomic_store_explicit(&RUNNING_LOCAL_RECOVERY_PENDING, false, memory_order_seq_cst);
     atomic_store_explicit(
         &WORK_REPLACEMENT_GENERATION, 0, memory_order_relaxed);
+    BZM_STATE->work_replacement_completed = 0;
     reset_result_dedup();
 
     uint16_t engine_count = state->DEVICE_CONFIG.family.asic.core_count;
@@ -423,17 +425,15 @@ bool BZM_send_work(GlobalState * state, const mining_template_t * template)
 
     pthread_mutex_lock(&REACTOR_LOCK);
     if (template->clean_jobs) {
-        if (!bzm_reactor_clear_work(&REACTOR)) {
+        if (!bzm_reactor_invalidate_work(&REACTOR)) {
             pthread_mutex_unlock(&REACTOR_LOCK);
             atomic_fetch_add_explicit(&RUNNING_DISPATCH_FAILURES, 1, memory_order_relaxed);
-            ESP_LOGE(TAG, "Unable to flush engines for clean work");
+            ESP_LOGE(TAG, "Unable to invalidate clean work");
             return false;
         }
         reset_result_dedup();
-        start_fast_dispatch_locked(REACTOR.config.engine_count);
-        ESP_LOGI(TAG,
-                 "BZM independent engine rotation starting; dispatch interval %.0f ms",
-                 BZM_FAST_JOB_INTERVAL_MS);
+        if (FAST_DISPATCH_REMAINING == 0)
+            start_fast_dispatch_locked(REACTOR.config.engine_count);
     }
     bool results_were_quarantined =
         bzm_reactor_results_quarantined(&REACTOR);
@@ -442,12 +442,16 @@ bool BZM_send_work(GlobalState * state, const mining_template_t * template)
     bzm_assign_status_t status =
         bzm_reactor_assign(&REACTOR, template, &assigned_work);
     if (status == BZM_ASSIGN_FLUSH_REQUIRED) {
-        if (!bzm_reactor_clear_work(&REACTOR)) {
+        if (!bzm_reactor_begin_flush(&REACTOR)) {
             pthread_mutex_unlock(&REACTOR_LOCK);
             atomic_fetch_add_explicit(&RUNNING_DISPATCH_FAILURES, 1, memory_order_relaxed);
             ESP_LOGE(TAG, "Unable to complete BZM flush barrier");
             return false;
         }
+        bzm_reactor_finish_flush(&REACTOR);
+        reset_result_dedup();
+        start_fast_dispatch_locked(REACTOR.config.engine_count);
+        results_were_quarantined = true;
         status = bzm_reactor_assign(&REACTOR, template, &assigned_work);
     }
     bool rotation_complete = status == BZM_ASSIGN_OK &&
@@ -456,6 +460,9 @@ bool BZM_send_work(GlobalState * state, const mining_template_t * template)
         ? TRANSPORT.asic_count : 0;
     bool fast_dispatch_complete = status == BZM_ASSIGN_OK &&
         FAST_DISPATCH_REMAINING == 1;
+    if (fast_dispatch_complete)
+        BZM_STATE->work_replacement_completed = (uint32_t)atomic_load_explicit(
+            &WORK_REPLACEMENT_GENERATION, memory_order_relaxed);
     if (status == BZM_ASSIGN_OK && FAST_DISPATCH_REMAINING != 0)
         --FAST_DISPATCH_REMAINING;
     if (status == BZM_ASSIGN_OK && results_were_quarantined &&
@@ -504,11 +511,11 @@ bool BZM_clear_work(GlobalState * state)
 {
     (void) state;
     pthread_mutex_lock(&REACTOR_LOCK);
-    bool cleared = !INITIALIZED || bzm_reactor_clear_work(&REACTOR);
+    bool cleared = !INITIALIZED || bzm_reactor_invalidate_work(&REACTOR);
     if (cleared) {
         reset_result_dedup();
-        start_fast_dispatch_locked(
-            INITIALIZED ? REACTOR.config.engine_count : 0);
+        if (INITIALIZED && FAST_DISPATCH_REMAINING == 0)
+            start_fast_dispatch_locked(REACTOR.config.engine_count);
     }
     pthread_mutex_unlock(&REACTOR_LOCK);
     if (!cleared) {
@@ -542,20 +549,24 @@ asic_event_t * BZM_process_work(GlobalState * state)
     bool received = bzm_serial_read_result(&TRANSPORT, &raw, 20);
     if (received && bzm_reactor_results_quarantined(&REACTOR)) {
         pthread_mutex_unlock(&REACTOR_LOCK);
+        vTaskDelay(1);
         return NULL;
     }
     bool nonce_frame = received && bzm_raw_result_has_valid_nonce(&raw);
     bool mapped = nonce_frame && bzm_reactor_map_result(&REACTOR, &raw, &event);
+    bool stale = nonce_frame && !mapped &&
+        bzm_reactor_result_is_stale(&REACTOR, &raw);
     bool duplicate = mapped && result_is_duplicate(&event.data.share);
     pthread_mutex_unlock(&REACTOR_LOCK);
     if (duplicate) {
         atomic_fetch_add_explicit(&RUNNING_DUPLICATE_RESULTS, 1,
                                   memory_order_relaxed);
+        vTaskDelay(1);
         return NULL;
     }
     if (mapped) {
         atomic_fetch_add_explicit(&RUNNING_MAPPED_RESULTS, 1, memory_order_relaxed);
-    } else if (nonce_frame) {
+    } else if (nonce_frame && !stale) {
         /* An unchecksummed frame that looks like a nonce can contain a
          * corrupted ASIC/engine/sequence field. Recovery is proven only when
          * a later mapped result passes full local hash validation. */
@@ -566,6 +577,13 @@ asic_event_t * BZM_process_work(GlobalState * state)
         atomic_fetch_add_explicit(&RUNNING_MAPPING_REJECTION_STREAK, 1,
                                   memory_order_seq_cst);
     }
+    /* The lower-priority Stratum task must be able to acquire REACTOR_LOCK
+     * to retire a disconnected pool. Repeated timed reads followed by an
+     * immediate lock reacquisition otherwise starve that transition when
+     * all arriving results are stale. Block outside the lock for one tick;
+     * taskYIELD alone cannot schedule a lower-priority waiter. */
+    if (!mapped)
+        vTaskDelay(1);
     return mapped ? &event : NULL;
 }
 
@@ -720,14 +738,15 @@ bool BZM_frequency_domain_stats_snapshot(
     return true;
 }
 
-bool BZM_work_replacement_snapshot(uint32_t *generation, bool *pending)
+bool BZM_work_replacement_snapshot(uint32_t *generation, uint32_t *completed, bool *pending)
 {
-    if (generation == NULL || pending == NULL) return false;
+    if (generation == NULL || completed == NULL || pending == NULL) return false;
     pthread_mutex_lock(&REACTOR_LOCK);
     *pending = INITIALIZED && FAST_DISPATCH_REMAINING != 0;
-    pthread_mutex_unlock(&REACTOR_LOCK);
     *generation = (uint32_t)atomic_load_explicit(
         &WORK_REPLACEMENT_GENERATION, memory_order_relaxed);
+    *completed = BZM_STATE->work_replacement_completed;
+    pthread_mutex_unlock(&REACTOR_LOCK);
     return true;
 }
 
@@ -1583,6 +1602,7 @@ bzm_bringup_outcome_t BZM_staged_frequency_domains_step_live(
             target_mhz, allow_initial_jump, report);
     if (outcome == BZM_BRINGUP_GOOD) {
         /* Keep mining live; replace work that crossed the PLL transition. */
+        bzm_reactor_invalidate_work(&REACTOR);
         bzm_serial_discard_pending_results(&TRANSPORT);
         reset_result_dedup();
         start_fast_dispatch_locked(REACTOR.config.engine_count);

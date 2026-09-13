@@ -14,7 +14,7 @@ asic_result_status_t asic_result_handle(
     mining_template_t template;
     if (!asic_job_store_snapshot(context->job_store, result->work_handle,
                                  &template)) {
-        return ASIC_RESULT_REJECTED_WORK;
+        return ASIC_RESULT_STALE_WORK;
     }
 
     bool metadata_valid =
@@ -50,6 +50,7 @@ asic_result_status_t asic_result_handle(
         .target = template.target,
         .protocol = template.share.protocol,
         .pool_id = template.share.pool_id,
+        .work_generation = template.share.work_generation,
     };
     memcpy(share.extranonce2_bin, template.share.extranonce2_bin,
            template.share.extranonce2_len);
@@ -61,6 +62,13 @@ asic_result_status_t asic_result_handle(
         }
         mining_template_free(&template);
         return ASIC_RESULT_RECORDED_SELF_TEST;
+    }
+
+    if (!asic_job_store_contains(context->job_store, result->work_handle) ||
+        (context->work_is_current != NULL &&
+         !context->work_is_current(context->callback_context, share.work_generation))) {
+        mining_template_free(&template);
+        return ASIC_RESULT_STALE_WORK;
     }
 
     if (share.pool_difficulty > 0.0 && share.nonce_diff >= share.pool_difficulty) {
@@ -89,6 +97,14 @@ asic_result_status_t asic_result_handle(
         }
     }
 
+    // A socket callback can yield while a clean job or reconnect retires this
+    // result. Expected stale work must not be credited as new runtime proof.
+    if (!asic_job_store_contains(context->job_store, result->work_handle) ||
+        (context->work_is_current != NULL &&
+         !context->work_is_current(context->callback_context, share.work_generation))) {
+        mining_template_free(&template);
+        return ASIC_RESULT_STALE_WORK;
+    }
     if (callbacks->account_share != NULL) {
         callbacks->account_share(context->callback_context, &share);
     }
