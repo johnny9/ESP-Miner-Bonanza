@@ -103,7 +103,9 @@ class SelfTestRegressionTest(MinerTestCase):
         self.assertEqual(status["status"], "running", status)
         with self.assertRaisesRegex(InterfaceError, "409"):
             await self.device.api.post_json("/api/system/selftest", {"action": "start"})
-        status = await self._wait(lambda s: s["acceptedNonces"] >= 2 or s["status"] != "running")
+        status = await self._wait(
+            lambda s: s["acceptedNonces"] >= 2 or s["status"] != "running", timeout=360
+        )
         self.assertEqual(status["status"], "running", status)
         await self._assert_local_mining()
         status = await self._wait(lambda s: s["status"] in {"passed", "failed", "cancelled"})

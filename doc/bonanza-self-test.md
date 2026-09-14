@@ -44,7 +44,9 @@ are nonce-derived, not a claim of independent hardware register evidence.
 The board's maximum power is used when it has no calibrated self-test power
 target; finite positive power and the existing voltage/fan checks are required.
 
-Readiness and worker exit have 15-second limits; warmup has a 120-second limit.
+Readiness and worker exit have 15-second limits. Warmup has a 120-second limit
+for Bitmain and a 300-second limit for Bonanza's slower 800 MHz baseline.
+The 55°C warmup target and all temperature/fan limits are unchanged.
 Invalid thermal settings are rejected before local work starts. Temperature
 limits apply during warmup and the 30-second measurement. Unreliable domain
 samples fail instead of falling back to an aggregate pass. A failed worker or

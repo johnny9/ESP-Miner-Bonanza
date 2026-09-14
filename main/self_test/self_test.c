@@ -545,10 +545,15 @@ void self_test_task(void * pvParameters)
 
     self_test_set_fan_percent(GLOBAL_STATE, SELF_TEST_MIN_FAN_PERCENT);
     uint64_t warmup_start = esp_timer_get_time();
+    /* The low-power Bonanza baseline heats its four-chip cooler more slowly.
+     * Allow a longer bounded warmup without lowering the temperature target
+     * or bypassing the controller's fan and thermal interlocks. */
+    uint64_t warmup_timeout = GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge
+                                ? UINT64_C(300000000) : UINT64_C(120000000);
     while (asic_temp < warmup_temp)
     {
         self_test_check_running(GLOBAL_STATE);
-        if (self_test_deadline_expired(warmup_start, esp_timer_get_time(), 120000000)) {
+        if (self_test_deadline_expired(warmup_start, esp_timer_get_time(), warmup_timeout)) {
             self_test_show_message(GLOBAL_STATE, "WARMUP:TIMEOUT");
             tests_done(GLOBAL_STATE, false);
         }
@@ -647,11 +652,16 @@ void self_test_task(void * pvParameters)
             self_test_domain_status_t domain_status =
                 self_test_domain_status(domain_average, expected_domain_hashrate);
             asic_domain_measurement_t current;
+            esp_err_t current_result = ASIC_get_domain_measurement(GLOBAL_STATE, asic_nr, domain_nr, &current);
             uint64_t now = esp_timer_get_time();
-            if (ASIC_get_domain_measurement(GLOBAL_STATE, asic_nr, domain_nr, &current) != ESP_OK ||
+            /* A newer monitor sample may arrive after the final averaging
+             * pass. Both observations must be fresh; they need not be equal. */
+            if (current_result != ESP_OK ||
                 current.time_us == 0 || current.time_us > now ||
                 now - current.time_us > 3000000 ||
-                current.time_us != domain_average->last_sample_time_us)
+                domain_average->last_sample_time_us > now ||
+                now - domain_average->last_sample_time_us > 3000000 ||
+                current.time_us < domain_average->last_sample_time_us)
                 domain_status = SELF_TEST_DOMAIN_FAIL;
             ESP_LOGI(TAG, "ASIC %d domain %d %.2f GH/s: %lu samples, %lu rejected", asic_nr,
                      domain_nr, domain_hashrate, (unsigned long)sample_count,
