@@ -25,8 +25,9 @@ its existing difficulty-weighted per-chip counters and startup proof.
 
 The self-test no longer parses fake Stratum messages, allocates a coinbase,
 changes pool difficulty, creates a pool producer, or starts a protocol task.
-Wi-Fi and HTTP remain available, but local work does not wait for a network
-connection or NTP. The existing factory flag and BOOT trigger are supported.
+Hardware self-test validation uses USB serial. Diagnostic boots leave Wi-Fi
+and HTTP stopped, and local work does not wait for a network connection or NTP.
+The existing factory flag and physical BOOT trigger are supported.
 
 ## BZM operation
 
@@ -51,7 +52,7 @@ Invalid thermal settings are rejected before local work starts. Temperature
 limits apply during warmup and the 30-second measurement. Unreliable domain
 samples fail instead of falling back to an aggregate pass. A failed worker or
 shutdown overrides success. Failed cleanup keeps the fan at full speed and the
-factory flag set; cancellation can retry cleanup with BOOT or HTTP. The
+factory flag set; cancellation can retry cleanup with BOOT. The
 successful ten-second restart delay is retained.
 
 Bonanza still uses its existing measurement and thermal adapters. The typed
@@ -59,23 +60,21 @@ measurement store, general runtime controller, and shared fan policy from the
 broader refactor remain separate prerequisites for a wholesale stage 15/16
 migration.
 
-## Network control
+## USB hardware validation
 
-The existing local-network HTTP authorization and CORS policy applies.
+Connect the miner's ESP32 USB serial console and record a full diagnostic boot
+with `idf.py -p <USB_PORT> monitor`. Use the existing factory self-test
+configuration or physical BOOT trigger to enter diagnostics. Hold BOOT to
+cancel a running test or retry cleanup after a failure.
 
-- `GET /api/system/selftest` returns `status`, `active`, `cleanupConfirmed`,
-  `workerRunning`, a progress message, and accepted/rejected local nonce counts.
-- `POST /api/system/selftest` with `{"action":"start"}` requests a one-shot
-  manual diagnostic boot after the existing verified restart guard. It returns
-  202. An active/pending test or unavailable safe shutdown returns 409.
-- `POST /api/system/selftest` with `{"action":"cancel"}` requests cancellation.
-  The worker exits and power cleanup must succeed before restart. The factory
-  flag is cleared only after confirmed cancellation cleanup; cancellation never
-  records a pass.
+Retain the serial log from initialization through completion and restart. It
+must show local nonce counts, per-chip/domain results, confirmed cleanup with
+the worker stopped, and `SELF-TEST PASS!`. A cancelled run must report
+`SELF-TEST CANCELLED` after confirmed cleanup and restart without recording a
+pass. Capture the subsequent normal mining boot as restoration evidence.
 
-Status is for the current boot. Poll it during a test to retain completion
-before the automatic restart. A normal subsequent boot reports `idle`.
-Malformed or oversized requests return 400 without starting diagnostics.
+There are no HTTP self-test endpoints, network trigger flag, or network-only
+self-test runner. Normal mining boots still provide the ordinary network API.
 
 ## Validation
 
@@ -85,23 +84,23 @@ version progression, identical retries, task creation failure, cancelled and
 retired epochs, generation exhaustion, nonzero bounded waits, local/pool result
 isolation, the characterized first header, and domain/deadline policy.
 
-Local validation on 2026-09-14: 406 tests under each of GCC and Clang sanitizers,
-503 QEMU tests, 99 Axe-OS tests, and 17 inventory/coverage tooling tests pass.
+USB-only revision validation on 2026-09-14: 406 tests under each of GCC and Clang
+sanitizers, 503 QEMU tests, and 99 Axe-OS tests pass. API client generation removes
+the self-test controls.
 ESP-IDF 6.0.2 builds the application with 31% partition space free. Unchanged
 coverage gates pass: 78.5% line and 65.6% branch coverage within instrumented
-files, with 55/134 first-party production files instrumented. These are not
+files, with 55/133 first-party production files instrumented. These are not
 firmware-wide coverage percentages.
 
-`tools/hil/test_self_test_regression.py` is a testcode extension. Point an ignored
-`miner-test` profile's `runner.tests_dir` at this checkout's `tools/hil`, select
-`test_self_test_regression.py`, and use the existing explicit writable network
-profile and immutable application artifact. The extension uses testcode's
-identity, OTA, baseline, cleanup, and artifact lifecycle. It covers completed
-local mining/verified shutdown, duplicate and malformed starts, cancellation,
-and normal reboot; it requires no USB. A separate normal-pool check verifies
-restored settings and fresh public-pool shares after the suite.
+Logs are retained in `.cache/self-test-usb-validation/`. This revision has not
+been flashed or tested over USB: the available serial device has not been
+identified as Bonanza. USB hardware validation remains pending.
 
-### Network hardware validation
+### Historical network hardware validation
+
+The following evidence is for the earlier HTTP-enabled candidate. Its HTTP
+control and testcode self-test extension have since been removed. These runs
+do not constitute USB hardware validation of the current revision.
 
 Clean firmware commit `713420fc67956cfe0c1208e1a68afb88762712ea` was built as
 `bzm-selftest-713420fc` and installed through HTTP OTA on Bonanza 1002. The
@@ -150,8 +149,8 @@ operating settings, and board identity. It observed accepted public-pool shares
 increase from four to six, four ASICs and 944 engines in MINING state at the
 saved 1200 MHz / 3.0 V settings, and no fault or reboot. Ports 4333/4334 had no
 remaining test listeners. A settled follow-up reported 1.50 TH/s, 12 accepted
-public-pool shares and zero rejected shares. The candidate remains installed
-on `bonanza.local`.
+public-pool shares and zero rejected shares. That run left the candidate
+installed on `bonanza.local`.
 
 Reports, immutable firmware provenance, failure runs, paired temperature
 observations, offline audits, and reproduction profiles/scripts are retained in

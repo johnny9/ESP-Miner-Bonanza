@@ -180,7 +180,9 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to init scoreboard");
     }
 
-    wifi_init(&GLOBAL_STATE);
+    if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
+        wifi_init(&GLOBAL_STATE);
+    }
 
     esp_err_t system_init_ret = SYSTEM_init_peripherals(&GLOBAL_STATE);
     SYSTEM_init_versions(&GLOBAL_STATE);
@@ -211,8 +213,10 @@ void app_main(void)
                  esp_err_to_name(system_init_ret));
     }
 
-    // Keep diagnostics reachable while local work is independent of the pool.
-    start_rest_server(&GLOBAL_STATE);
+    if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
+        // Start the API for AxeOS during normal mining boots only.
+        start_rest_server(&GLOBAL_STATE);
+    }
 
     // Pre-cache partition descriptions and space usage percentage
     SYSTEM_init_partitions(&GLOBAL_STATE);

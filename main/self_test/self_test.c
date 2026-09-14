@@ -280,10 +280,6 @@ static void self_test_check_running(GlobalState *state)
 
 static bool self_test_should_run()
 {
-    if (nvs_config_get_bool(NVS_CONFIG_SELF_TEST_MANUAL)) {
-        nvs_config_set_bool(NVS_CONFIG_SELF_TEST_MANUAL, false);
-        return true;
-    }
     bool is_factory_flash = nvs_config_get_u64(NVS_CONFIG_BEST_DIFF) < 1;
     bool is_self_test_flag_set = nvs_config_get_bool(NVS_CONFIG_SELF_TEST);
     if (is_factory_flash && is_self_test_flag_set) {
@@ -340,6 +336,7 @@ void self_test_show_message(GlobalState * GLOBAL_STATE, const char * msg)
              sizeof(GLOBAL_STATE->SELF_TEST_MODULE.message_buffer), "%s", msg);
     GLOBAL_STATE->SELF_TEST_MODULE.message = GLOBAL_STATE->SELF_TEST_MODULE.message_buffer;
     pthread_mutex_unlock(&GLOBAL_STATE->SELF_TEST_MODULE.nonce_measurement.lock);
+    ESP_LOGI(TAG, "%s", msg);
     vTaskDelay(10 / portTICK_PERIOD_MS);
 }
 
@@ -550,6 +547,7 @@ void self_test_task(void * pvParameters)
      * or bypassing the controller's fan and thermal interlocks. */
     uint64_t warmup_timeout = GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge
                                 ? UINT64_C(300000000) : UINT64_C(120000000);
+    ESP_LOGI(TAG, "Warming up to %.1f°C", warmup_temp);
     while (asic_temp < warmup_temp)
     {
         self_test_check_running(GLOBAL_STATE);
@@ -563,7 +561,6 @@ void self_test_task(void * pvParameters)
             self_test_show_message(GLOBAL_STATE, "TEMP:FAIL");
             tests_done(GLOBAL_STATE, false);
         }
-        ESP_LOGI(TAG, "Warming up to %.1f°C: %.1f°C", warmup_temp, asic_temp);
         snprintf(logString, sizeof(logString), "ASIC Temp: %.1f°C", asic_temp);
         self_test_show_message(GLOBAL_STATE, logString);
     }
@@ -619,7 +616,6 @@ void self_test_task(void * pvParameters)
 
         uint32_t remaining = elapsed_us < hashtest_us ? (hashtest_us - elapsed_us) / 1000000 : 0;
         snprintf(logString, sizeof(logString), "%.0f Gh/s %.1f°C %" PRIu32 "s", hashrate, asic_temp, remaining);
-        ESP_LOGI(TAG, "%s", logString);
 
         self_test_show_message(GLOBAL_STATE, logString);
 
@@ -755,6 +751,8 @@ static bool self_test_cleanup(GlobalState *state)
         state->SELF_TEST_MODULE.domain_averages = NULL;
     }
     atomic_store(&state->SELF_TEST_MODULE.cleanup_confirmed, safe);
+    ESP_LOGI(TAG, "Self-test cleanup %s; worker %s", safe ? "confirmed" : "not confirmed",
+             atomic_load(&state->SELF_TEST_MODULE.worker_running) ? "running" : "stopped");
     if (!safe) {
         (void)Thermal_set_fan_percent(&state->DEVICE_CONFIG, 1.0f);
         self_test_show_message(state, "SHUTDOWN:FAIL");
@@ -786,6 +784,7 @@ static void tests_done(GlobalState * GLOBAL_STATE, bool isTestPassed)
          * the worker has exited and power shutdown is confirmed. */
         if (atomic_load(&GLOBAL_STATE->SELF_TEST_MODULE.cancel_requested) && safe) {
             nvs_config_set_bool(NVS_CONFIG_SELF_TEST, false);
+            ESP_LOGI(TAG, "SELF-TEST CANCELLED -- cleanup confirmed; restarting.");
             vTaskDelay(pdMS_TO_TICKS(100));
             esp_restart();
         }

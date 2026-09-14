@@ -31,7 +31,6 @@ SRCS
     "setup_ble.c"
     "task_monitor.c"
     "./http_server/http_server.c"
-    "./http_server/self_test_api.c"
     "./http_server/bzm_ota_guard.c"
     "./http_server/websocket.c"
     "./http_server/websocket_log.c"

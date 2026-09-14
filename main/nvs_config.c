@@ -86,7 +86,6 @@ static Settings settings[NVS_CONFIG_COUNT] = {
     [NVS_CONFIG_LOG_LEVEL]                             = {.nvs_key_name = "loglevel",        .type = TYPE_STR,   .default_value = {.str = LOG_LEVEL_CONFIG_DEFAULT},                  .rest_name = "logLevel",                           .min = 4,  .max = 5},
 
     [NVS_CONFIG_BEST_DIFF]                             = {.nvs_key_name = "bestdiff",        .type = TYPE_U64},
-    [NVS_CONFIG_SELF_TEST_MANUAL]                      = {.nvs_key_name = "selftest_manual", .type = TYPE_BOOL},
     [NVS_CONFIG_SELF_TEST]                             = {.nvs_key_name = "selftest",        .type = TYPE_BOOL},
     [NVS_CONFIG_SWARM]                                 = {.nvs_key_name = "swarmconfig",     .type = TYPE_STR},
     [NVS_CONFIG_THEME_SCHEME]                          = {.nvs_key_name = "themescheme",     .type = TYPE_STR,   .default_value = {.str = DEFAULT_THEME}},

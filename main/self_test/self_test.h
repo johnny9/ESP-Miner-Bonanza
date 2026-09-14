@@ -32,7 +32,7 @@ typedef struct SelfTestModule
     esp_err_t system_init_ret;
     atomic_bool cancel_requested, worker_stop, worker_running, worker_failed;
     atomic_int status;
-    atomic_bool start_requested, cleanup_confirmed;
+    atomic_bool cleanup_confirmed;
     uint64_t work_generation;
     char message_buffer[128];
     void *domain_averages;
