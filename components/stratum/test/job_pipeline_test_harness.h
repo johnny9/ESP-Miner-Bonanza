@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "mining.h"
+#include "asic_job_store.h"
 
 typedef struct {
     uint16_t chip_id;
@@ -15,6 +16,7 @@ typedef struct {
     int job_frequency_ms;
     size_t allocation_failure_at;
     unsigned failed_sends;
+    bool retire_during_retry;
     uint64_t current_generation;
 } job_pipeline_harness_config_t;
 
@@ -33,6 +35,9 @@ typedef struct {
 
 typedef struct {
     asic_job_t *jobs[JOB_PIPELINE_HARNESS_MAX_JOBS];
+    asic_job_context_t contexts[JOB_PIPELINE_HARNESS_MAX_JOBS];
+    asic_job_t attempted_jobs[JOB_PIPELINE_HARNESS_MAX_JOBS];
+    asic_job_context_t attempted_contexts[JOB_PIPELINE_HARNESS_MAX_JOBS];
     size_t job_count;
     size_t send_attempts;
     uint32_t version_masks[JOB_PIPELINE_HARNESS_MAX_JOBS];

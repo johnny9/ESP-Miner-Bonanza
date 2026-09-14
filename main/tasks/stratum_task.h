@@ -4,6 +4,7 @@
 #include "global_state.h"
 #include <stdbool.h>
 #include "miner_job.h"
+#include "asic_result_handler.h"
 
 // Manages network connectivity, pool failover/heartbeat, and dispatches to V1/V2 protocol drivers.
 void stratum_task(void *pvParameters);
@@ -30,7 +31,7 @@ void stratum_notify_pool_modified(GlobalState *gs, uint16_t pool_idx);
 void stratum_notify_pool_selection_changed(GlobalState *gs);
 
 // Submit a found share to the active pool (dispatches to SV1 or SV2).
-int stratum_submit_share(GlobalState *GLOBAL_STATE, const asic_job_t *active_job,
-                         uint32_t nonce, uint32_t rolled_version, uint64_t *sent_time_us);
+int stratum_submit_share(GlobalState *GLOBAL_STATE, const asic_share_submission_t *share,
+                         uint64_t *sent_time_us);
 
 #endif /* STRATUM_TASK_H_ */

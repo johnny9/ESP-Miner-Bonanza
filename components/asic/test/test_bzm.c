@@ -177,7 +177,7 @@ static void delete_store(asic_job_store_t *store)
     free(store);
 }
 
-static asic_job_t bzm_template(const char *job_id, bool clean_jobs)
+static asic_job_t bzm_template(const char *job_id)
 {
     asic_job_t template = {
         .version = 0x20000004,
@@ -185,7 +185,6 @@ static asic_job_t bzm_template(const char *job_id, bool clean_jobs)
         .ntime = 0x65010203,
         .nbits = 0x1705dd01,
         .starting_nonce = 0x10203040,
-        .clean_jobs = clean_jobs,
         .source_type = JOB_TYPE_SV2_STANDARD,
         .pool_diff = 1,
     };
@@ -300,7 +299,7 @@ static bzm_reactor_t *new_reactor(asic_job_store_t *store,
 TEST_CASE("BZM work builder derives four family-private midstates",
           "[asic][bzm][work][qemu-integration]")
 {
-    asic_job_t template = bzm_template("work", true);
+    asic_job_t template = bzm_template("work");
     template.version_mask = 0x1fffe000;
     asic_work_t source = {
         .handle = 0x1234,
@@ -341,7 +340,7 @@ TEST_CASE("BZM keeps enhanced sequence identity when version rolling is unavaila
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    asic_job_t template = bzm_template("no-version-mask", false);
+    asic_job_t template = bzm_template("no-version-mask");
     template.version_mask = 0;
     for (unsigned assignment = 0; assignment < 2; ++assignment) {
         bzm_work_t work;
@@ -551,7 +550,7 @@ TEST_CASE("BZM transport partitions an engine nonce range across ASICs",
 TEST_CASE("BZM transport programs ordered enhanced work and flush jobs",
           "[asic][bzm][transport][program][qemu-integration]")
 {
-    asic_job_t template = bzm_template("transport", false);
+    asic_job_t template = bzm_template("transport");
     asic_work_t source = {
         .handle = 0x1234,
         .template = &template,
@@ -649,7 +648,7 @@ TEST_CASE("BZM reactor dispatches one stored generation to every engine",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 4);
-    asic_job_t template = bzm_template("dispatch", false);
+    asic_job_t template = bzm_template("dispatch");
 
     size_t assigned = 0;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
@@ -698,7 +697,7 @@ TEST_CASE("BZM full dispatch covers 236 engines in balanced write order",
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(
         store, transport, BZM_ENGINES_PER_ASIC);
-    asic_job_t template = bzm_template("full-topology", false);
+    asic_job_t template = bzm_template("full-topology");
     bool seen[BZM_ENGINE_GRID_COUNT] = {false};
 
     size_t assigned = 0;
@@ -760,7 +759,7 @@ TEST_CASE("BZM incremental assignments retain compact IDs in balanced order",
     };
     TEST_ASSERT_TRUE(bzm_reactor_init(reactor, store, &config,
                                       &SIMULATED_OPS, transport));
-    asic_job_t template = bzm_template("incremental", false);
+    asic_job_t template = bzm_template("incremental");
 
     for (uint16_t schedule_index = 0; schedule_index < 4;
          ++schedule_index) {
@@ -802,9 +801,9 @@ TEST_CASE("BZM assigns independent templates and retains one prior job per engin
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
 
-    asic_job_t engine0_first = bzm_template("engine0-first", false);
-    asic_job_t engine1_first = bzm_template("engine1-first", false);
-    asic_job_t engine0_next = bzm_template("engine0-next", false);
+    asic_job_t engine0_first = bzm_template("engine0-first");
+    asic_job_t engine1_first = bzm_template("engine1-first");
+    asic_job_t engine0_next = bzm_template("engine0-next");
     engine0_first.ntime = 100;
     engine1_first.ntime = 200;
     engine0_next.ntime = 300;
@@ -863,7 +862,7 @@ TEST_CASE("BZM rejects delayed assignments after their bounded store slot is reu
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(
         store, transport, BZM_ENGINES_PER_ASIC);
-    asic_job_t template = bzm_template("bounded-history", false);
+    asic_job_t template = bzm_template("bounded-history");
 
     for (size_t index = 0; index < BZM_ENGINES_PER_ASIC; ++index) {
         TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
@@ -904,7 +903,7 @@ TEST_CASE("BZM reactor resolves microstate version and timestamp rolling",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 21);
-    asic_job_t template = bzm_template("result", false);
+    asic_job_t template = bzm_template("result");
     template.version_mask = 0x1fffe000;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
@@ -967,8 +966,8 @@ TEST_CASE("BZM reactor retains both enhanced sequence generations",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    asic_job_t first = bzm_template("first", false);
-    asic_job_t second = bzm_template("second", false);
+    asic_job_t first = bzm_template("first");
+    asic_job_t second = bzm_template("second");
     first.ntime = 100;
     second.ntime = 200;
 
@@ -1056,7 +1055,7 @@ TEST_CASE("BZM failed flush remains a barrier until transport recovers",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    asic_job_t template = bzm_template("flush-error", false);
+    asic_job_t template = bzm_template("flush-error");
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
 
@@ -1091,7 +1090,7 @@ TEST_CASE("BZM clean-job barrier rejects stale results and invalidates handles",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    asic_job_t template = bzm_template("old", false);
+    asic_job_t template = bzm_template("old");
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
     asic_work_handle_t old_handle = transport->work[0].source.handle;
@@ -1111,7 +1110,7 @@ TEST_CASE("BZM clean-job barrier rejects stale results and invalidates handles",
     asic_job_t snapshot;
     TEST_ASSERT_FALSE(asic_job_store_snapshot(store, old_handle, &snapshot));
 
-    template = bzm_template("new", false);
+    template = bzm_template("new");
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                       bzm_reactor_dispatch(reactor, &template, NULL));
     TEST_ASSERT_FALSE(bzm_reactor_results_quarantined(reactor));
@@ -1131,7 +1130,7 @@ TEST_CASE("BZM idle clean-job barrier does not disturb the hardware link",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
-    asic_job_t template = bzm_template("queued-only", false);
+    asic_job_t template = bzm_template("queued-only");
     asic_work_handle_t handle = ASIC_WORK_HANDLE_INVALID;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template,
                                                      &handle));
@@ -1154,7 +1153,7 @@ TEST_CASE("BZM quarantines clean-job results through the full engine rotation",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    asic_job_t template = bzm_template("replacement", false);
+    asic_job_t template = bzm_template("replacement");
 
     TEST_ASSERT_TRUE(bzm_reactor_clear_work(reactor));
     TEST_ASSERT_TRUE(bzm_reactor_results_quarantined(reactor));
@@ -1183,7 +1182,7 @@ TEST_CASE("BZM repeated clean refreshes preserve frequency replacement proof",
         simulated_transport_t *transport = new_transport();
         bzm_reactor_t *reactor = new_reactor(
             store, transport, BZM_ENGINES_PER_ASIC);
-        asic_job_t template = bzm_template("refresh-proof", false);
+        asic_job_t template = bzm_template("refresh-proof");
         bzm_running_stats_t baseline = {0};
         bzm_running_stats_t current = {
             /* Valid results can precede the first clean replacement, as in
@@ -1243,7 +1242,7 @@ TEST_CASE("BZM clean jobs retire delayed results without resetting engine order"
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    asic_job_t template = bzm_template("old", false);
+    asic_job_t template = bzm_template("old");
     bzm_work_t old_work, new_work;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_OK, bzm_reactor_assign(reactor, &template, &old_work));
     bzm_raw_result_t old = {
@@ -1293,7 +1292,7 @@ TEST_CASE("BZM incremental sequence reuse requires a hardware barrier",
     asic_job_store_t *store = new_store();
     simulated_transport_t *transport = new_transport();
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    asic_job_t template = bzm_template("wrap", false);
+    asic_job_t template = bzm_template("wrap");
     for (unsigned rotation = 0; rotation < 63; ++rotation) {
         TEST_ASSERT_TRUE(bzm_reactor_invalidate_work(reactor));
         for (unsigned engine = 0; engine < 2; ++engine) {
@@ -1335,12 +1334,12 @@ TEST_CASE("BZM sequence wrap forces a flush before identity reuse",
     bzm_reactor_t *reactor = new_reactor(store, transport, 1);
 
     for (size_t i = 0; i < 2; ++i) {
-        asic_job_t template = bzm_template("wrap", false);
+        asic_job_t template = bzm_template("wrap");
         TEST_ASSERT_EQUAL(BZM_ASSIGN_OK,
                           bzm_reactor_dispatch(reactor, &template, NULL));
 
     }
-    asic_job_t template = bzm_template("wrapped", false);
+    asic_job_t template = bzm_template("wrapped");
     TEST_ASSERT_EQUAL(BZM_ASSIGN_FLUSH_REQUIRED,
                       bzm_reactor_dispatch(reactor, &template, NULL));
     TEST_ASSERT_TRUE(bzm_reactor_is_flush_pending(reactor));
@@ -1372,7 +1371,7 @@ TEST_CASE("BZM partial dispatch is flushed and never publishes a handle",
     simulated_transport_t *transport = new_transport();
     transport->fail_after = 1;
     bzm_reactor_t *reactor = new_reactor(store, transport, 2);
-    asic_job_t template = bzm_template("partial", false);
+    asic_job_t template = bzm_template("partial");
     size_t assigned;
     TEST_ASSERT_EQUAL(BZM_ASSIGN_TRANSPORT_ERROR,
                       bzm_reactor_dispatch(reactor, &template, &assigned));

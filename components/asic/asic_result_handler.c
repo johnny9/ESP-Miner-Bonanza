@@ -15,8 +15,9 @@ asic_result_status_t asic_result_handle(
     }
 
     asic_job_t template;
-    if (!asic_job_store_snapshot(context->job_store, result->work_handle,
-                                 &template)) {
+    asic_job_context_t provenance;
+    if (!asic_job_store_snapshot_with_context(context->job_store, result->work_handle,
+                                              &template, &provenance)) {
         return ASIC_RESULT_STALE_WORK;
     }
 
@@ -51,8 +52,8 @@ asic_result_status_t asic_result_handle(
         .target = template.nbits,
         .protocol = template.source_type,
         .pool_id = template.pool_id,
-        .work_generation = template.work_generation,
-        .job_version = template.job_version,
+        .work_generation = provenance.work_generation,
+        .job_version = provenance.job_version,
     };
     if (strlen(template.extranonce2) % 2 != 0 ||
         hex2bin(template.extranonce2, share.extranonce2_bin,

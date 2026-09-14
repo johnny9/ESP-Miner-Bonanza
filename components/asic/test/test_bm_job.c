@@ -435,16 +435,20 @@ TEST_CASE("Result generation rejects an old job before submission and accounting
         .work_is_current = reject_retired_generation,
     };
     asic_job_t template = owned_template(JOB_TYPE_V1, "reused-id", "00", 1e-20);
-    template.work_generation = 7;
-    template.job_version = 0x20002000;
+    asic_job_context_t provenance = {.work_generation = 7, .job_version = 0x20002000,
+        .pool_work = true};
+    asic_job_store_begin_submission(store, &template, &provenance);
     asic_result_t result = result_for(0);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
+    asic_job_store_end_submission(store);
     TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(0, capture.sv1_count);
     TEST_ASSERT_EQUAL(0, capture.account_count);
     // Identical pool/job identity in the new generation remains usable.
-    template.work_generation = 8;
+    provenance.work_generation = 8;
+    asic_job_store_begin_submission(store, &template, &provenance);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
+    asic_job_store_end_submission(store);
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(1, capture.sv1_count);
     TEST_ASSERT_EQUAL(1, capture.account_count);
@@ -589,15 +593,14 @@ TEST_CASE("Upstream pool slots become owned neutral work for all protocols",
             &slot, 0x11223344, slot.version, &actual));
         TEST_ASSERT_EQUAL_UINT8(protocol, actual.source_type);
         TEST_ASSERT_EQUAL_UINT8(7, actual.pool_id);
-        TEST_ASSERT_EQUAL_UINT32(123, actual.work_generation);
-        TEST_ASSERT_EQUAL_HEX32(slot.version, actual.job_version);
+
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.prev_hash, actual.prev_hash, 32);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.merkle_root, actual.merkle_root, 32);
         TEST_ASSERT_EQUAL_STRING("42", actual.job_id);
         TEST_ASSERT_EQUAL_STRING(protocol == JOB_TYPE_SV2_STANDARD ? "" : "44332211",
                                  actual.extranonce2);
         TEST_ASSERT_EQUAL_UINT32(42, (uint32_t)strtoul(actual.job_id, NULL, 10));
-        TEST_ASSERT_TRUE(actual.clean_jobs);
+
         slot.job_id[0] = '9';
         TEST_ASSERT_EQUAL_STRING("42", actual.job_id);
         slot.job_id[0] = '4';

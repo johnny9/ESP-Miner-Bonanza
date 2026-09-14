@@ -282,10 +282,10 @@ void stratum_task(void *pvParameters)
     }
 }
 
-int stratum_submit_share(GlobalState *GLOBAL_STATE, const asic_job_t *active_job,
-                         uint32_t nonce, uint32_t rolled_version, uint64_t *sent_time_us)
+int stratum_submit_share(GlobalState *GLOBAL_STATE, const asic_share_submission_t *share,
+                         uint64_t *sent_time_us)
 {
-    if (!GLOBAL_STATE || !active_job) {
+    if (!GLOBAL_STATE || !share) {
         return -1;
     }
 
@@ -293,17 +293,17 @@ int stratum_submit_share(GlobalState *GLOBAL_STATE, const asic_job_t *active_job
         ? GLOBAL_STATE->SYSTEM_MODULE.secondary_pool_index
         : GLOBAL_STATE->SYSTEM_MODULE.primary_pool_index;
 
-    if (active_job->pool_id != (uint8_t)active_pool_idx) {
+    if (share->pool_id != (uint8_t)active_pool_idx) {
         ESP_LOGW(TAG, "Dropping share for stale pool index %u (active pool is %u)",
-                 active_job->pool_id, active_pool_idx);
+                 share->pool_id, active_pool_idx);
         return -1;
     }
 
     int ret;
-    if (active_job->source_type == JOB_TYPE_SV2_STANDARD || active_job->source_type == JOB_TYPE_SV2_EXTENDED) {
-        ret = stratum_v2_submit_share(GLOBAL_STATE, active_job, nonce, rolled_version, sent_time_us);
+    if (share->protocol == JOB_TYPE_SV2_STANDARD || share->protocol == JOB_TYPE_SV2_EXTENDED) {
+        ret = stratum_v2_submit_share(GLOBAL_STATE, share, sent_time_us);
     } else {
-        ret = stratum_v1_submit_share(GLOBAL_STATE, active_job, nonce, rolled_version, sent_time_us);
+        ret = stratum_v1_submit_share(GLOBAL_STATE, share, sent_time_us);
     }
 
     if (ret < 0) {

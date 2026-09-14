@@ -31,11 +31,9 @@ bool mining_build_asic_job_sv2_standard(const sv2_job_t *source,
     if (source == NULL) return false;
 
     template->version = source->version;
-    template->job_version = source->version;
     template->version_mask = version_mask;
     template->nbits = source->nbits;
     template->ntime = source->ntime;
-    template->clean_jobs = source->clean_jobs;
     template->source_type = JOB_TYPE_SV2_STANDARD;
     template->pool_diff = difficulty;
     memcpy(template->merkle_root, source->merkle_root, 32);
@@ -85,11 +83,9 @@ bool mining_build_asic_job_sv2_extended(const sv2_ext_job_t *source,
                                source->merkle_path_count, merkle_root);
 
     template->version = source->version;
-    template->job_version = source->version;
     template->version_mask = version_mask;
     template->nbits = source->nbits;
     template->ntime = source->ntime;
-    template->clean_jobs = source->clean_jobs;
     template->source_type = JOB_TYPE_SV2_EXTENDED;
     template->pool_diff = difficulty;
     memcpy(template->merkle_root, merkle_root, 32);

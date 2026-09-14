@@ -11,6 +11,10 @@
 #include "global_state.h"
 #include "system.h"
 
+_Static_assert(_Generic(&ASIC_send_job,
+    void (*)(GlobalState *, const asic_job_t *): 1, default: 0),
+    "ASIC_send_job must retain the stage 03 submission signature");
+
 #include "../../../main/tasks/create_jobs_task.h"
 
 static jmp_buf harness_exit;
@@ -20,6 +24,7 @@ static size_t harness_event_index;
 static job_pipeline_harness_result_t *harness_result;
 static int harness_job_frequency_ms;
 static unsigned harness_failed_sends;
+static bool harness_retire_during_retry;
 static uint16_t harness_chip_id;
 static uint64_t harness_current_generation;
 static GlobalState harness_state;
@@ -49,12 +54,17 @@ static void spy_task_delay(TickType_t ticks)
 {
     (void)ticks;
     harness_result->delay_count++;
+    if (harness_retire_during_retry && harness_result->send_attempts > 0)
+        harness_current_generation++;
 }
 
 static bool spy_asic_send_work(GlobalState *state, const asic_job_t *job)
 {
-    (void)state;
-    harness_result->send_attempts++;
+    TEST_ASSERT_LESS_THAN_UINT(JOB_PIPELINE_HARNESS_MAX_JOBS, harness_result->send_attempts);
+    size_t attempt = harness_result->send_attempts++;
+    harness_result->attempted_jobs[attempt] = *job;
+    asic_job_store_submission_context(&state->asic_job_store, job,
+                                      &harness_result->attempted_contexts[attempt]);
     if (harness_failed_sends > 0) {
         harness_failed_sends--;
         return false;
@@ -63,6 +73,8 @@ static bool spy_asic_send_work(GlobalState *state, const asic_job_t *job)
     asic_job_t *owned = malloc(sizeof(*owned));
     TEST_ASSERT_NOT_NULL(owned);
     *owned = *job;
+    harness_result->contexts[harness_result->job_count] =
+        harness_result->attempted_contexts[attempt];
     harness_result->jobs[harness_result->job_count++] = owned;
     return true;
 }
@@ -105,6 +117,28 @@ static void spy_decode_coinbase(GlobalState *state, const miner_job_t *job)
     harness_result->coinbase_decode_count++;
 }
 
+static const asic_driver_t *fake_submission_driver(int id)
+{
+    (void)id;
+    static const asic_driver_t driver = {.ops.send_job = spy_asic_send_work};
+    return &driver;
+}
+
+/* Exercise the real void adapter, including backpressure and cancellation. */
+void job_pipeline_test_asic_send_job(GlobalState *state, const asic_job_t *job);
+#define ASIC_send_job job_pipeline_test_asic_send_job
+#define asic_driver_for_id fake_submission_driver
+#define stratum_work_is_current fake_work_is_current
+#ifdef vTaskDelay
+#undef vTaskDelay
+#endif
+#define vTaskDelay spy_task_delay
+#include "../../asic/asic_submit.c"
+#undef asic_driver_for_id
+#undef stratum_work_is_current
+#undef vTaskDelay
+#undef ASIC_send_job
+
 /* Compile the whole task with only scheduling, driver and session boundaries
  * replaced. The common builder below is the complete fault-injected instance. */
 #ifdef xTaskNotifyWait
@@ -120,7 +154,7 @@ void job_pipeline_test_create_jobs_task(void *context);
 #define create_jobs_task job_pipeline_test_create_jobs_task
 #define xTaskNotifyWait fake_task_notify_wait
 #define vTaskDelay spy_task_delay
-#define ASIC_send_job spy_asic_send_work
+#define ASIC_send_job job_pipeline_test_asic_send_job
 #define ASIC_set_version_mask spy_asic_set_version_mask
 #define ASIC_get_asic_job_frequency_ms stub_asic_get_job_frequency
 #define SYSTEM_decode_and_apply_coinbase spy_decode_coinbase
@@ -157,6 +191,8 @@ void job_pipeline_harness_run(
     harness_result = result;
     harness_job_frequency_ms = config.job_frequency_ms;
     harness_failed_sends = config.failed_sends;
+    harness_retire_during_retry = config.retire_during_retry;
+    TEST_ASSERT_TRUE(asic_job_store_init(&harness_state.asic_job_store));
     harness_chip_id = config.chip_id;
     harness_current_generation = config.current_generation;
     mining_allocator_fault_injector_reset(config.allocation_failure_at);
@@ -166,6 +202,7 @@ void job_pipeline_harness_run(
         create_jobs_task(&harness_state);
     }
 
+    asic_job_store_destroy(&harness_state.asic_job_store);
     result->active_job_slot = harness_state.active_job_slot_idx;
     result->allocation_count = mining_allocator_fault_injector_calls();
     harness_events = NULL;

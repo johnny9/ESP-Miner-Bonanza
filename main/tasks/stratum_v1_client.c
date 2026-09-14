@@ -70,34 +70,34 @@ static void stratum_v1_reset_uid(GlobalState *GLOBAL_STATE)
     pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
 }
 
-int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const asic_job_t *active_job,
-                            uint32_t nonce, uint32_t rolled_version, uint64_t *sent_time_us)
+int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const asic_share_submission_t *share,
+                            uint64_t *sent_time_us)
 {
-    if (!GLOBAL_STATE || !active_job) return -1;
+    if (!GLOBAL_STATE || !share) return -1;
     pthread_mutex_lock(&GLOBAL_STATE->transport_mutex);
     esp_transport_handle_t transport = GLOBAL_STATE->transport;
     if (transport == NULL || s_v1_conn == NULL ||
-        active_job->work_generation != GLOBAL_STATE->stratum_work_generation ||
-        s_v1_conn->pool_idx != active_job->pool_id) {
+        share->work_generation != GLOBAL_STATE->stratum_work_generation ||
+        s_v1_conn->pool_idx != share->pool_id) {
         pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
         return -1;
     }
 
     uint32_t mask = s_v1_conn->version_mask;
-    if (((rolled_version ^ active_job->job_version) & ~mask) != 0) {
+    if (((share->final_version ^ share->job_version) & ~mask) != 0) {
         pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
         return -1; // A new connection mask can invalidate outstanding results.
     }
-    uint32_t version_bits = rolled_version & mask;
+    uint32_t version_bits = share->final_version & mask;
     int uid = s_v1_conn->send_uid++;
     int ret = STRATUM_V1_submit_share(
         transport,
         uid,
         s_v1_conn->user,
-        active_job->job_id,
-        active_job->extranonce2,
-        active_job->ntime,
-        nonce,
+        share->job_id,
+        share->extranonce2,
+        share->ntime,
+        share->nonce,
         s_v1_conn->version_rolling_enabled ? &version_bits : NULL,
         sent_time_us);
 

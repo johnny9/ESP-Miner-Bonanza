@@ -9,6 +9,7 @@ SRCS
     "crc.c"
     "asic_common.c"
     "asic.c"
+    "asic_submit.c"
     "asic_driver.c"
     "asic_capabilities.c"
     "asic_job_store.c"

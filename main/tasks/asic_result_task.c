@@ -41,19 +41,8 @@ static void record_self_test(void *context, double nonce_diff)
 static int submit_share(void *context, const asic_share_submission_t *share)
 {
     GlobalState *state = ((result_callback_context *)context)->state;
-    asic_job_t job = {
-        .version = share->base_version,
-        .ntime = share->ntime,
-        .source_type = share->protocol,
-        .pool_id = share->pool_id,
-        .work_generation = share->work_generation,
-        .job_version = share->job_version,
-    };
-    strcpy(job.job_id, share->job_id);
-    strcpy(job.extranonce2, share->extranonce2);
     uint64_t sent_time_us = 0;
-    int ret = stratum_submit_share(state, &job, share->nonce,
-                                   share->final_version, &sent_time_us);
+    int ret = stratum_submit_share(state, share, &sent_time_us);
     if (ret >= 0 && sent_time_us >= share->result->timestamp_us) {
         state->SYSTEM_MODULE.process_time =
             (sent_time_us - share->result->timestamp_us) / 1000.0f;

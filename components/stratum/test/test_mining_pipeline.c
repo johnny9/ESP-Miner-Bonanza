@@ -658,7 +658,6 @@ TEST_CASE("Common work retries retain extranonce and the clean generation", "[mi
     const job_pipeline_harness_event_t events[] = {
         {.type = JOB_PIPELINE_HARNESS_NOTIFY, .slot = 0},
         {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
-        {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
     };
     job_pipeline_harness_result_t result;
     job_pipeline_harness_run((job_pipeline_harness_config_t) {
@@ -666,13 +665,16 @@ TEST_CASE("Common work retries retain extranonce and the clean generation", "[mi
         .job_frequency_ms = 1, .failed_sends = 1, .current_generation = 7,
     }, events, sizeof(events) / sizeof(events[0]), &result);
     TEST_ASSERT_EQUAL_UINT32(3, result.send_attempts);
+    TEST_ASSERT_EQUAL_MEMORY(&result.attempted_jobs[0], &result.attempted_jobs[1], sizeof(asic_job_t));
+    TEST_ASSERT_TRUE(result.attempted_contexts[0].clean_jobs);
+    TEST_ASSERT_TRUE(result.attempted_contexts[1].clean_jobs);
     TEST_ASSERT_EQUAL_UINT32(2, result.job_count);
     TEST_ASSERT_EQUAL_UINT32(1, result.coinbase_decode_count);
     TEST_ASSERT_EQUAL_STRING("00", result.jobs[0]->extranonce2);
     TEST_ASSERT_EQUAL_STRING("01", result.jobs[1]->extranonce2);
-    TEST_ASSERT_TRUE(result.jobs[0]->clean_jobs);
-    TEST_ASSERT_FALSE(result.jobs[1]->clean_jobs);
-    TEST_ASSERT_TRUE(result.jobs[0]->work_generation == 7);
+    TEST_ASSERT_TRUE(result.contexts[0].clean_jobs);
+    TEST_ASSERT_FALSE(result.contexts[1].clean_jobs);
+    TEST_ASSERT_TRUE(result.contexts[0].work_generation == 7);
     job_pipeline_harness_result_free(&result);
 }
 
@@ -710,7 +712,6 @@ TEST_CASE("BZM standard jobs advance versions after accepted sends", "[sv2][mini
         {.type = JOB_PIPELINE_HARNESS_NOTIFY, .slot = 0},
         {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
         {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
-        {.type = JOB_PIPELINE_HARNESS_TIMEOUT},
     };
     job_pipeline_harness_result_t result;
     job_pipeline_harness_run((job_pipeline_harness_config_t) {
@@ -727,13 +728,13 @@ TEST_CASE("BZM standard jobs advance versions after accepted sends", "[sv2][mini
     for (size_t i = 0; i < result.job_count; ++i) {
         const asic_job_t *sent = result.jobs[i];
         TEST_ASSERT_EQUAL_HEX32(expected_versions[i], sent->version);
-        TEST_ASSERT_EQUAL_HEX32(job->version, sent->job_version);
+        TEST_ASSERT_EQUAL_HEX32(job->version, result.contexts[i].job_version);
         TEST_ASSERT_EQUAL_HEX32(0, (sent->version ^ job->version) & ~job->version_mask);
         TEST_ASSERT_EQUAL_STRING("1001", sent->job_id);
         TEST_ASSERT_EQUAL_STRING("", sent->extranonce2);
         TEST_ASSERT_EQUAL_HEX32(job->ntime, sent->ntime);
-        TEST_ASSERT_TRUE(sent->work_generation == 7);
-        TEST_ASSERT_EQUAL(i == 0, sent->clean_jobs);
+        TEST_ASSERT_TRUE(result.contexts[i].work_generation == 7);
+        TEST_ASSERT_EQUAL(i == 0, result.contexts[i].clean_jobs);
     }
     job_pipeline_harness_result_free(&result);
 }
@@ -762,4 +763,22 @@ TEST_CASE("Midstate job refresh respects a zero negotiated version mask", "[sv2]
         TEST_ASSERT_EQUAL_HEX32(job->version, result.jobs[1]->version);
         job_pipeline_harness_result_free(&result);
     }
+}
+
+TEST_CASE("Void submission cancels retained work when its pool generation retires", "[mining][common-work]")
+{
+    miner_job_t *job = prepare_followup_job(1, false);
+    job->work_generation = 7;
+    const job_pipeline_harness_event_t event = {.type = JOB_PIPELINE_HARNESS_NOTIFY, .slot = 0};
+    job_pipeline_harness_result_t result;
+    job_pipeline_harness_run((job_pipeline_harness_config_t){
+        .asic_initialized = true, .hardware_version_rolling = true,
+        .job_frequency_ms = 1, .failed_sends = 1, .current_generation = 7,
+        .retire_during_retry = true,
+    }, &event, 1, &result);
+    TEST_ASSERT_EQUAL_UINT32(1, result.send_attempts);
+    TEST_ASSERT_EQUAL_UINT32(0, result.job_count);
+    TEST_ASSERT_EQUAL_UINT32(0, result.coinbase_decode_count);
+    TEST_ASSERT_TRUE(result.attempted_contexts[0].clean_jobs);
+    job_pipeline_harness_result_free(&result);
 }

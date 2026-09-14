@@ -30,6 +30,12 @@ bool asic_job_store_init_with_caps(asic_job_store_t *store,
         memset(store, 0, sizeof(*store));
         return false;
     }
+    if (pthread_mutex_init(&store->submission_lock, NULL) != 0) {
+        pthread_mutex_destroy(&store->lock);
+        heap_caps_free(store->entries);
+        memset(store, 0, sizeof(*store));
+        return false;
+    }
     return true;
 }
 
@@ -41,9 +47,44 @@ void asic_job_store_destroy(asic_job_store_t *store)
         return;
     }
     asic_job_store_invalidate_all(store);
+    pthread_mutex_destroy(&store->submission_lock);
     pthread_mutex_destroy(&store->lock);
     heap_caps_free(store->entries);
     memset(store, 0, sizeof(*store));
+}
+
+void asic_job_store_begin_submission(asic_job_store_t *store,
+                                     const asic_job_t *job,
+                                     const asic_job_context_t *context)
+{
+    pthread_mutex_lock(&store->submission_lock);
+    pthread_mutex_lock(&store->lock);
+    store->submission_job = job;
+    store->submission_context = *context;
+    pthread_mutex_unlock(&store->lock);
+}
+
+void asic_job_store_end_submission(asic_job_store_t *store)
+{
+    pthread_mutex_lock(&store->lock);
+    store->submission_job = NULL;
+    memset(&store->submission_context, 0, sizeof(store->submission_context));
+    pthread_mutex_unlock(&store->lock);
+    pthread_mutex_unlock(&store->submission_lock);
+}
+
+bool asic_job_store_submission_context(asic_job_store_t *store,
+                                       const asic_job_t *job,
+                                       asic_job_context_t *context)
+{
+    if (store == NULL || store->entries == NULL || job == NULL || context == NULL)
+        return false;
+    pthread_mutex_lock(&store->lock);
+    bool bound = store->submission_job == job;
+    *context = bound ? store->submission_context :
+        (asic_job_context_t){.job_version = job->version};
+    pthread_mutex_unlock(&store->lock);
+    return bound;
 }
 
 static bool store_entry(asic_job_store_t *store, uint8_t slot,
@@ -55,6 +96,9 @@ static bool store_entry(asic_job_store_t *store, uint8_t slot,
         .handle = handle,
     };
     replacement.template = *template;
+    replacement.context = store->submission_job == template ?
+        store->submission_context :
+        (asic_job_context_t){.job_version = template->version};
 
     clear_entry(&store->entries[slot]);
     store->entries[slot] = replacement;
@@ -99,6 +143,14 @@ bool asic_job_store_snapshot(asic_job_store_t *store,
                              asic_work_handle_t handle,
                              asic_job_t *snapshot)
 {
+    return asic_job_store_snapshot_with_context(store, handle, snapshot, NULL);
+}
+
+bool asic_job_store_snapshot_with_context(asic_job_store_t *store,
+                                          asic_work_handle_t handle,
+                                          asic_job_t *snapshot,
+                                          asic_job_context_t *context)
+{
     if (store == NULL || store->entries == NULL || snapshot == NULL ||
         handle == ASIC_WORK_HANDLE_INVALID) {
         return false;
@@ -110,7 +162,10 @@ bool asic_job_store_snapshot(asic_job_store_t *store,
     pthread_mutex_lock(&store->lock);
     asic_job_store_entry_t *entry = &store->entries[slot];
     bool found = entry->valid && entry->handle == handle;
-    if (found) *snapshot = entry->template;
+    if (found) {
+        *snapshot = entry->template;
+        if (context != NULL) *context = entry->context;
+    }
     pthread_mutex_unlock(&store->lock);
     return found;
 }

@@ -2,7 +2,7 @@
 
 Bonanza now uses the interface proposed in
 [`upstream-refactor/03-common-jobs-pr1969`](https://github.com/johnny9/skot-ESP-Miner/tree/0697551e957760033c94d1bccdb58c9a92e3c36d),
-with the small compatibility extensions below. The preceding PR #1969 merge
+unchanged for the common-job contract. The preceding PR #1969 merge
 at `68cb1c43` supplied the characterization tests; this change migrates the
 production job representation and its consumers.
 
@@ -30,19 +30,34 @@ The old `mining_template_t`, nested heap metadata, and common
 `ASIC_send_work()` entry point have been removed. The separate SV1/SV2 legacy
 fixture builders also return `asic_job_t`.
 
-## Minimum changes needed in the proposal
+## Internal bookkeeping around the unchanged contract
 
-| Change | Reason | Scope |
-| --- | --- | --- |
-| `bool ASIC_send_job(...)`, rather than `void` | Busy, flush, initialization, or allocation failures must reach the producer. A rejected send retains its extranonce and pending clean boundary. | Generic acceptance contract; no driver-specific error enum. |
-| `uint64_t work_generation` in the job | Results and queued input must retain the pool/session retirement identity across reconnects and clean updates. | Opaque identity; no engine or bridge fields. |
-| `bool clean_jobs` in the job | The accepting driver must retire old assignments before admitting work at a clean boundary. A failed attempt cannot consume that boundary. | Existing pool-job semantics, also useful for local work replacement. |
-| `uint32_t job_version` in the job | Share validation needs the original pool version even after the producer rolls `version` in software. | Protocol provenance, independent of ASIC family. |
+No change to stage 03's common-job interface is required for Bonanza.
+`asic_job.h` and `asic_job.c` match the proposal byte for byte, and submission is
+`void ASIC_send_job(GlobalState *state, const asic_job_t *job)`.
+The earlier claim that three extra job fields and a boolean return were necessary
+was incorrect: those requirements belong to Bonanza's implementation.
 
-These are the only additions to the proposed job type. Numeric SV2 job IDs and
-binary extranonces are derived from its existing strings when constructing a
-submission; they are not duplicated in common work. The parser uses an alias
-of the proposal's source enum rather than maintaining a second protocol enum.
+Bonanza retains `work_generation`, the original `job_version`, and `clean_jobs`
+in its internal `asic_job_context_t`, alongside each saved assignment. A producer
+binds this context to the exact borrowed job pointer for the submission call.
+The store serializes those submission scopes and copies the job and context
+under its existing lock. Unrelated or local jobs do not inherit that context.
+Result handling snapshots both values atomically, then carries the existing
+internal share record through Stratum submission. This preserves session
+retirement and negotiated-version checks without adding fields to common work.
+
+The void adapter retries driver rejection synchronously while the caller keeps
+its borrowed job alive. Extranonce, version, and the pending clean boundary stay
+fixed until acceptance. If the pool generation retires, the adapter returns and
+the producer consumes the next notification. Invalidation does not acquire the
+submission-scope mutex, so it can cancel a blocked submission. Driver-private
+boolean acceptance remains an internal detail; no additional common queue or
+submission parameter is needed.
+
+Numeric SV2 job IDs and binary extranonces are derived from the proposal's
+existing strings when constructing a submission. The parser uses an alias of
+the proposal's source enum rather than maintaining a second protocol enum.
 
 The private Bitmain adapter keeps Bonanza's allocation-free packet output and
 existing one/four-midstate behavior. It consequently takes a source and an
@@ -114,11 +129,22 @@ The allocation-failure regression now injects failure into large-coinbase hashin
 since ordinary job metadata no longer allocates.
 
 Additional shared tests cover the proposal's exact 80-byte encoder, value-copy
-ownership and original-version/session metadata, unchanged output on rejected
+ownership, separate original-version/session metadata, unchanged output on rejected
 builds, zero-version fallback, and invalid inline metadata. Native and QEMU
 builds use the same test bodies. See [the test guide](unit_testing.md) for commands.
 
-Validation on 2026-09-13:
+Validation of exact stage 03 alignment on 2026-09-14:
+
+- 397 native tests pass under both GCC and Clang with sanitizers, including
+  retrying the identical borrowed job and cancelling work on session retirement.
+- All 494 QEMU integration tests pass.
+- Store tests verify atomic metadata copies, stale-handle rejection after slot
+  reuse, and isolation from unrelated job pointers.
+- All 17 inventory/coverage tooling tests pass. Existing coverage gates pass:
+  78.1% line and 65.1% branch coverage within instrumented files, with 52/130
+  first-party source files instrumented. These are not firmware-wide percentages.
+
+Historical validation before exact stage 03 alignment, on 2026-09-13:
 
 - 395 tests under each of GCC and Clang with address, undefined-behavior, and
   leak checks; 492 QEMU tests pass. The existing five hardware/device-only

@@ -78,15 +78,14 @@ asic_event_t *result_task_fake_process_work(GlobalState *state)
     longjmp(fixture_done, 1);
 }
 
-int result_task_fake_submit_share(GlobalState *state, const asic_job_t *job,
-                                  uint32_t nonce, uint32_t version,
+int result_task_fake_submit_share(GlobalState *state, const asic_share_submission_t *job,
                                   uint64_t *sent_time)
 {
     TEST_ASSERT_EQUAL_PTR(&fixture_state, state);
-    TEST_ASSERT_EQUAL_HEX32(7, nonce);
-    TEST_ASSERT_EQUAL_HEX32(0x20000004, version);
+    TEST_ASSERT_EQUAL_HEX32(7, job->nonce);
+    TEST_ASSERT_EQUAL_HEX32(0x20000004, job->final_version);
     TEST_ASSERT_EQUAL_UINT32(fixture_case.final_ntime ? fixture_case.final_ntime : 123, job->ntime);
-    TEST_ASSERT_EQUAL(fixture_case.protocol, job->source_type);
+    TEST_ASSERT_EQUAL(fixture_case.protocol, job->protocol);
     TEST_ASSERT_NOT_NULL(job->job_id);
     TEST_ASSERT_NOT_NULL(job->extranonce2);
     snprintf(fixture_submitted_id, sizeof(fixture_submitted_id), "%s",
@@ -175,11 +174,14 @@ static void run_result_case(result_case_t test_case)
         .version = 0x20000004, .ntime = 123, .nbits = 0x1705dd01,
         .pool_diff = fixture_case.pool_diff,
         .source_type = fixture_case.protocol, .job_id = "42",
-        .extranonce2 = "aabb", .job_version = 0x20000004,
-        .work_generation = fixture_case.work_generation,
+        .extranonce2 = "aabb",
     };
     if (!fixture_case.missing) {
+        asic_job_context_t context = {.job_version = 0x20000004,
+            .work_generation = fixture_case.work_generation, .pool_work = true};
+        asic_job_store_begin_submission(&fixture_state.asic_job_store, &work, &context);
         TEST_ASSERT_TRUE(asic_job_store_store_slot(&fixture_state.asic_job_store, 8, &work, NULL));
+        asic_job_store_end_submission(&fixture_state.asic_job_store);
         if (fixture_case.invalid) asic_job_store_invalidate_all(&fixture_state.asic_job_store);
     }
     fixture_events[0] = (asic_event_t) {

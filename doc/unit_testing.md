@@ -100,7 +100,7 @@ These checks do not include flashing or a new hardware/network mining run.
 
 The [common-job interface contract](asic-common-interface.md) records the
 production migration from `mining_template_t` to the proposed owned `asic_job_t`,
-the small compatibility extensions, and remaining planned interface work. All new cases run under both
+the unchanged stage 03 contract, separate assignment bookkeeping, and remaining planned work. All new cases run under both
 native compilers and QEMU. Coverage also scans test-instance objects; otherwise
 included production drivers and tasks would be incorrectly shown as uninstrumented.
 Fixture source files stay excluded. Compiler-reported inline header coverage

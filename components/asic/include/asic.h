@@ -18,9 +18,9 @@ typedef struct {
 uint8_t ASIC_init(GlobalState * GLOBAL_STATE);
 asic_event_t * ASIC_process_work(GlobalState * GLOBAL_STATE);
 int ASIC_set_max_baud(GlobalState * GLOBAL_STATE);
-/* Borrow work for this call. On acceptance the driver retains its own copy.
- * False means retry without advancing work or consuming its clean boundary. */
-bool ASIC_send_job(GlobalState *GLOBAL_STATE, const asic_job_t *job);
+/* Borrow common work for this call; the adapter retains accepted work.
+ * Backpressure and retries belong to the adapter. */
+void ASIC_send_job(GlobalState *state, const asic_job_t *job);
 // Apply a chip-specific clean-job barrier before shared work handles are
 // invalidated. Drivers without an explicit barrier have no persistent
 // hardware assignment state and therefore succeed as a no-op.

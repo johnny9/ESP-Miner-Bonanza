@@ -22,7 +22,7 @@ typedef struct {
 
 // Caller serializes access and zeroes the cache at logical work boundaries.
 bool bzm_result_is_duplicate(bzm_result_dedup_t *cache,
-                             const asic_job_t *job,
+                             const asic_job_t *job, uint64_t work_generation,
                              const asic_result_t *result);
 
 #endif

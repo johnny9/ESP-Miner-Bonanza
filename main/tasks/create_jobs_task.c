@@ -24,13 +24,21 @@ static bool generate_work_from_miner_job(GlobalState *state, const miner_job_t *
 {
     if (!state->ASIC_initalized ||
         !stratum_work_is_current(state, job->work_generation)) return false;
+    const asic_job_context_t context = {
+        .work_generation = job->work_generation,
+        .job_version = job->version,
+        .clean_jobs = clean_jobs,
+        .pool_work = true,
+    };
     asic_job_t template;
     if (!mining_build_asic_job(job, extranonce2, version, &template)) {
         ESP_LOGE(TAG, "Unable to materialize pool job");
         return false;
     }
-    template.clean_jobs = clean_jobs;
-    return ASIC_send_job(state, &template);
+    asic_job_store_begin_submission(&state->asic_job_store, &template, &context);
+    ASIC_send_job(state, &template);
+    asic_job_store_end_submission(&state->asic_job_store);
+    return stratum_work_is_current(state, context.work_generation);
 }
 
 void create_jobs_task(void *pvParameters)

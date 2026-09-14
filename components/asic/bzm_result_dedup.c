@@ -5,7 +5,7 @@
 #include "utils.h"
 
 bool bzm_result_is_duplicate(bzm_result_dedup_t *cache,
-                             const asic_job_t *job,
+                             const asic_job_t *job, uint64_t work_generation,
                              const asic_result_t *result)
 {
     if (cache == NULL || job == NULL || result == NULL) return false;
@@ -21,7 +21,7 @@ bool bzm_result_is_duplicate(bzm_result_dedup_t *cache,
     resolved.ntime = result->final_ntime;
     asic_job_header(&resolved, result->nonce, result->final_version, identity);
     for (size_t i = 0; i < 8; ++i)
-        identity[80 + i] = (uint8_t)(job->work_generation >> (8 * i));
+        identity[80 + i] = (uint8_t)(work_generation >> (8 * i));
     identity[88] = job->pool_id;
     identity[89] = (uint8_t)job->source_type;
     memcpy(identity + 90, job->job_id, job_id_length);

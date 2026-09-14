@@ -51,9 +51,7 @@ bool mining_build_asic_job_sv1(const mining_notify *notification,
     template->version_mask = version_mask;
     template->ntime = notification->ntime;
     template->nbits = notification->target;
-    template->clean_jobs = notification->clean_jobs;
     template->source_type = JOB_TYPE_V1;
-    template->job_version = notification->version;
     template->pool_diff = difficulty;
     memcpy(template->merkle_root, merkle_root, 32);
 
@@ -112,11 +110,8 @@ bool mining_build_asic_job(const miner_job_t *job,
     template->version_mask = job->version_mask;
     template->ntime = job->ntime;
     template->nbits = job->nbits;
-    template->clean_jobs = job->clean_jobs;
     template->source_type = (mining_job_source_t)job->type;
     template->pool_id = job->pool_id;
-    template->work_generation = job->work_generation;
-    template->job_version = job->version;
     template->pool_diff = job->pool_diff;
     memcpy(template->prev_hash, job->prev_hash, 32);
     memcpy(template->merkle_root, merkle_root, 32);

@@ -4,11 +4,13 @@
 #include "unity.h"
 
 static bzm_result_dedup_t cache;
+static uint64_t work_generation;
 
 static asic_job_t job_fixture(void)
 {
+    work_generation = 7;
     asic_job_t job = {.version = 0x20000000, .ntime = 100,
-        .version_mask = 0x1fffe000, .work_generation = 7,
+        .version_mask = 0x1fffe000,
         .pool_id = 1, .source_type = JOB_TYPE_V1};
     strcpy(job.job_id, "1001");
     return job;
@@ -25,7 +27,7 @@ TEST_CASE("BZM rejects the same header from different engine assignments", "[asi
     memset(&cache, 0, sizeof(cache));
     asic_job_t job = job_fixture();
     asic_result_t result = result_fixture();
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     result.work_handle = 900;
     result.engine_id = 47;
     result.asic_index = 3;
@@ -35,7 +37,7 @@ TEST_CASE("BZM rejects the same header from different engine assignments", "[asi
     // Different base offsets still describe the same actual mined header.
     job.version = result.final_version;
     job.ntime = result.final_ntime;
-    TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
 }
 
 TEST_CASE("BZM duplicate identity preserves distinct pool jobs and headers", "[asic][bzm][dedup]")
@@ -44,9 +46,9 @@ TEST_CASE("BZM duplicate identity preserves distinct pool jobs and headers", "[a
         memset(&cache, 0, sizeof(cache));
         asic_job_t job = job_fixture();
         asic_result_t result = result_fixture();
-        TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
+        TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
         switch (field) {
-            case 0: ++job.work_generation; break;
+            case 0: ++work_generation; break;
             case 1: ++job.pool_id; break;
             case 2: strcpy(job.job_id, "1002"); break;
             case 3: strcpy(job.extranonce2, "01"); break;
@@ -57,8 +59,8 @@ TEST_CASE("BZM duplicate identity preserves distinct pool jobs and headers", "[a
             case 8: ++job.prev_hash[0]; break;
             case 9: ++job.nbits; break;
         }
-        TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
-        TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, &result));
+        TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
+        TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     }
 }
 
@@ -69,17 +71,17 @@ TEST_CASE("BZM duplicate cache has bounded eviction and explicit logical reset",
     asic_result_t result = result_fixture();
     for (uint32_t nonce = 0; nonce < BZM_RESULT_DEDUP_CAPACITY; ++nonce) {
         result.nonce = nonce;
-        TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
+        TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     }
     result.nonce = 0;
-    TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     result.nonce = BZM_RESULT_DEDUP_CAPACITY;
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     result.nonce = 0;
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
-    TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
+    TEST_ASSERT_TRUE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     memset(&cache, 0, sizeof(cache));
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
 }
 
 TEST_CASE("BZM duplicate cache rejects invalid metadata without consuming entries", "[asic][bzm][dedup]")
@@ -87,13 +89,13 @@ TEST_CASE("BZM duplicate cache rejects invalid metadata without consuming entrie
     memset(&cache, 0, sizeof(cache));
     asic_job_t job = job_fixture();
     asic_result_t result = result_fixture();
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(NULL, &job, &result));
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, NULL, &result));
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, NULL));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(NULL, &job, work_generation, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, NULL, work_generation, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, NULL));
     memset(job.job_id, 'a', sizeof(job.job_id));
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     job = job_fixture();
     memset(job.extranonce2, 'a', sizeof(job.extranonce2));
-    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, &result));
+    TEST_ASSERT_FALSE(bzm_result_is_duplicate(&cache, &job, work_generation, &result));
     TEST_ASSERT_EQUAL_UINT32(0, cache.next);
 }

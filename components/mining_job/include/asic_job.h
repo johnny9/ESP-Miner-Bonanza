@@ -2,7 +2,6 @@
 #define ASIC_JOB_H_
 
 #include <stdint.h>
-#include <stdbool.h>
 
 #define ASIC_JOB_ID_LEN 32
 #define ASIC_JOB_EXTRANONCE2_SIZE 32
@@ -30,12 +29,6 @@ typedef struct asic_job {
     mining_job_source_t source_type;
     char job_id[ASIC_JOB_ID_LEN];
     char extranonce2[ASIC_JOB_EXTRANONCE2_HEX_SIZE];
-    /* Pool/session retirement identity; opaque to family encoders. */
-    uint64_t work_generation;
-    /* Original pool version before software rolling, for share validation. */
-    uint32_t job_version;
-    /* Retire previous assignments before accepting this job. */
-    bool clean_jobs;
 } asic_job_t;
 
 /* The caller supplies valid work and an 80-byte output buffer. Encode all

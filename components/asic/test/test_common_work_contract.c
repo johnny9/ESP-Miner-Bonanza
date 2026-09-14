@@ -10,12 +10,17 @@ TEST_CASE("Common work snapshots survive reuse while old generated handles expir
     TEST_ASSERT_TRUE(asic_job_store_init(&store));
     asic_job_t source = {
         .version = 0x20000000, .ntime = 123,
-        .job_id = "original", .extranonce2 = "aabb", .work_generation = 7,
+        .job_id = "original", .extranonce2 = "aabb",
     };
+    asic_job_context_t provenance = {.work_generation = 7, .job_version = 0x20000000,
+        .clean_jobs = true, .pool_work = true};
+    asic_job_store_begin_submission(&store, &source, &provenance);
     asic_work_handle_t original, replacement;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &source, &original));
+    asic_job_store_end_submission(&store);
     asic_job_t snapshot;
-    TEST_ASSERT_TRUE(asic_job_store_snapshot(&store, original, &snapshot));
+    asic_job_context_t snapshot_context;
+    TEST_ASSERT_TRUE(asic_job_store_snapshot_with_context(&store, original, &snapshot, &snapshot_context));
     memset(source.job_id, 'x', strlen(source.job_id));
     memset(source.extranonce2, '0', strlen(source.extranonce2));
     for (unsigned i = 0; i < ASIC_JOB_STORE_CAPACITY; ++i) {
@@ -27,7 +32,9 @@ TEST_CASE("Common work snapshots survive reuse while old generated handles expir
     TEST_ASSERT_TRUE(asic_job_store_contains(&store, replacement));
     TEST_ASSERT_EQUAL_STRING("original", snapshot.job_id);
     TEST_ASSERT_EQUAL_STRING("aabb", snapshot.extranonce2);
-    TEST_ASSERT_TRUE(snapshot.work_generation == 7);
+    TEST_ASSERT_TRUE(snapshot_context.work_generation == 7);
+    TEST_ASSERT_EQUAL_HEX32(0x20000000, snapshot_context.job_version);
+    TEST_ASSERT_TRUE(snapshot_context.clean_jobs);
     asic_job_store_invalidate_all(&store);
     TEST_ASSERT_FALSE(asic_job_store_contains(&store, replacement));
     TEST_ASSERT_EQUAL_STRING("original", snapshot.job_id);
@@ -51,7 +58,7 @@ TEST_CASE("common header uses exact hash bytes and little endian integers",
     TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, actual, 80);
 }
 
-TEST_CASE("common job builder owns metadata and preserves generic retirement identity",
+TEST_CASE("common job builder owns the unchanged stage 03 payload",
           "[asic-job][common-work]")
 {
     miner_job_t source = {
@@ -68,9 +75,7 @@ TEST_CASE("common job builder owns metadata and preserves generic retirement ide
     asic_job_t job;
     TEST_ASSERT_TRUE(mining_build_asic_job(&source, 0, 0x20002004, &job));
     TEST_ASSERT_EQUAL_HEX32(0x20002004, job.version);
-    TEST_ASSERT_EQUAL_HEX32(source.version, job.job_version);
-    TEST_ASSERT_TRUE(source.work_generation == job.work_generation);
-    TEST_ASSERT_TRUE(job.clean_jobs);
+
     TEST_ASSERT_EQUAL_UINT8(source.pool_id, job.pool_id);
     TEST_ASSERT_EQUAL_DOUBLE(source.pool_diff, job.pool_diff);
     TEST_ASSERT_EQUAL_HEX8_ARRAY(source.prev_hash, job.prev_hash, 32);
@@ -80,7 +85,7 @@ TEST_CASE("common job builder owns metadata and preserves generic retirement ide
     memset(&source, 0, sizeof(source));
     TEST_ASSERT_EQUAL_STRING("4294967295", copied.job_id);
     TEST_ASSERT_EQUAL_STRING("", copied.extranonce2);
-    TEST_ASSERT_EQUAL_HEX32(0x20000004, copied.job_version);
+    TEST_ASSERT_EQUAL_HEX32(0x20002004, copied.version);
 }
 
 TEST_CASE("common job builder keeps destination unchanged on rejection and zero uses source version",
@@ -104,7 +109,7 @@ TEST_CASE("common job builder keeps destination unchanged on rejection and zero 
     source.extranonce2_len = 0;
     TEST_ASSERT_TRUE(mining_build_asic_job(&source, 0, 0, &output));
     TEST_ASSERT_EQUAL_HEX32(source.version, output.version);
-    TEST_ASSERT_EQUAL_HEX32(source.version, output.job_version);
+
 }
 
 TEST_CASE("common results reject unterminated or malformed inline metadata",
@@ -131,5 +136,42 @@ TEST_CASE("common results reject unterminated or malformed inline metadata",
     asic_result_t result = {.work_handle = handle};
     TEST_ASSERT_EQUAL(ASIC_RESULT_RECORDED_SELF_TEST,
                       asic_result_handle(&result, &context, &callbacks));
+    asic_job_store_destroy(&store);
+}
+
+TEST_CASE("Assignment context is copied atomically and never leaks into unrelated jobs", "[asic][common-work]")
+{
+    asic_job_store_t store;
+    TEST_ASSERT_TRUE(asic_job_store_init(&store));
+    asic_job_t job = {.version = 0x20002000, .job_id = "same"};
+    asic_job_t unrelated = job;
+    asic_job_context_t context = {.work_generation = 7, .job_version = 0x20000000,
+        .clean_jobs = true, .pool_work = true};
+    asic_work_handle_t first, second;
+    asic_job_store_begin_submission(&store, &job, &context);
+    context.work_generation = 99; // The bound provenance is already owned.
+    TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &job, &first));
+    TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &unrelated, &second));
+    asic_job_store_end_submission(&store);
+    asic_job_t snapshot;
+    asic_job_context_t actual;
+    TEST_ASSERT_TRUE(asic_job_store_snapshot_with_context(&store, first, &snapshot, &actual));
+    TEST_ASSERT_TRUE(actual.work_generation == 7);
+    TEST_ASSERT_EQUAL_HEX32(0x20000000, actual.job_version);
+    TEST_ASSERT_TRUE(actual.clean_jobs);
+    TEST_ASSERT_TRUE(actual.pool_work);
+    TEST_ASSERT_TRUE(asic_job_store_snapshot_with_context(&store, second, &snapshot, &actual));
+    TEST_ASSERT_FALSE(actual.pool_work);
+    TEST_ASSERT_FALSE(actual.clean_jobs);
+    TEST_ASSERT_EQUAL_HEX32(job.version, actual.job_version);
+    context.work_generation = 8;
+    asic_job_store_begin_submission(&store, &job, &context);
+    TEST_ASSERT_TRUE(asic_job_store_store_slot(&store, (uint8_t)first, &job, &second));
+    asic_job_store_end_submission(&store);
+    TEST_ASSERT_FALSE(asic_job_store_snapshot_with_context(&store, first, &snapshot, &actual));
+    TEST_ASSERT_TRUE(asic_job_store_snapshot_with_context(&store, second, &snapshot, &actual));
+    TEST_ASSERT_TRUE(actual.work_generation == 8);
+    asic_job_store_invalidate_all(&store);
+    TEST_ASSERT_FALSE(asic_job_store_snapshot_with_context(&store, second, &snapshot, &actual));
     asic_job_store_destroy(&store);
 }
