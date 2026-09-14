@@ -62,8 +62,6 @@ typedef struct {
     bzm_telemetry_store_t staged_batch_telemetry;
     bool staged_batch_telemetry_active;
     bzm_dispatch_gate_t staged_dispatch_gate;
-    float last_temperature;
-    int64_t last_temperature_us;
     atomic_uint_fast64_t running_dispatch_batches;
     atomic_uint_fast64_t running_dispatched_logical_engines;
     atomic_uint_fast64_t running_dispatched_chip_engines;
@@ -124,8 +122,6 @@ static bzm_driver_state_t *BZM_STATE;
 #define STAGED_BATCH_TELEMETRY_ACTIVE \
     (*BZM_STATE).staged_batch_telemetry_active
 #define STAGED_DISPATCH_GATE (*BZM_STATE).staged_dispatch_gate
-#define LAST_TEMPERATURE (*BZM_STATE).last_temperature
-#define LAST_TEMPERATURE_US (*BZM_STATE).last_temperature_us
 #define RUNNING_DISPATCH_BATCHES (*BZM_STATE).running_dispatch_batches
 #define RUNNING_DISPATCHED_LOGICAL_ENGINES \
     (*BZM_STATE).running_dispatched_logical_engines
@@ -192,7 +188,6 @@ bool BZM_driver_state_init(GlobalState *state)
         return false;
     }
 
-    allocated->last_temperature = -1.0f;
     atomic_init(&allocated->running_dispatch_batches, 0);
     atomic_init(&allocated->running_dispatched_logical_engines, 0);
     atomic_init(&allocated->running_dispatched_chip_engines, 0);
@@ -291,8 +286,6 @@ uint8_t BZM_init(GlobalState * state)
     bzm_telemetry_store_init(&STAGED_BATCH_TELEMETRY);
     STAGED_BATCH_TELEMETRY_ACTIVE = false;
     bzm_dispatch_gate_init(&STAGED_DISPATCH_GATE);
-    LAST_TEMPERATURE = -1.0f;
-    LAST_TEMPERATURE_US = 0;
     atomic_store_explicit(&RUNNING_DISPATCH_BATCHES, 0, memory_order_relaxed);
     atomic_store_explicit(&RUNNING_DISPATCHED_LOGICAL_ENGINES, 0, memory_order_relaxed);
     atomic_store_explicit(&RUNNING_DISPATCHED_CHIP_ENGINES, 0, memory_order_relaxed);
@@ -730,27 +723,25 @@ float BZM_read_temperature(GlobalState * state)
     if (!INITIALIZED || TRANSPORT.asic_count == 0)
         return -1.0f;
 
-    int64_t now = esp_timer_get_time();
-    if (LAST_TEMPERATURE_US != 0 && now - LAST_TEMPERATURE_US < 2000000) {
-        return LAST_TEMPERATURE;
-    }
-
     bzm_telemetry_store_t snapshot;
     pthread_mutex_lock(&REACTOR_LOCK);
     const bool available =
         bzm_serial_get_telemetry_snapshot(&TRANSPORT, &snapshot);
     pthread_mutex_unlock(&REACTOR_LOCK);
 
+    /* The reactor may publish telemetry while this reader waits for its lock.
+     * Check age after the copy, just as the controller does. Never substitute
+     * an old temperature when the current snapshot is unavailable or stale. */
+    uint64_t now = (uint64_t)esp_timer_get_time();
     float hottest_c = -1.0f;
     if (available &&
         bzm_telemetry_max_temperature(
-            &snapshot, (uint64_t)now,
+            &snapshot, now,
             (uint64_t)CONFIG_BZM_1002_TELEMETRY_MAX_AGE_MS * 1000U,
             &hottest_c)) {
-        LAST_TEMPERATURE = hottest_c;
+        return hottest_c;
     }
-    LAST_TEMPERATURE_US = now;
-    return LAST_TEMPERATURE;
+    return -1.0f;
 }
 
 bool BZM_get_telemetry(uint8_t asic_id, bzm_telemetry_sample_t * sample)

@@ -36,6 +36,7 @@ class SelfTestRegressionTest(MinerTestCase):
         self.fail("Self-test did not reach the expected state within its deadline")
 
     async def _start(self):
+        await self._wait_normal_boot()
         self.assertEqual((await self._status())["status"], "idle")
         self.addAsyncCleanup(self._stop_diagnostic)
         # A reboot can close the response after accepting the one-shot write.
@@ -56,8 +57,27 @@ class SelfTestRegressionTest(MinerTestCase):
                 await self.device.api.post_json("/api/system/selftest", {"action": "cancel"})
             except InterfaceError:
                 pass
-        await self._wait(lambda s: s["status"] == "idle", timeout=120)
+        await self._wait_normal_boot()
         # Runner cleanup will independently compare and restore its baseline.
+
+    async def _wait_normal_boot(self):
+        await self._wait(lambda s: s["status"] == "idle", timeout=120)
+        # HTTP and idle status are available before Bonanza's staged startup.
+        # Let its controller finish before the runner compares pause state.
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            try:
+                info = await self.device.current_info()
+            except InterfaceError:
+                await asyncio.sleep(1)
+                continue
+            health = info.get("asicHealth") or {}
+            self.assertFalse(health.get("lastFaultCode"), health)
+            if (health.get("lifecycle", "MINING") == "MINING"
+                    and not info.get("miningPaused") and info.get("workReceived", 0) > 0):
+                return
+            await asyncio.sleep(1)
+        self.fail("Normal mining did not resume after diagnostic reboot")
 
     async def _assert_local_mining(self):
         info = await self.device.current_info()
@@ -92,7 +112,7 @@ class SelfTestRegressionTest(MinerTestCase):
         self.assertFalse(status["workerRunning"], status)
         self.assertGreaterEqual(status["acceptedNonces"], 2)
         self.logger.info("Local self-test passed with nonce proof and confirmed shutdown")
-        await self._wait(lambda s: s["status"] == "idle", timeout=120)
+        await self._wait_normal_boot()
 
     async def test_02_cancel_local_work_and_return_to_normal_mining(self):
         status = await self._start()
@@ -106,4 +126,5 @@ class SelfTestRegressionTest(MinerTestCase):
             pass
         status = await self._wait(lambda s: s["status"] == "idle", timeout=120)
         self.assertFalse(status["workerRunning"], status)
+        await self._wait_normal_boot()
         self.logger.info("Cancellation stopped local work and returned through a normal boot")
