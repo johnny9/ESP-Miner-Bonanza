@@ -137,7 +137,8 @@ Validation of exact stage 03 alignment on 2026-09-14:
 
 - 397 native tests pass under both GCC and Clang with sanitizers, including
   retrying the identical borrowed job and cancelling work on session retirement.
-- All 494 QEMU integration tests pass.
+- All 494 QEMU integration tests pass. ESP-IDF 6.0.2 builds the application
+  with 31% partition space free.
 - Store tests verify atomic metadata copies, stale-handle rejection after slot
   reuse, and isolation from unrelated job pointers.
 - All 17 inventory/coverage tooling tests pass. Existing coverage gates pass:
@@ -160,7 +161,42 @@ Logs are retained locally in `.cache/common-jobs-validation/`; coverage reports
 are under `build/host-coverage/coverage/`. The hardware follow-up build and native
 logs are also retained with the testcode artifacts described below.
 
-### Network hardware validation
+### Exact stage 03 network validation
+
+Firmware `a6ee24e4` (`bzm-stage03-a6ee24e4`) was built from a clean source tree
+and installed on Bonanza 1002 through HTTP OTA with Python testcode `ec36db4`.
+The application SHA256 is
+`f34da16d07fa93a4c0d23704287d6f0c45eb4b1aaf85a05e22c7da01612c1727`.
+Serial access is disabled; local Stratum listeners use the configured LAN host
+and ports 4333/4334. Reports and immutable firmware provenance are retained in
+`mining-qa-testcode-bonanza-publish/artifacts/stage03-a6ee24e4/`.
+
+| Python testcode suite | Result | Run ID |
+| --- | --- | --- |
+| sv1 | 12 passed | `20260914T085815.860595Z` |
+| sv2-standard | 7 passed | `20260914T090451.694880Z` |
+| sv2-extended | 7 passed | `20260914T090739.161256Z` |
+| fallback | 3 passed | `20260914T090958.755680Z` |
+
+The three focused fallback cases use unchanged testcode methods for manual and
+automatic switching, short-silence recovery, and three repeated failover/recovery
+cycles. All 14 observed phases passed with fresh accepted shares. Sustained
+silence and the other fallback cases were not repeated for this migration.
+
+Independent Python SHA256d checks verified 45 SV1 shares across 40 jobs and
+seven SV2 standard shares across four jobs, without invalid proofs or duplicate
+headers. One SV1 raw-frame successor lacks a recorded job payload and cannot be
+rehashed. The standard audit uses recorded fields and the pinned suite's fixed
+merkle/previous-hash fixture; extended-channel transcripts lack extranonce bytes
+needed for an independent rehash. Their coverage is the protocol suite.
+
+A separate final API check verified unchanged original pools, worker identities,
+operating settings, and board identity. It observed 13 to 19 accepted
+public-pool shares in 10 seconds, four ASICs and 944 engines in MINING state,
+no fault or reboot, and approximately 1.57 TH/s. Ports 4333/4334 have no
+remaining listeners. The new application remains installed on `bonanza.local`.
+
+### Earlier network hardware validation
 
 Firmware commit `670f58f3` was built with ESP-IDF 6.0.2 as
 `bzm-common-670f58f3` and installed on a physical Bitaxe Bonanza 1002 through
