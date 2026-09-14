@@ -85,9 +85,12 @@ version progression, identical retries, task creation failure, cancelled and
 retired epochs, generation exhaustion, nonzero bounded waits, local/pool result
 isolation, the characterized first header, and domain/deadline policy.
 
-Local validation: 406 tests under GCC and Clang sanitizers, 503 QEMU tests, the
-ESP-IDF firmware build, and unchanged coverage gates pass. Hardware validation
-is recorded separately after the candidate is installed.
+Local validation on 2026-09-14: 406 tests under each of GCC and Clang sanitizers,
+503 QEMU tests, 99 Axe-OS tests, and 17 inventory/coverage tooling tests pass.
+ESP-IDF 6.0.2 builds the application with 31% partition space free. Unchanged
+coverage gates pass: 78.5% line and 65.6% branch coverage within instrumented
+files, with 55/134 first-party production files instrumented. These are not
+firmware-wide coverage percentages.
 
 `tools/hil/test_self_test_regression.py` is a testcode extension. Point an ignored
 `miner-test` profile's `runner.tests_dir` at this checkout's `tools/hil`, select
@@ -97,3 +100,62 @@ identity, OTA, baseline, cleanup, and artifact lifecycle. It covers completed
 local mining/verified shutdown, duplicate and malformed starts, cancellation,
 and normal reboot; it requires no USB. A separate normal-pool check verifies
 restored settings and fresh public-pool shares after the suite.
+
+### Network hardware validation
+
+Clean firmware commit `713420fc67956cfe0c1208e1a68afb88762712ea` was built as
+`bzm-selftest-713420fc` and installed through HTTP OTA on Bonanza 1002. The
+2,895,616-byte application SHA256 is
+`5c6a503a15a595300530208f5b9436bd1d811fade765f02c1fadd96585e18ad1`.
+Python testcode was pinned to `ec36db41270aad3e665237bf003046d8bc17e50e`;
+USB/serial was disabled. Local protocol listeners used LAN port 4333.
+
+| Testcode suite | Result | Run ID |
+| --- | --- | --- |
+| Local self-test and cancellation | 2 passed | `20260914T100722.197311Z` |
+| SV1 regression | 12 passed | `20260914T101558.226253Z` |
+| SV2 standard channel | 7 passed | `20260914T102027.647518Z` |
+| SV2 extended channel | 7 passed | `20260914T102229.863166Z` |
+
+The completed diagnostic recorded 429 accepted local nonces and three rejected
+nonces, passed all four chip/domain checks, and reported confirmed shutdown with
+the worker stopped. No pool work or accepted pool shares appeared during the
+diagnostic boot. Warmup took approximately 248 seconds before the 30-second
+measurement. Twenty-five paired HTTP observations of self-test and controller
+temperatures differed by at most 0.21°C. Cancellation returned to normal mining;
+malformed actions and duplicate starts were rejected.
+
+Earlier candidate runs are retained as failure evidence. `1fd1bbb4` exposed
+the temperature reader timestamping before waiting for the reactor snapshot,
+then retaining its old cached reading when freshness validation failed. It also
+exposed the test harness treating HTTP availability as completed ASIC startup.
+`ba5de7ba` fixed both and confirmed that the inherited 120-second warmup deadline
+still expired while this board was heating normally. The final build permits a
+300-second Bonanza warmup with the same 55°C target and safety limits. Both
+timeout runs confirmed shutdown; the final run passed with clean restoration.
+Final domain validation also accepts a newer concurrent monitor sample while
+requiring both the averaged and current observations to remain fresh.
+
+Independent Python SHA256d audits verified 44 SV1 shares across 40 jobs and
+eight SV2 standard shares across four jobs, with no invalid proofs or duplicate
+headers. One SV1 raw-frame successor lacks a recorded job payload and cannot be
+rehashed. The standard audit combines recorded submissions with the pinned
+suite's fixed merkle/previous-hash fixture. Extended transcripts lack the
+extranonce bytes required for independent rehashing; their coverage is the
+protocol suite. Fallback suites and other physical ASIC models were not rerun
+for this self-test change.
+
+A separate final API check confirmed the original pools, worker identities,
+operating settings, and board identity. It observed accepted public-pool shares
+increase from four to six, four ASICs and 944 engines in MINING state at the
+saved 1200 MHz / 3.0 V settings, and no fault or reboot. Ports 4333/4334 had no
+remaining test listeners. A settled follow-up reported 1.50 TH/s, 12 accepted
+public-pool shares and zero rejected shares. The candidate remains installed
+on `bonanza.local`.
+
+Reports, immutable firmware provenance, failure runs, paired temperature
+observations, offline audits, and reproduction profiles/scripts are retained in
+`mining-qa-testcode-bonanza-publish/artifacts/self-test-713420fc/` (earlier runs
+are under `self-test-1fd1bbb4/` and `self-test-ba5de7ba/`). Only Bonanza 1002 was
+validated physically; the shared worker tests cover Bitmain version progression
+without substituting for hardware qualification.
