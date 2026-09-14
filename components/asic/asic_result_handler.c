@@ -60,10 +60,14 @@ asic_result_status_t asic_result_handle(
                 sizeof(share.extranonce2_bin)) != share.extranonce2_len)
         return ASIC_RESULT_REJECTED_WORK;
 
-    if (context->self_test) {
+    if (provenance.self_test) {
+        if (!asic_job_store_local_is_current(context->job_store,
+                                              provenance.work_generation)) {
+            return ASIC_RESULT_STALE_WORK;
+        }
         if (callbacks->record_self_test != NULL) {
             callbacks->record_self_test(context->callback_context,
-                                        share.nonce_diff);
+                                        &share);
         }
 
         return ASIC_RESULT_RECORDED_SELF_TEST;

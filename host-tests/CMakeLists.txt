@@ -121,6 +121,8 @@ add_executable(
     ../components/stratum/miner_job.c
     ../components/stratum/coinbase_decoder.c
     ../components/stratum/base58.c
+    ../components/self_test/self_test_job.c
+    ../components/self_test/self_test_policy.c
     ../components/mining_job/asic_job.c
     ../components/stratum/mining.c
     ../components/stratum/utils.c
@@ -210,6 +212,7 @@ target_include_directories(
     PRIVATE
         include
         ${cjson_SOURCE_DIR}
+        ../components/self_test/include
         ../components/mining_job/include
         ../components/stratum/include
         ../components/stratum_v2/include

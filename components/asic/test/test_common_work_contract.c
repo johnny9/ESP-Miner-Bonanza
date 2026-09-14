@@ -119,7 +119,7 @@ TEST_CASE("common results reject unterminated or malformed inline metadata",
     TEST_ASSERT_TRUE(asic_job_store_init(&store));
     asic_job_t job = {.job_id = "42", .extranonce2 = "aabb"};
     asic_work_handle_t handle;
-    asic_result_context_t context = {.job_store = &store, .self_test = true};
+    asic_result_context_t context = {.job_store = &store};
     asic_result_callbacks_t callbacks = {0};
     for (unsigned invalid = 0; invalid < 4; ++invalid) {
         asic_job_t malformed = job;
@@ -132,7 +132,11 @@ TEST_CASE("common results reject unterminated or malformed inline metadata",
         TEST_ASSERT_EQUAL(ASIC_RESULT_REJECTED_WORK,
                           asic_result_handle(&result, &context, &callbacks));
     }
+    asic_job_context_t local = {.self_test = true,
+        .work_generation = asic_job_store_activate_local(&store)};
+    asic_job_store_begin_submission(&store, &job, &local);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &job, &handle));
+    asic_job_store_end_submission(&store);
     asic_result_t result = {.work_handle = handle};
     TEST_ASSERT_EQUAL(ASIC_RESULT_RECORDED_SELF_TEST,
                       asic_result_handle(&result, &context, &callbacks));
@@ -173,5 +177,48 @@ TEST_CASE("Assignment context is copied atomically and never leaks into unrelate
     TEST_ASSERT_TRUE(actual.work_generation == 8);
     asic_job_store_invalidate_all(&store);
     TEST_ASSERT_FALSE(asic_job_store_snapshot_with_context(&store, second, &snapshot, &actual));
+    asic_job_store_destroy(&store);
+}
+
+static unsigned local_deliveries, pool_deliveries;
+static void capture_local(void *context, const asic_share_submission_t *share)
+{
+    (void)context;
+    TEST_ASSERT_NOT_NULL(share);
+    ++local_deliveries;
+}
+static void capture_pool(void *context, const asic_share_submission_t *share)
+{
+    (void)context;
+    TEST_ASSERT_NOT_NULL(share);
+    ++pool_deliveries;
+}
+
+TEST_CASE("Local result destinations reject retired tests and never capture pool work", "[asic][self-test]")
+{
+    asic_job_store_t store;
+    TEST_ASSERT_TRUE(asic_job_store_init(&store));
+    asic_job_t job = {.version = 0x20000004, .job_id = "local"};
+    asic_result_context_t context = {.job_store = &store};
+    asic_result_callbacks_t callbacks = {.record_self_test = capture_local, .account_share = capture_pool};
+    asic_job_context_t local = {.self_test = true, .work_generation = asic_job_store_activate_local(&store)};
+    asic_result_t result = {.final_version = job.version};
+    local_deliveries = pool_deliveries = 0;
+    asic_job_store_begin_submission(&store, &job, &local);
+    TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &job, &result.work_handle));
+    asic_job_store_end_submission(&store);
+    TEST_ASSERT_EQUAL(ASIC_RESULT_RECORDED_SELF_TEST, asic_result_handle(&result, &context, &callbacks));
+    TEST_ASSERT_EQUAL_UINT32(1, local_deliveries);
+    TEST_ASSERT_EQUAL_UINT32(0, pool_deliveries);
+    asic_job_store_cancel_local(&store);
+    TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK, asic_result_handle(&result, &context, &callbacks));
+    uint64_t next = asic_job_store_activate_local(&store);
+    TEST_ASSERT_TRUE(next > local.work_generation);
+    TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK, asic_result_handle(&result, &context, &callbacks));
+    /* An active diagnostic does not turn unrelated pool work into test proof. */
+    TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &job, &result.work_handle));
+    TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &callbacks));
+    TEST_ASSERT_EQUAL_UINT32(1, local_deliveries);
+    TEST_ASSERT_EQUAL_UINT32(1, pool_deliveries);
     asic_job_store_destroy(&store);
 }

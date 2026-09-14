@@ -22,6 +22,7 @@
 #define hashrate_monitor_register_read result_task_spy_register_read
 
 void result_task_spy_delay(TickType_t ticks);
+void result_task_spy_record_nonce(GlobalState *state, double difficulty);
 
 void result_task_spy_register_read(void *state, register_type_t type,
                                    uint8_t asic_nr, uint32_t value, uint64_t timestamp);

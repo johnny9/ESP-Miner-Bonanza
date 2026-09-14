@@ -27,6 +27,7 @@
 #include "nvs_config.h"
 #include "stratum_task.h"
 #include "statistics_task.h"
+#include "self_test.h"
 #include "sv1_client.h"
 #include "thermal.h"
 #include "vcore.h"
@@ -420,7 +421,7 @@ static bool start_mining_tasks_locked(void)
 
     /* Every task starts while ASIC_initalized is false and the independent
      * dispatch gate is closed. Partial creation is safe and retryable. */
-    if (RUNTIME.create_jobs_task_handle == NULL &&
+    if (!state->SELF_TEST_MODULE.is_active && RUNTIME.create_jobs_task_handle == NULL &&
         xTaskCreate(create_jobs_task, "stratum miner", 8192, state,
                     BZM_CREATE_JOBS_TASK_PRIORITY,
                     &RUNTIME.create_jobs_task_handle) != pdPASS) {
@@ -438,12 +439,12 @@ static bool start_mining_tasks_locked(void)
                                                                     &RUNTIME.hashrate_task_handle, MALLOC_CAP_SPIRAM) != pdPASS) {
         return false;
     }
-    if (RUNTIME.statistics_task_handle == NULL &&
+    if (!state->SELF_TEST_MODULE.is_active && RUNTIME.statistics_task_handle == NULL &&
         xTaskCreateWithCaps(statistics_task, "statistics", 8192, state, 3, &RUNTIME.statistics_task_handle, MALLOC_CAP_SPIRAM) !=
             pdPASS) {
         return false;
     }
-    if (RUNTIME.protocol_task_handle == NULL && xTaskCreateWithCaps(stratum_task, "stratum", 16384, state, 5,
+    if (!state->SELF_TEST_MODULE.is_active && RUNTIME.protocol_task_handle == NULL && xTaskCreateWithCaps(stratum_task, "stratum", 16384, state, 5,
                                                                     &RUNTIME.protocol_task_handle, MALLOC_CAP_SPIRAM) != pdPASS) {
         return false;
     }
@@ -1658,6 +1659,8 @@ static void runtime_frequency_task(void *parameter)
 
 static bool recoverable_overheat_fault(bzm_runtime_health_fault_t fault)
 {
+    if (RUNTIME.global_state != NULL && RUNTIME.global_state->SELF_TEST_MODULE.is_active)
+        return false;
     return fault == BZM_RUNTIME_HEALTH_FAULT_ASIC_OVERHEAT ||
            fault == BZM_RUNTIME_HEALTH_FAULT_TPS_OVERHEAT;
 }
@@ -2044,6 +2047,7 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
     RUNTIME.active = true;
     bzm_frequency_target_t configured_target;
     const float requested_mhz =
+        global_state->SELF_TEST_MODULE.is_active ? BZM_FREQUENCY_POWER_ON_MHZ :
         nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
     if (!bzm_frequency_request_is_valid(requested_mhz) ||
         !bzm_frequency_resolve_target(
@@ -2058,6 +2062,7 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
     }
     RUNTIME.frequency_target_mhz = configured_target.actual_mhz;
     const uint16_t requested_voltage_mv =
+        global_state->SELF_TEST_MODULE.is_active ? (uint16_t)(BZM_TPS546_FIXED_VOUT_V * 1000) :
         nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
     float requested_voltage_v = 0.0f;
     if (bzm_power_resolve_user_voltage(
@@ -2157,7 +2162,7 @@ esp_err_t bzm_controller_init(GlobalState * global_state)
     pthread_mutex_lock(&RUNTIME.lock);
     RUNTIME.monitor_running = true;
     pthread_mutex_unlock(&RUNTIME.lock);
-    if (xTaskCreate(runtime_frequency_task, "bzm_frequency", 6144, NULL,
+    if (!global_state->SELF_TEST_MODULE.is_active && xTaskCreate(runtime_frequency_task, "bzm_frequency", 6144, NULL,
                     BZM_TUNING_TASK_PRIORITY,
                     &RUNTIME.frequency_task_handle) != pdPASS) {
         pthread_mutex_lock(&RUNTIME.lock);

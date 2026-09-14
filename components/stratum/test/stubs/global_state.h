@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "scoreboard.h"
 #include "asic_job_store.h"
+#include "self_test.h"
 
 /*
  * Shared test view for the real job task and isolated BM13xx driver copies.
@@ -44,9 +45,7 @@ typedef struct GlobalState {
         uint16_t primary_pool_index, secondary_pool_index;
         struct { char user[256]; } pools[2];
     } SYSTEM_MODULE;
-    struct {
-        bool is_active;
-    } SELF_TEST_MODULE;
+    SelfTestModule SELF_TEST_MODULE;
 } GlobalState;
 
 #endif /* GLOBAL_STATE_H_ */

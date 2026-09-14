@@ -53,6 +53,7 @@
 #include "bzm_bridge_update.h"
 #include "bzm_ota_guard.h"
 #include "bzm_controller.h"
+#include "self_test_api.h"
 #include "thermal.h"
 
 static const char * TAG = "http_server";
@@ -2360,7 +2361,7 @@ esp_err_t start_rest_server(GlobalState * global_state)
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.stack_size = 8192;
     config.max_open_sockets = 20;
-    config.max_uri_handlers = 36;
+    config.max_uri_handlers = 38;
     config.close_fn = websocket_close_fn;
     config.lru_purge_enable = true;
     config.keep_alive_enable = true;
@@ -2386,6 +2387,8 @@ esp_err_t start_rest_server(GlobalState * global_state)
         .user_ctx = rest_context
     };
     httpd_register_uri_handler(server, &recovery_explicit_get_uri);
+
+    ESP_ERROR_CHECK(self_test_api_register(server, GLOBAL_STATE));
 
     // Register theme API endpoints
     ESP_ERROR_CHECK(register_theme_api_endpoints(server, rest_context));

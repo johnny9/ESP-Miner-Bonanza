@@ -23,6 +23,9 @@ void ASIC_send_job(GlobalState *state, const asic_job_t *job)
     for (;;) {
         if (context.pool_work &&
             !stratum_work_is_current(state, context.work_generation)) return;
+        if (context.self_test &&
+            !asic_job_store_local_is_current(&state->asic_job_store,
+                                             context.work_generation)) return;
         if (state->ASIC_initalized && driver->ops.send_job(state, job)) return;
         vTaskDelay(pdMS_TO_TICKS(10));
     }

@@ -45,3 +45,6 @@ components/asic/test/test_bitmain_job_packets.c
 components/asic/test/test_version_rolling.c
 components/asic/test/test_asic_result_task.c
 components/asic/test/test_common_work_contract.c
+
+components/asic/test/test_self_test_work.c
+components/asic/test/test_self_test_policy.c

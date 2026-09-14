@@ -31,6 +31,7 @@ SRCS
     "setup_ble.c"
     "task_monitor.c"
     "./http_server/http_server.c"
+    "./http_server/self_test_api.c"
     "./http_server/bzm_ota_guard.c"
     "./http_server/websocket.c"
     "./http_server/websocket_log.c"
@@ -40,6 +41,7 @@ SRCS
     "./http_server/theme_api.c"
     "./http_server/axe-os/api/system/asic_settings.c"
     "./self_test/self_test.c"
+    "./self_test/self_test_work.c"
     "./tasks/stratum_task.c"
     "./tasks/stratum_v1_client.c"
     "./tasks/stratum_v2_client.c"
@@ -77,6 +79,7 @@ INCLUDE_DIRS
     "${CMAKE_CURRENT_BINARY_DIR}"
 
 REQUIRES
+    "self_test"
     "asic"
     "connect"
     "dns_server"

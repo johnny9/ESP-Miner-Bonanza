@@ -106,6 +106,11 @@ included production drivers and tasks would be incorrectly shown as uninstrument
 Fixture source files stay excluded. Compiler-reported inline header coverage
 is retained in the report alongside the C/C++ source inventory.
 
+The [local self-test integration](bonanza-self-test.md) adds shared tests for the
+complete production worker and void adapter, plus local result isolation and
+completion policies. Task creation, delay, and driver I/O are fixture boundaries;
+job ownership, retries, cancellation, and version progression run production C.
+
 ## Running host tests
 
 Run the complete native suite from the repository root:

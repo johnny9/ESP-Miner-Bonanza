@@ -31,14 +31,13 @@ typedef struct {
 
 typedef struct {
     asic_job_store_t *job_store;
-    bool self_test;
     const char *username;
     void *callback_context;
     bool (*work_is_current)(void *context, uint64_t generation);
 } asic_result_context_t;
 
 typedef struct {
-    void (*record_self_test)(void *context, double nonce_diff);
+    void (*record_self_test)(void *context, const asic_share_submission_t *share);
     bool (*sv1_transport_ready)(void *context,
                                 const asic_share_submission_t *share);
     int (*submit_sv1)(void *context, const asic_share_submission_t *share);

@@ -19,8 +19,8 @@
 #include "device_config.h"
 #include "PID.h"
 #include "self_test.h"
-#include "miner_job.h"
-#include "sv1_protocol.h"
+#include "self_test_policy.h"
+#include "bzm_controller.h"
 #include "utils.h"
 
 #define GPIO_ASIC_ENABLE CONFIG_GPIO_ASIC_ENABLE
@@ -55,28 +55,18 @@ static const char * TAG = "self_test";
 
 static SemaphoreHandle_t longPressSemaphore;
 static bool isFactoryTest = false;
+static GlobalState *self_test_state;
 
 // local function prototypes
 static void tests_done(GlobalState * GLOBAL_STATE, bool test_result);
 
-typedef struct {
-    float hashrate_sum;
-    uint32_t sample_count;
-    uint32_t rejected_sample_count;
-    uint64_t last_sample_time_us;
-} SelfTestDomainAverage;
+typedef self_test_domain_average_t SelfTestDomainAverage;
 
 typedef struct {
     int asic_count;
     int hash_domains;
     SelfTestDomainAverage *domains;
 } SelfTestDomainAverages;
-
-typedef enum {
-    SELF_TEST_DOMAIN_OK,
-    SELF_TEST_DOMAIN_FAIL,
-    SELF_TEST_DOMAIN_UNRELIABLE,
-} SelfTestDomainStatus;
 
 static size_t self_test_domain_index(const SelfTestDomainAverages * averages, int asic_nr, int domain_nr)
 {
@@ -136,35 +126,18 @@ static void self_test_domain_averages_sample(GlobalState * GLOBAL_STATE,
         return;
     }
 
-    float max_plausible_hashrate = expected_domain_hashrate * 3.0f;
-
     for (int asic_nr = 0; asic_nr < averages->asic_count; asic_nr++) {
         for (int domain_nr = 0; domain_nr < averages->hash_domains; domain_nr++) {
             asic_domain_measurement_t measurement;
-            if (ASIC_get_domain_measurement(GLOBAL_STATE, asic_nr, domain_nr, &measurement) != ESP_OK) {
+            if (ASIC_get_domain_measurement(GLOBAL_STATE, asic_nr, domain_nr, &measurement) != ESP_OK)
                 continue;
-            }
-            SelfTestDomainAverage * average = self_test_domain_get(averages, asic_nr, domain_nr);
-
-            if (measurement.time_us == 0 || measurement.time_us == average->last_sample_time_us) {
-                continue;
-            }
-
-            if (average->last_sample_time_us == 0) {
-                average->last_sample_time_us = measurement.time_us;
-                continue;
-            }
-            average->last_sample_time_us = measurement.time_us;
-
-            bool rejected = !isfinite(measurement.hashrate) || measurement.hashrate > max_plausible_hashrate;
-
-            if (rejected) {
-                average->rejected_sample_count++;
-                continue;
-            }
-
-            average->hashrate_sum += measurement.hashrate;
-            average->sample_count++;
+            self_test_domain_add(self_test_domain_get(averages, asic_nr, domain_nr),
+                (self_test_domain_sample_t){
+                    .hashrate_ghs = measurement.hashrate,
+                    .acquired_at_us = measurement.time_us,
+                    .generation = GLOBAL_STATE->SELF_TEST_MODULE.work_generation,
+                    .valid = GLOBAL_STATE->ASIC_initalized,
+                }, expected_domain_hashrate);
         }
     }
 }
@@ -182,7 +155,9 @@ static float self_test_domain_average_hashrate(const SelfTestDomainAverage * ave
 static void self_test_set_fan_percent(GlobalState * GLOBAL_STATE, float fan_percent)
 {
     if (fan_percent > SELF_TEST_MAX_FAN_PERCENT) fan_percent = SELF_TEST_MAX_FAN_PERCENT;
-    if (fan_percent < 0.0f) fan_percent = 0.0f;
+    float minimum = fmaxf(SELF_TEST_MIN_FAN_PERCENT,
+                           Thermal_get_fan_min_percent(&GLOBAL_STATE->DEVICE_CONFIG));
+    if (fan_percent < minimum) fan_percent = minimum;
 
     GLOBAL_STATE->POWER_MANAGEMENT_MODULE.fan_perc = fan_percent;
     if (Thermal_set_fan_percent(&GLOBAL_STATE->DEVICE_CONFIG, fan_percent / 100.0f) != ESP_OK) {
@@ -194,7 +169,7 @@ static void self_test_set_fan_percent(GlobalState * GLOBAL_STATE, float fan_perc
 
 static bool self_test_temp_invalid(float temp)
 {
-    return !isfinite(temp) || temp == -1.0f || temp == 127.0f;
+    return !isfinite(temp) || temp <= 0.0f || temp >= 127.0f;
 }
 
 static float self_test_get_control_temp(GlobalState * GLOBAL_STATE)
@@ -289,8 +264,26 @@ void self_test_record_nonce(GlobalState * GLOBAL_STATE, double nonce_diff)
     pthread_mutex_unlock(&measurement->lock);
 }
 
+static void self_test_check_running(GlobalState *state)
+{
+    if (atomic_load(&state->SELF_TEST_MODULE.cancel_requested)) {
+        self_test_show_message(state, "CANCELLED");
+        tests_done(state, false);
+    }
+    if (atomic_load(&state->SELF_TEST_MODULE.worker_failed) ||
+        !state->ASIC_initalized || state->SYSTEM_MODULE.hardware_fault ||
+        state->SYSTEM_MODULE.power_fault) {
+        self_test_show_message(state, "WORK:FAIL");
+        tests_done(state, false);
+    }
+}
+
 static bool self_test_should_run()
 {
+    if (nvs_config_get_bool(NVS_CONFIG_SELF_TEST_MANUAL)) {
+        nvs_config_set_bool(NVS_CONFIG_SELF_TEST_MANUAL, false);
+        return true;
+    }
     bool is_factory_flash = nvs_config_get_u64(NVS_CONFIG_BEST_DIFF) < 1;
     bool is_self_test_flag_set = nvs_config_get_bool(NVS_CONFIG_SELF_TEST);
     if (is_factory_flash && is_self_test_flag_set) {
@@ -304,30 +297,14 @@ static bool self_test_should_run()
 
 esp_err_t self_test_init(GlobalState * GLOBAL_STATE)
 {
-    /* Board 1002 has a dedicated production controller and must never
-     * enter the legacy implicit powered self-test path. Neither an NVS flag
-     * nor a held boot button may enter this path. */
-    if (GLOBAL_STATE != NULL &&
-        GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
-        if (nvs_config_get_bool(NVS_CONFIG_SELF_TEST) ||
-            gpio_get_level(CONFIG_GPIO_BUTTON_BOOT) == 0) {
-            ESP_LOGW(TAG,
-                     "Legacy self-test ignored on board 1002; the locked production controller starts automatically");
-        }
-        GLOBAL_STATE->SELF_TEST_MODULE.is_active = false;
-        return ESP_OK;
-    }
-
+    self_test_state = GLOBAL_STATE;
+    if (pthread_mutex_init(&GLOBAL_STATE->SELF_TEST_MODULE.nonce_measurement.lock, NULL) != 0)
+        return ESP_ERR_NO_MEM;
     if (self_test_should_run()) {
         GLOBAL_STATE->SELF_TEST_MODULE.is_active = true;
+        atomic_store(&GLOBAL_STATE->SELF_TEST_MODULE.status, SELF_TEST_RUNNING);
         GLOBAL_STATE->SELF_TEST_MODULE.is_factory = isFactoryTest;
-        pthread_mutex_init(&GLOBAL_STATE->SELF_TEST_MODULE.nonce_measurement.lock, NULL);
         GLOBAL_STATE->DEVICE_CONFIG.family.asic.difficulty = DIFFICULTY;
-        GLOBAL_STATE->SYSTEM_MODULE.is_connected = true;
-
-    // No need to set version_mask, it uses default mask which is fine
-    // GLOBAL_STATE->version_mask = 0xffffffff;
-    // GLOBAL_STATE->new_stratum_version_rolling_msg = true;        
 
         // Create a binary semaphore
         longPressSemaphore = xSemaphoreCreateBinary();
@@ -343,6 +320,10 @@ esp_err_t self_test_init(GlobalState * GLOBAL_STATE)
 
 void self_test_reset()
 {
+    if (self_test_state != NULL) {
+        atomic_store(&self_test_state->SELF_TEST_MODULE.cancel_requested, true);
+        self_test_stop_work(self_test_state);
+    }
     if (longPressSemaphore != NULL) {
         ESP_LOGI(TAG, "Long press detected...");
         // Give the semaphore back
@@ -354,7 +335,11 @@ void self_test_show_message(GlobalState * GLOBAL_STATE, const char * msg)
 {
     if (!GLOBAL_STATE->SELF_TEST_MODULE.is_active) return;
 
-    GLOBAL_STATE->SELF_TEST_MODULE.message = msg;
+    pthread_mutex_lock(&GLOBAL_STATE->SELF_TEST_MODULE.nonce_measurement.lock);
+    snprintf(GLOBAL_STATE->SELF_TEST_MODULE.message_buffer,
+             sizeof(GLOBAL_STATE->SELF_TEST_MODULE.message_buffer), "%s", msg);
+    GLOBAL_STATE->SELF_TEST_MODULE.message = GLOBAL_STATE->SELF_TEST_MODULE.message_buffer;
+    pthread_mutex_unlock(&GLOBAL_STATE->SELF_TEST_MODULE.nonce_measurement.lock);
     vTaskDelay(10 / portTICK_PERIOD_MS);
 }
 
@@ -383,7 +368,8 @@ static esp_err_t test_power_consumption(GlobalState * GLOBAL_STATE)
     if (margin <= 0.0f) {
         margin = DEFAULT_POWER_CONSUMPTION_MARGIN;
     }
-    float maximum_power = target_power + margin;
+    float maximum_power = target_power > 0 ? target_power + margin :
+                          GLOBAL_STATE->DEVICE_CONFIG.family.max_power;
 
     float power = 0;
     float current = 0;
@@ -400,7 +386,7 @@ static esp_err_t test_power_consumption(GlobalState * GLOBAL_STATE)
     ESP_LOGI(TAG, "Power: %.2f W (target: %.2f W, maximum: %.2f W)",
              power, target_power, maximum_power);
 
-    if (power <= maximum_power) {
+    if (isfinite(power) && power > 0 && maximum_power > 0 && power <= maximum_power) {
         return ESP_OK;
     }
 
@@ -515,88 +501,63 @@ void self_test_task(void * pvParameters)
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-    // setup and test hashrate
-    StratumApiV1Message msg = {0};
-    uint8_t extranonce1_bin[32] = {0};
-    uint8_t e1_len = 0;
-    uint8_t e2_len = 8;
-    double mock_diff = 4294967295.0;
-    uint32_t mock_version_mask = 0xffffffff;
+    float target_temp = (float)nvs_config_get_u16(NVS_CONFIG_SELF_TEST_TEMP_TARGET);
+    float warmup_temp = (float)nvs_config_get_u16(NVS_CONFIG_SELF_TEST_TEMP_WARMUP);
+    float max_temp    = (float)nvs_config_get_u16(NVS_CONFIG_SELF_TEST_TEMP_MAX);
 
-    // 1. Mock set_extranonce
-    const char *extranonce_json = "{\"id\":null,\"method\":\"mining.set_extranonce\",\"params\":[\"12905085617eff8e\",8]}";
-    STRATUM_V1_parse(&msg, extranonce_json, NULL);
-    if (msg.method == MINING_SET_EXTRANONCE) {
-        if (msg.extranonce_str && msg.extranonce_str[0] != '\0') {
-            size_t slen = strlen(msg.extranonce_str) / 2;
-            if (slen > sizeof(extranonce1_bin)) slen = sizeof(extranonce1_bin);
-            hex2bin(msg.extranonce_str, extranonce1_bin, slen);
-            e1_len = (uint8_t)slen;
-            free(msg.extranonce_str);
-            msg.extranonce_str = NULL;
-        }
-        e2_len = (uint8_t)msg.extranonce_2_len;
-        ESP_LOGI(TAG, "Self-test: Applied mock extranonce len %d, e2_len %d", e1_len, e2_len);
+    if (!isfinite(target_temp) || warmup_temp <= 0 || warmup_temp > target_temp ||
+        target_temp >= max_temp || max_temp > 90) {
+        self_test_show_message(GLOBAL_STATE, "CONFIG:FAIL");
+        tests_done(GLOBAL_STATE, false);
     }
-
-    // 2. Mock set_difficulty
-    memset(&msg, 0, sizeof(msg));
-    const char *difficulty_json = "{\"id\":null,\"method\":\"mining.set_difficulty\",\"params\":[4294967295]}";
-    STRATUM_V1_parse(&msg, difficulty_json, NULL);
-    if (msg.method == MINING_SET_DIFFICULTY) {
-        mock_diff = msg.new_difficulty;
-        GLOBAL_STATE->SYSTEM_MODULE.pool_difficulty = mock_diff;
-        ESP_LOGI(TAG, "Self-test: Applied mock difficulty %lu", (unsigned long)mock_diff);
+    float expected_hashrate = GLOBAL_STATE->POWER_MANAGEMENT_MODULE.expected_hashrate *
+                              GLOBAL_STATE->DEVICE_CONFIG.family.asic.hashrate_test_percentage_target;
+    if (!isfinite(expected_hashrate) || expected_hashrate <= 0 ||
+        GLOBAL_STATE->DEVICE_CONFIG.family.asic.hash_domains == 0 ||
+        GLOBAL_STATE->DEVICE_CONFIG.family.asic_count == 0) {
+        self_test_show_message(GLOBAL_STATE, "CONFIG:FAIL");
+        tests_done(GLOBAL_STATE, false);
     }
-
-    // 3. Mock set_version_mask
-    memset(&msg, 0, sizeof(msg));
-    const char *version_mask_json = "{\"id\":null,\"method\":\"mining.set_version_mask\",\"params\":[\"ffffffff\"]}";
-    STRATUM_V1_parse(&msg, version_mask_json, NULL);
-    if (msg.method == MINING_SET_VERSION_MASK) {
-        mock_version_mask = msg.version_mask;
-        ESP_LOGI(TAG, "Self-test: Applied mock version mask %08lx", mock_version_mask);
-    }
-
-    // 4. Mock mining.notify
-    memset(&msg, 0, sizeof(msg));
-    uint8_t target_slot = (GLOBAL_STATE->active_job_slot_idx + 1) % 2;
-    miner_job_t *job = miner_job_get_slot(target_slot);
-    const char *notify_json = "{\"id\":null,\"method\":\"mining.notify\",\"params\":[\"0\",\"0c859545a3498373a57452fac22eb7113df2a465000543520000000000000000\",\"01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4b0389130cfabe6d6d5cbab26a2599e92916edec5657a94a0708ddb970f5c45b5d\",\"31650707758de07b010000000000001cfd7038212f736c7573682f000000000379ad0c2a000000001976a9147c154ed1dc59609e3d26abb2df2ea3d587cd8c4188ac00000000000000002c6a4c2952534b424c4f434b3ae725d3994b811572c1f345deb98b56b465ef8e153ecbbd27fa37bf1b005161380000000000000000266a24aa21a9ed63b06a7946b190a3fda1d76165b25c9b883bcc6621b040773050ee2a1bb18f1800000000\",[\"2b77d9e413e8121cd7a17ff46029591051d0922bd90b2b2a38811af1cb57a2b2\",\"5c8874cef00f3a233939516950e160949ef327891c9090467cead995441d22c5\",\"2d91ff8e19ac5fa69a40081f26c5852d366d608b04d2efe0d5b65d111d0d8074\",\"0ae96f609ad2264112a0b2dfb65624bedbcea3b036a59c0173394bba3a74e887\",\"e62172e63973d69574a82828aeb5711fc5ff97946db10fc7ec32830b24df7bde\",\"adb49456453aab49549a9eb46bb26787fb538e0a5f656992275194c04651ec97\",\"a7bc56d04d2672a8683892d6c8d376c73d250a4871fdf6f57019bcc737d6d2c2\",\"d94eceb8182b4f418cd071e93ec2a8993a0898d4c93bc33d9302f60dbbd0ed10\",\"5ad7788b8c66f8f50d332b88a80077ce10e54281ca472b4ed9bbbbcb6cf99083\",\"9f9d784b33df1b3ed3edb4211afc0dc1909af9758c6f8267e469f5148ed04809\",\"48fd17affa76b23e6fb2257df30374da839d6cb264656a82e34b350722b05123\",\"c4f5ab01913fc186d550c1a28f3f3e9ffaca2016b961a6a751f8cca0089df924\",\"cff737e1d00176dd6bbfa73071adbb370f227cfb5fba186562e4060fcec877e1\"],\"20000004\",\"1705ae3a\",\"647025b5\",true]}";
-    STRATUM_V1_parse(&msg, notify_json, job);
-
-    if (msg.method == MINING_NOTIFY) {
-        ESP_LOGI(TAG, "Activating mock work for self-test");
-        job->pool_id = 0;
-        job->pool_diff = mock_diff;
-        job->version_mask = mock_version_mask;
-        job->extranonce1_len = (uint8_t)e1_len;
-        if (e1_len > 0) {
-            memcpy(job->extranonce1, extranonce1_bin, e1_len);
-        }
-        job->extranonce2_len = (uint8_t)e2_len;
-        if (GLOBAL_STATE->create_jobs_task_handle) {
-            xTaskNotify(GLOBAL_STATE->create_jobs_task_handle, target_slot, eSetValueWithOverwrite);
-        }
-    } else {
-        ESP_LOGE(TAG, "Failed to parse mock mining notification");
+    if (!self_test_start_work(GLOBAL_STATE)) {
+        self_test_show_message(GLOBAL_STATE, "WORK:FAIL");
         tests_done(GLOBAL_STATE, false);
     }
 
     self_test_set_fan_percent(GLOBAL_STATE, SELF_TEST_MAX_FAN_PERCENT);
 
-    float target_temp = (float)nvs_config_get_u16(NVS_CONFIG_SELF_TEST_TEMP_TARGET);
-    float warmup_temp = (float)nvs_config_get_u16(NVS_CONFIG_SELF_TEST_TEMP_WARMUP);
-    float max_temp    = (float)nvs_config_get_u16(NVS_CONFIG_SELF_TEST_TEMP_MAX);
-
+    uint64_t readiness_start = esp_timer_get_time();
+    while (self_test_temp_invalid(self_test_get_control_temp(GLOBAL_STATE)) ||
+           VCORE_get_voltage_mv(GLOBAL_STATE) <= 0 ||
+           Thermal_get_fan_speed(&GLOBAL_STATE->DEVICE_CONFIG) == 0) {
+        self_test_check_running(GLOBAL_STATE);
+        if (self_test_deadline_expired(readiness_start, esp_timer_get_time(), 15000000)) {
+            self_test_show_message(GLOBAL_STATE, "READY:TIMEOUT");
+            tests_done(GLOBAL_STATE, false);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
     float asic_temp = self_test_get_valid_control_temp(GLOBAL_STATE);
+    if (asic_temp >= max_temp) {
+        self_test_show_message(GLOBAL_STATE, "TEMP:FAIL");
+        tests_done(GLOBAL_STATE, false);
+    }
     ESP_LOGI(TAG, "ASIC Temp %.1f°C", asic_temp);
 
     self_test_set_fan_percent(GLOBAL_STATE, SELF_TEST_MIN_FAN_PERCENT);
+    uint64_t warmup_start = esp_timer_get_time();
     while (asic_temp < warmup_temp)
     {
+        self_test_check_running(GLOBAL_STATE);
+        if (self_test_deadline_expired(warmup_start, esp_timer_get_time(), 120000000)) {
+            self_test_show_message(GLOBAL_STATE, "WARMUP:TIMEOUT");
+            tests_done(GLOBAL_STATE, false);
+        }
         vTaskDelay(500 / portTICK_PERIOD_MS);
         asic_temp = self_test_get_valid_control_temp(GLOBAL_STATE);
+        if (asic_temp >= max_temp) {
+            self_test_show_message(GLOBAL_STATE, "TEMP:FAIL");
+            tests_done(GLOBAL_STATE, false);
+        }
         ESP_LOGI(TAG, "Warming up to %.1f°C: %.1f°C", warmup_temp, asic_temp);
         snprintf(logString, sizeof(logString), "ASIC Temp: %.1f°C", asic_temp);
         self_test_show_message(GLOBAL_STATE, logString);
@@ -604,21 +565,19 @@ void self_test_task(void * pvParameters)
 
     PIDController pid = {0};
     float pid_input = asic_temp;
-    float pid_output = SELF_TEST_MIN_FAN_PERCENT;
+    float minimum_fan = fmaxf(SELF_TEST_MIN_FAN_PERCENT,
+                               Thermal_get_fan_min_percent(&GLOBAL_STATE->DEVICE_CONFIG));
+    float pid_output = minimum_fan;
     float pid_setpoint = target_temp;
     pid_init(&pid, &pid_input, &pid_output, &pid_setpoint,
              SELF_TEST_PID_P, SELF_TEST_PID_I, SELF_TEST_PID_D, PID_P_ON_E, PID_REVERSE);
     pid_set_sample_time(&pid, SELF_TEST_PID_SAMPLE_TIME_MS);
-    pid_set_output_limits(&pid, SELF_TEST_MIN_FAN_PERCENT, SELF_TEST_MAX_FAN_PERCENT);
+    pid_set_output_limits(&pid, minimum_fan, SELF_TEST_MAX_FAN_PERCENT);
     pid_set_mode(&pid, AUTOMATIC);
 
     uint64_t start_us = esp_timer_get_time();
     uint64_t hashtest_us = 30000000;
     float hashrate = 0;
-    float expected_hashrate = GLOBAL_STATE->POWER_MANAGEMENT_MODULE.frequency_value *
-                              GLOBAL_STATE->DEVICE_CONFIG.family.asic.small_core_count *
-                              GLOBAL_STATE->DEVICE_CONFIG.family.asic_count / 1000.0f *
-                              GLOBAL_STATE->DEVICE_CONFIG.family.asic.hashrate_test_percentage_target;
     float expected_domain_hashrate = expected_hashrate /
                                      GLOBAL_STATE->DEVICE_CONFIG.family.asic.hash_domains /
                                      GLOBAL_STATE->DEVICE_CONFIG.family.asic_count;
@@ -631,11 +590,13 @@ void self_test_task(void * pvParameters)
         self_test_show_message(GLOBAL_STATE, "MEM:FAIL");
         tests_done(GLOBAL_STATE, false);
     }
+    GLOBAL_STATE->SELF_TEST_MODULE.domain_averages = domain_averages.domains;
     self_test_domain_averages_prime(GLOBAL_STATE, &domain_averages);
 
     self_test_start_nonce_measurement(GLOBAL_STATE);
     ESP_LOGI(TAG, "Starting 30s hashrate monitoring loop, target temp %.1f°C", target_temp);
     while ((esp_timer_get_time() - start_us) < hashtest_us) {
+        self_test_check_running(GLOBAL_STATE);
         uint64_t elapsed_us = esp_timer_get_time() - start_us;
         hashrate = self_test_get_nonce_hashrate(GLOBAL_STATE, elapsed_us);
         asic_temp = self_test_get_valid_control_temp(GLOBAL_STATE);
@@ -683,54 +644,20 @@ void self_test_task(void * pvParameters)
             float domain_hashrate = self_test_domain_average_hashrate(domain_average);
             uint32_t sample_count = domain_average->sample_count;
             uint32_t rejected_sample_count = domain_average->rejected_sample_count;
-            uint32_t total_domain_samples = sample_count + rejected_sample_count;
-            SelfTestDomainStatus domain_status = SELF_TEST_DOMAIN_OK;
-
-            ESP_LOGI(TAG,
-                     "ASIC %d Domain %d Average Hashrate: %.2f Gh/s (%lu samples, %lu rejected)",
-                     asic_nr,
-                     domain_nr,
-                     domain_hashrate,
-                     (unsigned long)sample_count,
-                     (unsigned long)rejected_sample_count);
-            if (rejected_sample_count > 0) {
-                ESP_LOGW(TAG,
-                         "ASIC %d Domain %d ignored %lu implausible register sample(s); using nonce hashrate for total validation",
-                         asic_nr,
-                         domain_nr,
-                         (unsigned long)rejected_sample_count);
-            }
-            
-            float min_domain_hashrate = expected_domain_hashrate * (1.0f - SELF_TEST_DOMAIN_HASHRATE_TOLERANCE);
-            float max_domain_hashrate = expected_domain_hashrate * (1.0f + SELF_TEST_DOMAIN_HASHRATE_TOLERANCE);
-            if (sample_count == 0 && rejected_sample_count > 0) {
-                domain_status = SELF_TEST_DOMAIN_UNRELIABLE;
-                ESP_LOGW(TAG,
-                         "ASIC %d Domain %d self-reported counter is unreliable; all %lu sample(s) were implausible high, external nonce hashrate remains authoritative",
-                         asic_nr,
-                         domain_nr,
-                         (unsigned long)rejected_sample_count);
-            } else if (total_domain_samples > 0 &&
-                       ((float)rejected_sample_count / (float)total_domain_samples) >= SELF_TEST_DOMAIN_REJECTED_WARN_RATIO) {
-                domain_status = SELF_TEST_DOMAIN_UNRELIABLE;
-                ESP_LOGW(TAG,
-                         "ASIC %d Domain %d self-reported counter is unstable; %lu/%lu sample(s) were implausible, external nonce hashrate remains authoritative",
-                         asic_nr,
-                         domain_nr,
-                         (unsigned long)rejected_sample_count,
-                         (unsigned long)total_domain_samples);
-            } else if (sample_count == 0 || domain_hashrate < min_domain_hashrate || domain_hashrate > max_domain_hashrate) {
+            self_test_domain_status_t domain_status =
+                self_test_domain_status(domain_average, expected_domain_hashrate);
+            asic_domain_measurement_t current;
+            uint64_t now = esp_timer_get_time();
+            if (ASIC_get_domain_measurement(GLOBAL_STATE, asic_nr, domain_nr, &current) != ESP_OK ||
+                current.time_us == 0 || current.time_us > now ||
+                now - current.time_us > 3000000 ||
+                current.time_us != domain_average->last_sample_time_us)
                 domain_status = SELF_TEST_DOMAIN_FAIL;
-                ESP_LOGE(TAG,
-                         "ASIC %d Domain %d:FAIL - hashrate %.2f Gh/s, expected %.2f-%.2f Gh/s",
-                         asic_nr,
-                         domain_nr,
-                         domain_hashrate,
-                         min_domain_hashrate,
-                         max_domain_hashrate);
-            }
+            ESP_LOGI(TAG, "ASIC %d domain %d %.2f GH/s: %lu samples, %lu rejected", asic_nr,
+                     domain_nr, domain_hashrate, (unsigned long)sample_count,
+                     (unsigned long)rejected_sample_count);
 
-            if (domain_status == SELF_TEST_DOMAIN_FAIL) {
+            if (domain_status != SELF_TEST_DOMAIN_OK) {
                 domain_failed = true;
                 if (asic_nr < 32) {
                     failed_asic_mask |= (1u << asic_nr);
@@ -739,6 +666,7 @@ void self_test_task(void * pvParameters)
         }
     }
     self_test_domain_averages_free(&domain_averages);
+    GLOBAL_STATE->SELF_TEST_MODULE.domain_averages = NULL;
     if (domain_failed) {
         if (GLOBAL_STATE->DEVICE_CONFIG.family.asic_count == 2 && failed_asic_mask == 0x3) {
             self_test_show_message(GLOBAL_STATE, "BOTH ASICS DOMAIN:FAIL");
@@ -761,7 +689,7 @@ void self_test_task(void * pvParameters)
         tests_done(GLOBAL_STATE, false);
     }
 
-    if (hashrate < expected_hashrate) {
+    if (!isfinite(hashrate) || hashrate < expected_hashrate || accepted_count < SELF_TEST_MIN_NONCES) {
         ESP_LOGE(TAG, "Total hashrate too low");
         self_test_show_message(GLOBAL_STATE, "HASHRATE:FAIL");
         tests_done(GLOBAL_STATE, false);
@@ -788,60 +716,70 @@ void self_test_task(void * pvParameters)
 /**
  * Ends the self test by either resetting or ending the self_test_task
  */
+static bool self_test_cleanup(GlobalState *state)
+{
+    self_test_stop_work(state);
+    state->SELF_TEST_MODULE.is_finished = true;
+    self_test_stop_nonce_measurement(state);
+    bool safe;
+    if (state->DEVICE_CONFIG.bonanza_bridge) {
+        /* The production controller owns the bridge, regulator and reset.
+         * Its verified OFF_SAFE result is the only successful shutdown. */
+        safe = bzm_controller_active() && bzm_controller_pause();
+    } else {
+        safe = asic_hold_reset_low(state) == ESP_OK;
+        vTaskDelay(pdMS_TO_TICKS(SELF_TEST_POWER_MONITOR_STOP_MS));
+        if (VCORE_is_initialized())
+            safe = VCORE_set_voltage(state, 0.0f) == ESP_OK && safe;
+        state->ASIC_initalized = false;
+    }
+    uint64_t started = esp_timer_get_time();
+    while (atomic_load(&state->SELF_TEST_MODULE.worker_running) &&
+           !self_test_deadline_expired(started, esp_timer_get_time(), 15000000))
+        vTaskDelay(pdMS_TO_TICKS(10));
+    if (atomic_load(&state->SELF_TEST_MODULE.worker_running)) safe = false;
+    if (state->asic_job_store.entries != NULL)
+        asic_job_store_invalidate_all(&state->asic_job_store);
+    if (!atomic_load(&state->SELF_TEST_MODULE.worker_running)) {
+        free(state->SELF_TEST_MODULE.domain_averages);
+        state->SELF_TEST_MODULE.domain_averages = NULL;
+    }
+    atomic_store(&state->SELF_TEST_MODULE.cleanup_confirmed, safe);
+    if (!safe) {
+        (void)Thermal_set_fan_percent(&state->DEVICE_CONFIG, 1.0f);
+        self_test_show_message(state, "SHUTDOWN:FAIL");
+    }
+    return safe;
+}
+
 static void tests_done(GlobalState * GLOBAL_STATE, bool isTestPassed)
 {
-    GLOBAL_STATE->SELF_TEST_MODULE.is_finished = true;
-    self_test_stop_nonce_measurement(GLOBAL_STATE);
-    asic_hold_reset_low(GLOBAL_STATE);
-    if (VCORE_is_initialized()) {
-        // Let the power monitor observe is_finished and exit before VCORE is
-        // intentionally disabled, otherwise it can report the OFF status as a
-        // regulator fault during self-test cleanup.
-        vTaskDelay(pdMS_TO_TICKS(SELF_TEST_POWER_MONITOR_STOP_MS));
-        if (VCORE_set_voltage(GLOBAL_STATE, 0.0f) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to turn off VCORE after self-test");
-        }
-    } else {
-        ESP_LOGW(TAG, "Skipping VCORE shutdown because the regulator was not initialized");
-    }
+    bool safe = self_test_cleanup(GLOBAL_STATE);
+    isTestPassed = isTestPassed && safe &&
+        !atomic_load(&GLOBAL_STATE->SELF_TEST_MODULE.cancel_requested);
+    GLOBAL_STATE->SELF_TEST_MODULE.result = isTestPassed ? "SELF-TEST PASS!" : "SELF-TEST FAIL!";
+    atomic_store(&GLOBAL_STATE->SELF_TEST_MODULE.status, isTestPassed ? SELF_TEST_PASSED :
+                 atomic_load(&GLOBAL_STATE->SELF_TEST_MODULE.cancel_requested) ?
+                 SELF_TEST_CANCELLED : SELF_TEST_FAILED);
     if (isTestPassed) {
-        if (isFactoryTest) {
-            ESP_LOGI(TAG, "Self-test flag cleared");
-            nvs_config_set_bool(NVS_CONFIG_SELF_TEST, false);
-        }
+        if (isFactoryTest) nvs_config_set_bool(NVS_CONFIG_SELF_TEST, false);
+        GLOBAL_STATE->SELF_TEST_MODULE.finished = "Restarting in 10 seconds";
         ESP_LOGI(TAG, "SELF-TEST PASS! -- Restarting in 10 seconds.");
-        GLOBAL_STATE->SELF_TEST_MODULE.result = "SELF-TEST PASS!";
-        char logString[21];
-        for (int i = 10; i > 0; i--) {
-            snprintf(logString, sizeof(logString), "Restarting in %d...", i);
-            GLOBAL_STATE->SELF_TEST_MODULE.finished = logString;
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-        }
+        vTaskDelay(pdMS_TO_TICKS(10000));
         esp_restart();
-    } else {
-        // isTestFailed
-        GLOBAL_STATE->SELF_TEST_MODULE.result = "SELF-TEST FAIL!";
-        if (isFactoryTest) {
-            ESP_LOGI(
-                TAG,
-                "SELF-TEST FAIL! -- Hold BOOT button for 2 seconds to cancel self-test, or press RESET to run self-test again.");
-            GLOBAL_STATE->SELF_TEST_MODULE.finished =
-                "Hold BOOT button for 2 seconds to cancel self-test, or press RESET to run self-test again.";
-        } else {
-            ESP_LOGI(TAG, "SELF-TEST FAIL -- Press RESET button to restart.");
-            GLOBAL_STATE->SELF_TEST_MODULE.finished = "Press RESET button to restart.";
-        }
-        while (1) {
-            // Wait here forever until reset_self_test() gives the longPressSemaphore
-            if (xSemaphoreTake(longPressSemaphore, portMAX_DELAY) == pdTRUE) {
-                ESP_LOGI(TAG, "Self-test flag cleared");
-                nvs_config_set_bool(NVS_CONFIG_SELF_TEST, false);
-                // Wait until NVS is written
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                esp_restart();
-            }
-        }
     }
-
-    vTaskDelete(NULL);
+    GLOBAL_STATE->SELF_TEST_MODULE.finished =
+        "Hold BOOT to cancel or retry cleanup, or restart to rerun.";
+    ESP_LOGE(TAG, "Self-test failed; cleanup %s", safe ? "confirmed" : "not confirmed");
+    for (;;) {
+        /* Cancellation never records a pass or clears the factory flag until
+         * the worker has exited and power shutdown is confirmed. */
+        if (atomic_load(&GLOBAL_STATE->SELF_TEST_MODULE.cancel_requested) && safe) {
+            nvs_config_set_bool(NVS_CONFIG_SELF_TEST, false);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            esp_restart();
+        }
+        if (xSemaphoreTake(longPressSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+            safe = self_test_cleanup(GLOBAL_STATE);
+    }
 }

@@ -9,4 +9,4 @@ idf_component_register(SRCS ${ASIC_TEST_SOURCES}
                                     "../../../main/http_server" "../../../main/power"
                                     "../../../main/tasks" "../../../main/self_test"
                                     "../../stratum/test"
-                       REQUIRES cmock stratum stratum_v2 asic esp_driver_gpio esp_driver_i2c)
+                       REQUIRES self_test cmock stratum stratum_v2 asic esp_driver_gpio esp_driver_i2c)

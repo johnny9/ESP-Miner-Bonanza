@@ -32,10 +32,12 @@ static void monitor_register(GlobalState *state,
                                    result->value, result->timestamp_us);
 }
 
-static void record_self_test(void *context, double nonce_diff)
+static void record_self_test(void *context, const asic_share_submission_t *share)
 {
     result_callback_context *callback_context = context;
-    self_test_record_nonce(callback_context->state, nonce_diff);
+    self_test_record_nonce(callback_context->state, share->nonce_diff);
+    ASIC_record_local_result(callback_context->state, share->result->asic_index,
+                              share->result->engine_id, true, share->nonce_diff);
 }
 
 static int submit_share(void *context, const asic_share_submission_t *share)
@@ -94,7 +96,6 @@ static asic_result_status_t handle_result(GlobalState *state,
         : state->SYSTEM_MODULE.primary_pool_index;
     asic_result_context_t context = {
         .job_store = &state->asic_job_store,
-        .self_test = state->SELF_TEST_MODULE.is_active,
         .username = state->SYSTEM_MODULE.pools[active_pool_index].user,
         .callback_context = &callback_context,
         .work_is_current = work_is_current,

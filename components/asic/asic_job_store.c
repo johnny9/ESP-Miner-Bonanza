@@ -53,6 +53,32 @@ void asic_job_store_destroy(asic_job_store_t *store)
     memset(store, 0, sizeof(*store));
 }
 
+uint64_t asic_job_store_activate_local(asic_job_store_t *store)
+{
+    pthread_mutex_lock(&store->lock);
+    /* Never recycle a local identity, even in the theoretical wrap case. */
+    store->local_active = store->local_generation != UINT64_MAX;
+    uint64_t generation = store->local_active ? ++store->local_generation : 0;
+    pthread_mutex_unlock(&store->lock);
+    return generation;
+}
+
+void asic_job_store_cancel_local(asic_job_store_t *store)
+{
+    pthread_mutex_lock(&store->lock);
+    store->local_active = false;
+    pthread_mutex_unlock(&store->lock);
+}
+
+bool asic_job_store_local_is_current(asic_job_store_t *store, uint64_t generation)
+{
+    pthread_mutex_lock(&store->lock);
+    bool current = store->local_active && generation != 0 &&
+                   generation == store->local_generation;
+    pthread_mutex_unlock(&store->lock);
+    return current;
+}
+
 void asic_job_store_begin_submission(asic_job_store_t *store,
                                      const asic_job_t *job,
                                      const asic_job_context_t *context)

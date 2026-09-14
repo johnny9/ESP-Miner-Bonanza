@@ -20,6 +20,7 @@ typedef struct {
     uint32_t job_version;
     bool clean_jobs;
     bool pool_work;
+    bool self_test;
 } asic_job_context_t;
 
 typedef struct {
@@ -34,6 +35,8 @@ typedef struct {
     pthread_mutex_t submission_lock;
     const asic_job_t *submission_job;
     asic_job_context_t submission_context;
+    uint64_t local_generation;
+    bool local_active;
     asic_job_store_entry_t *entries;
     uint16_t capacity;
     uint16_t next_slot;
@@ -44,6 +47,12 @@ bool asic_job_store_init(asic_job_store_t *store);
 bool asic_job_store_init_with_caps(asic_job_store_t *store,
                                    uint32_t memory_caps);
 void asic_job_store_destroy(asic_job_store_t *store);
+
+/* Local diagnostic lifetime is internal bookkeeping, separate from the pool
+ * epoch and the unchanged common job. Callers own the hardware clear barrier. */
+uint64_t asic_job_store_activate_local(asic_job_store_t *store);
+void asic_job_store_cancel_local(asic_job_store_t *store);
+bool asic_job_store_local_is_current(asic_job_store_t *store, uint64_t generation);
 
 /* Serialize the producer's borrowed-job scope with its protocol provenance.
  * Every successful begin must have an end, including cancelled submission.

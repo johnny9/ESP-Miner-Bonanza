@@ -179,6 +179,11 @@ static void run_result_case(result_case_t test_case)
     if (!fixture_case.missing) {
         asic_job_context_t context = {.job_version = 0x20000004,
             .work_generation = fixture_case.work_generation, .pool_work = true};
+        if (fixture_case.self_test) {
+            context.pool_work = false;
+            context.self_test = true;
+            context.work_generation = asic_job_store_activate_local(&fixture_state.asic_job_store);
+        }
         asic_job_store_begin_submission(&fixture_state.asic_job_store, &work, &context);
         TEST_ASSERT_TRUE(asic_job_store_store_slot(&fixture_state.asic_job_store, 8, &work, NULL));
         asic_job_store_end_submission(&fixture_state.asic_job_store);

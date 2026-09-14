@@ -114,9 +114,9 @@ exhaustion/refresh, and protocol-derived bounds. Hardware support and permission
 for a particular job are separate concerns. Keep the existing fixed-time
 Bitmain behavior when introducing that contract.
 
-Per-job local diagnostic destinations and startup handoff also remain separate
-work; current self-test routing still uses the existing self-test state. Neither
-bridge lifecycle fields nor a BZM-specific diagnostic enum belong in this job.
+Local diagnostic destinations and startup handoff now use Bonanza's internal
+assignment context; see [local self-test](bonanza-self-test.md). No bridge
+lifecycle fields or diagnostic enum are added to the stage 03 job.
 
 ## Validation
 

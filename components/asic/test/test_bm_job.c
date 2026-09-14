@@ -307,11 +307,11 @@ static void capture_share(callback_capture_t *capture,
              share->extranonce2 ? share->extranonce2 : "");
 }
 
-static void record_self_test(void *context, double difficulty)
+static void record_self_test(void *context, const asic_share_submission_t *share)
 {
     callback_capture_t *capture = context;
     capture->self_test_count++;
-    capture->self_test_diff = difficulty;
+    capture->self_test_diff = share->nonce_diff;
 }
 
 static bool transport_ready(void *context,
@@ -489,7 +489,11 @@ TEST_CASE("Generic result rejects stale work and accounts low difficulty",
     TEST_ASSERT_EQUAL(1, capture.account_count);
     result.version_bits = 0x00006000;
 
-    context.self_test = true;
+    asic_job_context_t local = {.self_test = true,
+        .work_generation = asic_job_store_activate_local(store)};
+    asic_job_store_begin_submission(store, &template, &local);
+    TEST_ASSERT_TRUE(asic_job_store_store_slot(store, (uint8_t)result.work_handle, &template, &result.work_handle));
+    asic_job_store_end_submission(store);
     TEST_ASSERT_EQUAL(ASIC_RESULT_RECORDED_SELF_TEST,
                       asic_result_handle(&result, &context,
                                          &RESULT_CALLBACKS));

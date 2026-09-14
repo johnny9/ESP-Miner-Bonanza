@@ -1,6 +1,7 @@
 #ifndef GLOBAL_STATE_H_
 #define GLOBAL_STATE_H_
 
+#include "self_test/self_test.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_partition.h"
@@ -123,27 +124,6 @@ typedef struct SystemModule
     char mdns_hostname[64];
     char full_hostname[70];
 } SystemModule;
-
-typedef struct SelfTestNonceMeasurement
-{
-    bool is_active;
-    uint64_t accepted_count;
-    uint64_t rejected_count;
-    double hashes;
-    pthread_mutex_t lock;
-} SelfTestNonceMeasurement;
-
-typedef struct SelfTestModule
-{
-    bool is_active;
-    bool is_factory;
-    bool is_finished;
-    SelfTestNonceMeasurement nonce_measurement;
-    const char *message;
-    char *result;
-    char *finished;
-    esp_err_t system_init_ret;
-} SelfTestModule;
 
 typedef struct AsicTaskModule
 {

@@ -180,9 +180,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to init scoreboard");
     }
 
-    if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
-        wifi_init(&GLOBAL_STATE);
-    }
+    wifi_init(&GLOBAL_STATE);
 
     esp_err_t system_init_ret = SYSTEM_init_peripherals(&GLOBAL_STATE);
     SYSTEM_init_versions(&GLOBAL_STATE);
@@ -213,10 +211,8 @@ void app_main(void)
                  esp_err_to_name(system_init_ret));
     }
 
-    if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
-        // start the API for AxeOS
-        start_rest_server(&GLOBAL_STATE);
-    }
+    // Keep diagnostics reachable while local work is independent of the pool.
+    start_rest_server(&GLOBAL_STATE);
 
     // Pre-cache partition descriptions and space usage percentage
     SYSTEM_init_partitions(&GLOBAL_STATE);
@@ -239,7 +235,7 @@ void app_main(void)
     // a normal boot that connects within a few seconds. setup_ble_start() is
     // idempotent and only takes effect once the AP is actually enabled.
     int setup_ble_grace_ms = 0;
-    while (!GLOBAL_STATE.SYSTEM_MODULE.is_connected) {
+    while (!GLOBAL_STATE.SYSTEM_MODULE.is_connected && !GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
         if (GLOBAL_STATE.SYSTEM_MODULE.ap_enabled && setup_ble_grace_ms >= 5000) {
             setup_ble_start(&GLOBAL_STATE);
         }
@@ -250,7 +246,7 @@ void app_main(void)
     // Connected to WiFi: tear down the setup BLE service to free the radio.
     setup_ble_stop();
 
-    if (nvs_config_get_bool(NVS_CONFIG_USE_NTP)) {
+    if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active && nvs_config_get_bool(NVS_CONFIG_USE_NTP)) {
         ESP_LOGI(TAG, "Starting SNTP");
         // default to pool.ntp.org to find the nearest NTP server if none are provided by DHCP
         esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
@@ -275,6 +271,7 @@ void app_main(void)
     if (GLOBAL_STATE.DEVICE_CONFIG.bonanza_bridge) {
         if (!bzm_controller_mining_stack_ready()) {
             ESP_LOGE(TAG, "Bonanza remained safe-off after automatic startup failure");
+            system_init_ret = ESP_FAIL;
         } else if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active &&
                    xTaskCreateWithCaps(FAN_CONTROLLER_task, "fan_controller",
                                        8192, (void *) &GLOBAL_STATE, 5, NULL,
@@ -289,6 +286,14 @@ void app_main(void)
                      sizeof(GLOBAL_STATE.SYSTEM_MODULE.hardware_fault_msg),
                      "Fan controller task failed; fan held at 100%%");
         }
+        if (GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
+            GLOBAL_STATE.SELF_TEST_MODULE.system_init_ret = system_init_ret;
+            if (xTaskCreateWithCaps(self_test_task, "self_test", 8192, &GLOBAL_STATE, 10,
+                                    NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
+                (void)bzm_controller_pause();
+                ESP_LOGE(TAG, "Self-test task creation failed; Bonanza stopped");
+            }
+        }
         return;
     }
 
@@ -301,7 +306,7 @@ void app_main(void)
             self_test_show_message(&GLOBAL_STATE, GLOBAL_STATE.SYSTEM_MODULE.asic_status);
             system_init_ret = ESP_FAIL;
         } else {
-            if (xTaskCreate(create_jobs_task, "stratum miner", 8192, (void *) &GLOBAL_STATE, 20, &GLOBAL_STATE.create_jobs_task_handle) != pdPASS) {
+            if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active && xTaskCreate(create_jobs_task, "stratum miner", 8192, (void *) &GLOBAL_STATE, 20, &GLOBAL_STATE.create_jobs_task_handle) != pdPASS) {
                 ESP_LOGE(TAG, "Error creating stratum miner task");
             }
             if (xTaskCreateWithCaps(ASIC_result_task, "asic result", 8192,
