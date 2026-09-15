@@ -6,6 +6,24 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
+usage() {
+    printf 'Usage: %s [--ubsan]\n' "$0"
+}
+
+UBSAN=OFF
+BUILD_VARIANT=normal
+if [ "$#" -gt 1 ]; then
+    usage >&2
+    exit 2
+fi
+if [ "$#" -eq 1 ]; then
+    case "$1" in
+        --ubsan) UBSAN=ON; BUILD_VARIANT=ubsan ;;
+        --help|-h) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+fi
+
 QEMU_RELEASE="esp-develop-9.2.2-20260417"
 QEMU_DIST="qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz"
 QEMU_SHA256="0eecb2a34a5586c0e59110f77b9343b7b336e82fdb0e1a30e1dc1bab8a547e35"
@@ -14,8 +32,11 @@ TOOLS_DIR="${ESP_MINER_TOOLS_DIR:-$(dirname "$ROOT_DIR")/.tools}"
 QEMU_DIR="$TOOLS_DIR/esp-qemu/$QEMU_RELEASE"
 QEMU_BIN="${ESP_QEMU_BIN:-$QEMU_DIR/bin/qemu-system-xtensa}"
 BUILD_DIR="${ESP_QEMU_BUILD_DIR:-$ROOT_DIR/.cache/qemu-test-build}"
+if [ "$UBSAN" = ON ]; then
+    BUILD_DIR="${ESP_QEMU_BUILD_DIR:-$ROOT_DIR/.cache/qemu-ubsan-test-build}"
+fi
 
-echo "=== ESP-Miner QEMU Test Runner ==="
+echo "=== ESP-Miner QEMU Test Runner (UBSan: $UBSAN) ==="
 
 python3 "$ROOT_DIR/tools/validate_bitaxe_1002_config.py"
 
@@ -72,7 +93,9 @@ echo "Building test-ci project..."
 cd "$ROOT_DIR/test-ci"
 CCACHE_DIR="${CCACHE_DIR:-$ROOT_DIR/.cache/qemu-test-ccache}" \
     IDF_TARGET=esp32s3 \
-    idf.py -B "$BUILD_DIR" build
+    idf.py -B "$BUILD_DIR" \
+        -D "SDKCONFIG=$BUILD_DIR/sdkconfig-$BUILD_VARIANT" \
+        -D "ENABLE_UBSAN=$UBSAN" build
 
 echo "Merging binaries..."
 cd "$BUILD_DIR"
@@ -81,6 +104,7 @@ esptool --chip esp32s3 merge-bin --pad-to-size 16MB -o flash_image.bin @flash_ar
 echo "Running tests in QEMU emulator..."
 output_log="$PWD/output.log"
 rm -f "$output_log"
+qemu_status=0
 timeout "${QEMU_TIMEOUT:-5m}" "$QEMU_BIN" \
     -machine esp32s3 \
     -monitor none \
@@ -89,9 +113,18 @@ timeout "${QEMU_TIMEOUT:-5m}" "$QEMU_BIN" \
     -watchdog-action shutdown \
     -drive file=flash_image.bin,if=mtd,format=raw \
     -m 4 \
-    -serial "file:$output_log"
+    -serial "file:$output_log" || qemu_status=$?
 
 cat "$output_log"
+
+if [ "$qemu_status" -ne 0 ]; then
+    echo "ERROR: QEMU exited with status $qemu_status." >&2
+    exit "$qemu_status"
+fi
+if grep -q 'Undefined behavior of type ' "$output_log"; then
+    echo "ERROR: UBSan detected undefined behavior." >&2
+    exit 1
+fi
 
 summary="$(tr -d '\r' < "$output_log" | grep -E '[[:digit:]]+ Tests [[:digit:]]+ Failures [[:digit:]]+ Ignored' | tail -n 1 || true)"
 if [ -z "$summary" ]; then

@@ -364,6 +364,33 @@ The QEMU test application is `test-ci`. Run it with:
 bash tools/run_qemu_tests.sh
 ```
 
+Run the same suite with UndefinedBehaviorSanitizer (UBSan):
+
+```sh
+bash tools/run_qemu_tests.sh --ubsan
+```
+
+CI runs both variants on every push and pull request, with separate
+`build-and-test` and `build-and-test-ubsan` checks. Each runs independently and
+fails on a test failure, UBSan report, or missing test report. Results, serial
+logs, and the ELF needed to decode backtraces are retained in `test-results`
+and `test-results-ubsan` artifacts.
+
+The local runner uses separate build directories (`.cache/qemu-test-build` and
+`.cache/qemu-ubsan-test-build`) and generated sdkconfig files for the two modes.
+`ESP_QEMU_BUILD_DIR` overrides the build directory. Direct ESP-IDF builds can
+enable instrumentation with `idf.py -D ENABLE_UBSAN=ON build`; the CMake option
+defaults to `OFF`.
+
+UBSan instruments repository components and their test code. ESP-IDF components
+remain uninstrumented to limit RAM usage. Two checks have platform exceptions:
+
+- `shift-base`: ESP-IDF register macros use patterns that trigger this check;
+  see the [ESP-IDF UBSan guide](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32s3/api-guides/fatal-errors.html#enabling-ubsan).
+- `alignment`: ESP-IDF's heap guarantees four-byte alignment, while GCC checks
+  eight-byte alignment for types containing doubles, including cJSON objects.
+  Native host UBSan retains alignment checking.
+
 Under the hood, the script builds the ESP32-S3 test image, merges its flash
 image, and runs it with `qemu-system-xtensa`. Tests tagged `[not-on-qemu]` are
 excluded by `test-ci/main/unit_test_all.c`.
