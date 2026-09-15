@@ -668,18 +668,18 @@ void SYSTEM_noinit_update(SystemModule * SYSTEM_MODULE)
     }
 }
 
-uint64_t SYSTEM_noinit_get_total_uptime_seconds()
+uint64_t SYSTEM_noinit_get_total_uptime_seconds(void)
 {
     return noinit_state.total_uptime;
 }
 
 // Convert 128-bit to double: high * 2^64 + low. Loses precision for very large values, but sufficient for display
-double SYSTEM_noinit_get_total_hashes()
+double SYSTEM_noinit_get_total_hashes(void)
 {
     return (double)noinit_state.cumulative_hashes_high * 18446744073709551616.0 + (double)noinit_state.cumulative_hashes_low;
 }
 
-double SYSTEM_noinit_get_total_log2_work()
+double SYSTEM_noinit_get_total_log2_work(void)
 {
     // If high part is 0, just compute log2 of low part
     if (noinit_state.cumulative_hashes_high == 0) {

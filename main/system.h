@@ -31,9 +31,9 @@ void SYSTEM_reset_coinbase_ui_state(GlobalState * GLOBAL_STATE, const char *scri
 void SYSTEM_decode_and_apply_coinbase(GlobalState * GLOBAL_STATE, const miner_job_t * job);
 
 void SYSTEM_noinit_update(SystemModule * SYSTEM_MODULE);
-uint64_t SYSTEM_noinit_get_total_uptime_seconds();
-double SYSTEM_noinit_get_total_hashes();
-double SYSTEM_noinit_get_total_log2_work();
+uint64_t SYSTEM_noinit_get_total_uptime_seconds(void);
+double SYSTEM_noinit_get_total_hashes(void);
+double SYSTEM_noinit_get_total_log2_work(void);
 void SYSTEM_load_pool_from_nvs(GlobalState * GLOBAL_STATE, int i);
 void SYSTEM_reload_pool_config(GlobalState * GLOBAL_STATE);
 
