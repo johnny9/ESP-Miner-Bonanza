@@ -119,7 +119,7 @@ TEST_CASE("common results reject unterminated or malformed inline metadata",
     TEST_ASSERT_TRUE(asic_job_store_init(&store));
     asic_job_t job = {.job_id = "42", .extranonce2 = "aabb"};
     asic_work_handle_t handle;
-    asic_result_context_t context = {.job_store = &store, .self_test = true};
+    asic_result_context_t context = {.self_test = true};
     asic_result_callbacks_t callbacks = {0};
     for (unsigned invalid = 0; invalid < 4; ++invalid) {
         asic_job_t malformed = job;
@@ -129,11 +129,13 @@ TEST_CASE("common results reject unterminated or malformed inline metadata",
         if (invalid == 3) strcpy(malformed.extranonce2, "xx");
         TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &malformed, &handle));
         asic_result_t result = {.work_handle = handle};
+    result.job_valid = asic_job_store_snapshot_with_context(&store, handle, &result.job, &result.context);
         TEST_ASSERT_EQUAL(ASIC_RESULT_REJECTED_WORK,
                           asic_result_handle(&result, &context, &callbacks));
     }
     TEST_ASSERT_TRUE(asic_job_store_store_generated(&store, &job, &handle));
     asic_result_t result = {.work_handle = handle};
+    result.job_valid = asic_job_store_snapshot_with_context(&store, handle, &result.job, &result.context);
     TEST_ASSERT_EQUAL(ASIC_RESULT_RECORDED_SELF_TEST,
                       asic_result_handle(&result, &context, &callbacks));
     asic_job_store_destroy(&store);

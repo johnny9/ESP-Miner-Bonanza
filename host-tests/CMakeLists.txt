@@ -88,7 +88,9 @@ add_executable(
     ../components/stratum/test/mining_test_instance.c
     ../components/asic/asic_job_store.c
     ../components/asic/asic_result_handler.c
-    ../components/asic/bm_job_builder.c
+    ../components/asic/bitmain_job_packet.c
+    ../components/asic/bm_hashrate.c
+    ../components/asic/bm_result.c
     ../components/asic/asic_capabilities.c
     ../components/asic/bzm_balanced_ramp.c
     ../components/asic/bzm_bringup.c
@@ -124,6 +126,7 @@ add_executable(
     ../components/mining_job/asic_job.c
     ../components/stratum/mining.c
     ../components/stratum/utils.c
+    ../components/stratum/hash_bytes.c
     ../components/stratum/segwit_addr.c
     ../components/stratum_v2/sv2_protocol.c
     ../components/asic/pll.c

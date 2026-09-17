@@ -782,3 +782,28 @@ TEST_CASE("Void submission cancels retained work when its pool generation retire
     TEST_ASSERT_TRUE(result.attempted_contexts[0].clean_jobs);
     job_pipeline_harness_result_free(&result);
 }
+
+TEST_CASE("Direct common submission validates metadata and retains borrowed jobs",
+          "[mining][common-work][ownership]")
+{
+    asic_job_t job = {.job_id = "borrowed", .extranonce2 = "aabb"};
+    job_pipeline_harness_result_t result;
+    job_pipeline_harness_submit(&job, &result);
+    TEST_ASSERT_EQUAL_UINT32(1, result.send_attempts);
+    TEST_ASSERT_EQUAL_UINT32(1, result.job_count);
+    memset(&job, 0xa5, sizeof(job));
+    TEST_ASSERT_EQUAL_STRING("borrowed", result.jobs[0]->job_id);
+    TEST_ASSERT_EQUAL_STRING("aabb", result.jobs[0]->extranonce2);
+    job_pipeline_harness_result_free(&result);
+
+    for (unsigned invalid = 0; invalid < 3; ++invalid) {
+        job = (asic_job_t){0};
+        if (invalid == 0) memset(job.job_id, 'x', sizeof(job.job_id));
+        if (invalid == 1) memset(job.extranonce2, 'a', sizeof(job.extranonce2));
+        job_pipeline_harness_submit(invalid == 2 ? NULL : &job, &result);
+        TEST_ASSERT_EQUAL_UINT32(0, result.send_attempts);
+        TEST_ASSERT_EQUAL_UINT32(0, result.job_count);
+        TEST_ASSERT_EQUAL_UINT32(0, result.delay_count);
+        job_pipeline_harness_result_free(&result);
+    }
+}

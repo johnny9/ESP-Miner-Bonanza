@@ -1,4 +1,4 @@
-#include "bm_job.h"
+#include "bitmain_job_packet.h"
 #include "bm1366.h"
 
 #include "crc.h"
@@ -305,19 +305,11 @@ int BM1366_set_max_baud(void)
 
 static uint8_t id = 0;
 
-bool BM1366_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
-                      const asic_job_t *template)
+bool BM1366_send_work(GlobalState *GLOBAL_STATE, const asic_job_t *template)
 {
-    BM1366_job job;
+    bm13xx_job_packet_t job;
     id = (id + 8) % 128;
-    job.job_id = id;
-    job.num_midstates = 0x01;
-    memcpy(&job.starting_nonce, &next_bm_job->starting_nonce, 4);
-    memcpy(&job.nbits, &next_bm_job->target, 4);
-    memcpy(&job.ntime, &next_bm_job->ntime, 4);
-    memcpy(job.merkle_root, next_bm_job->merkle_root, 32);
-    memcpy(job.prev_block_hash, next_bm_job->prev_block_hash, 32);
-    memcpy(&job.version, &next_bm_job->version, 4);
+    bm13xx_build_job_packet(template, id, &job);
 
     if (!asic_job_store_store_slot(&GLOBAL_STATE->asic_job_store, job.job_id,
                                    template, NULL)) {
@@ -330,7 +322,7 @@ bool BM1366_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
     ESP_LOGI(TAG, "Send Job: %02X", job.job_id);
     #endif
 
-    _send_BM1366((TYPE_JOB | GROUP_SINGLE | CMD_WRITE), (uint8_t *)&job, sizeof(BM1366_job), BM1366_DEBUG_WORK);
+    _send_BM1366((TYPE_JOB | GROUP_SINGLE | CMD_WRITE), (uint8_t *)&job, sizeof(bm13xx_job_packet_t), BM1366_DEBUG_WORK);
     return true;
 }
 
@@ -363,14 +355,14 @@ task_result * BM1366_process_work(GlobalState * GLOBAL_STATE)
     uint8_t small_core_id = asic_result.job.id & 0x07; // BM1366 has 8 small cores, so it should be coded on 3 bits
     uint32_t hardware_version_bits = (ntohs(asic_result.job.version) << 13); // shift the 16 bit value left 13
 
-    asic_job_t template;
-    if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, job_id,
-                                 &template)) {
+    if (job_id >= 128 ||
+        !asic_job_store_snapshot_with_context(&GLOBAL_STATE->asic_job_store, job_id,
+                                               &result.job, &result.context)) {
         ESP_LOGW(TAG, "Invalid job nonce found, 0x%02X", job_id);
         return NULL;
     }
-    uint32_t base_version = template.version;
-    uint32_t final_ntime = template.ntime;
+    uint32_t base_version = result.job.version;
+    uint32_t final_ntime = result.job.ntime;
     uint32_t rolled_version = base_version | hardware_version_bits;
 
     result.job_id = job_id;

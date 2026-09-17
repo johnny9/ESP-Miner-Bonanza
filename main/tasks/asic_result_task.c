@@ -93,7 +93,6 @@ static asic_result_status_t handle_result(GlobalState *state,
         ? state->SYSTEM_MODULE.secondary_pool_index
         : state->SYSTEM_MODULE.primary_pool_index;
     asic_result_context_t context = {
-        .job_store = &state->asic_job_store,
         .self_test = state->SELF_TEST_MODULE.is_active,
         .username = state->SYSTEM_MODULE.pools[active_pool_index].user,
         .callback_context = &callback_context,

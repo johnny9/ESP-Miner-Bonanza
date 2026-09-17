@@ -23,6 +23,8 @@ typedef struct {
     bool missing;
     bool self_test;
     bool replace_during_submit;
+    bool retire_during_submit;
+    bool replace_before_handling;
     unsigned repeated_results;
     double pool_diff;
     int submit_result;
@@ -149,7 +151,8 @@ void result_task_spy_register_read(void *state, register_type_t type,
 bool result_task_fake_work_is_current(GlobalState *state, uint64_t generation)
 {
     TEST_ASSERT_EQUAL_PTR(&fixture_state, state);
-    return generation == 0;
+    return generation == 0 &&
+        !(fixture_case.retire_during_submit && fixture_submissions > 0);
 }
 
 void result_task_spy_local_result(GlobalState *state, uint8_t asic_index,
@@ -194,6 +197,16 @@ static void run_result_case(result_case_t test_case)
         .data.share = {.work_handle = 8, .nonce = 7,
             .final_ntime = fixture_case.final_ntime ? fixture_case.final_ntime : 123, .final_version = 0x20000004, .timestamp_us = 1000},
     };
+    fixture_events[1].data.share.job_valid = asic_job_store_snapshot_with_context(
+        &fixture_state.asic_job_store, 8, &fixture_events[1].data.share.job,
+        &fixture_events[1].data.share.context);
+    if (fixture_case.replace_before_handling) {
+        strcpy(work.job_id, "replacement");
+        work.version ^= 0x10000000;
+        TEST_ASSERT_TRUE(asic_job_store_store_slot(&fixture_state.asic_job_store, 8, &work, NULL));
+    }
+    /* Decoded results remain usable even after their store is destroyed. */
+    asic_job_store_destroy(&fixture_state.asic_job_store);
     fixture_event_index = 0;
     fixture_delays = 0;
     fixture_submissions = 0;
@@ -223,6 +236,7 @@ TEST_CASE("result task keeps owned snapshots through submission for every protoc
             .protocol = (mining_job_source_t)type,
             .sent_time = 2000,
             .replace_during_submit = false,
+            .replace_before_handling = true,
         });
         TEST_ASSERT_EQUAL_UINT32(1, fixture_submissions);
         TEST_ASSERT_EQUAL_UINT32(1, fixture_scores);
@@ -235,6 +249,7 @@ TEST_CASE("result task keeps owned snapshots through submission for every protoc
         run_result_case((result_case_t) {
             .pool_diff = 1e-30, .protocol = (mining_job_source_t)type,
             .sent_time = 2000, .replace_during_submit = true,
+            .retire_during_submit = true,
         });
         TEST_ASSERT_EQUAL_UINT32(1, fixture_submissions);
         TEST_ASSERT_EQUAL_STRING("42", fixture_submitted_id);

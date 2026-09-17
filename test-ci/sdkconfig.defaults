@@ -3,5 +3,6 @@ CONFIG_ESP_TASK_WDT=n
 
 # Protocol regression fixtures and nested hashing need more than the IDF default.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
 # Match the PSRAM-backed allocations used by the firmware under QEMU.
 CONFIG_SPIRAM=y

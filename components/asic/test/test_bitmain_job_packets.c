@@ -1,3 +1,4 @@
+#include "bitmain_job_packet.h"
 #include "unity.h"
 #include "utils.h"
 
@@ -8,43 +9,39 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bm_job *make_job(void)
+static asic_job_t *make_job(void)
 {
-    bm_job *job = calloc(1, sizeof(*job));
+    asic_job_t *job = calloc(1, sizeof(*job));
     TEST_ASSERT_NOT_NULL(job);
     job->version = 0x20000004;
     job->version_mask = 0x1fffe000;
-    job->target = 0x1705dd01;
+    job->nbits = 0x1705dd01;
     job->ntime = 0x64658bd8;
     job->starting_nonce = 0x12345678;
-    job->num_midstates = 4;
-    for (size_t index = 0; index < 32; ++index) {
-        job->merkle_root[index] = (uint8_t)index;
-        job->prev_block_hash[index] = (uint8_t)(0x20 + index);
-    }
-    for (size_t index = 0; index < sizeof(job->midstates); ++index) {
-        ((uint8_t *)job->midstates)[index] = (uint8_t)(0x40 + index);
-    }
+    job->pool_diff = 256.125;
+    job->pool_id = UINT8_MAX;
+    job->source_type = JOB_TYPE_V1;
+    strcpy(job->job_id, "packet-job");
+    strcpy(job->extranonce2, "0001020304050607");
+    static const uint8_t merkle_root[32] = {
+        0x1c, 0x1d, 0x1e, 0x1f, 0x18, 0x19, 0x1a, 0x1b,
+        0x14, 0x15, 0x16, 0x17, 0x10, 0x11, 0x12, 0x13,
+        0x0c, 0x0d, 0x0e, 0x0f, 0x08, 0x09, 0x0a, 0x0b,
+        0x04, 0x05, 0x06, 0x07, 0x00, 0x01, 0x02, 0x03,
+    };
+    static const uint8_t prev_hash[32] = {
+        0x3c, 0x3d, 0x3e, 0x3f, 0x38, 0x39, 0x3a, 0x3b,
+        0x34, 0x35, 0x36, 0x37, 0x30, 0x31, 0x32, 0x33,
+        0x2c, 0x2d, 0x2e, 0x2f, 0x28, 0x29, 0x2a, 0x2b,
+        0x24, 0x25, 0x26, 0x27, 0x20, 0x21, 0x22, 0x23,
+    };
+    memcpy(job->merkle_root, merkle_root, sizeof(merkle_root));
+    memcpy(job->prev_hash, prev_hash, sizeof(prev_hash));
     return job;
 }
 
-static asic_job_t packet_work(const bm_job *job)
-{
-    asic_job_t work = {
-        .version = job->version, .version_mask = job->version_mask,
-        .ntime = job->ntime, .nbits = job->target,
-        .starting_nonce = job->starting_nonce,
-        .source_type = JOB_TYPE_V1, .pool_id = UINT8_MAX,
-        .pool_diff = 256.125, .job_id = "packet-job",
-        .extranonce2 = "0001020304050607",
-    };
-    reverse_32bit_words(job->prev_block_hash, work.prev_hash);
-    reverse_32bit_words(job->merkle_root, work.merkle_root);
-    return work;
-}
-
 static void assert_saved_job(bool (*snapshot)(uint8_t, asic_job_t *),
-                             uint8_t slot, const bm_job *job)
+                             uint8_t slot, const asic_job_t *job)
 {
     asic_job_t saved;
     TEST_ASSERT_TRUE(snapshot(slot, &saved));
@@ -54,9 +51,7 @@ static void assert_saved_job(bool (*snapshot)(uint8_t, asic_job_t *),
     TEST_ASSERT_EQUAL_STRING("0001020304050607", saved.extranonce2);
     TEST_ASSERT_EQUAL_UINT8(UINT8_MAX, saved.pool_id);
     TEST_ASSERT_EQUAL_DOUBLE(256.125, saved.pool_diff);
-    uint8_t expected_merkle[32];
-    reverse_32bit_words(job->merkle_root, expected_merkle);
-    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected_merkle, saved.merkle_root, 32);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(job->merkle_root, saved.merkle_root, 32);
 
 }
 
@@ -102,9 +97,9 @@ TEST_CASE("BM13xx work packets preserve complete header fields byte exact",
     for (size_t index = 0; index < BM13XX_HARNESS_DRIVER_COUNT; ++index) {
         const bm13xx_harness_driver_t *driver = &bm13xx_harness_drivers[index];
         GlobalState *state = bm13xx_harness_begin();
-        bm_job *job = make_job();
-        asic_job_t job_work = packet_work(job);
-        TEST_ASSERT_TRUE(driver->send_work(state, job, &job_work));
+        asic_job_t *job = make_job();
+        asic_job_t job_work = *job;
+        TEST_ASSERT_TRUE(driver->send_work(state, &job_work));
 
         TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, bm13xx_harness_packet_count(),
                                          driver->name);
@@ -128,26 +123,25 @@ TEST_CASE("BM1397 work packet and returned midstate preserve version mapping",
           "[asic][job-packet][version-rolling][characterization]")
 {
     static const uint8_t expected_packet[] = {
-        0x55, 0xaa, 0x21, 0x96, 0x04, 0x04,
-        0x78, 0x56, 0x34, 0x12, 0x01, 0xdd, 0x05, 0x17,
-        0xd8, 0x8b, 0x65, 0x64, 0x00, 0x01, 0x02, 0x03,
-        0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
-        0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
-        0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
-        0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
-        0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
-        0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
-        0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
-        0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
-        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
-        0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
-        0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
-        0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
-        0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
-        0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
-        0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
-        0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
-        0x15, 0x4d,
+        0x55, 0xaa, 0x21, 0x96, 0x04, 0x04, 0x78, 0x56,
+        0x34, 0x12, 0x01, 0xdd, 0x05, 0x17, 0xd8, 0x8b,
+        0x65, 0x64, 0x00, 0x01, 0x02, 0x03, 0x41, 0x70,
+        0x41, 0x61, 0x2e, 0x05, 0x0d, 0xa2, 0x43, 0xd9,
+        0x74, 0x92, 0x1b, 0xca, 0xaf, 0xe6, 0x98, 0x24,
+        0x48, 0xd8, 0xb4, 0xe9, 0x69, 0xdd, 0xfd, 0xaf,
+        0x43, 0x29, 0x34, 0x6f, 0x12, 0x2f, 0xb4, 0x45,
+        0xa6, 0x48, 0x0f, 0x3b, 0xb4, 0x5f, 0x36, 0xc5,
+        0x30, 0x09, 0xbb, 0x49, 0x95, 0x44, 0xe2, 0xb2,
+        0x01, 0xa8, 0x6a, 0xe6, 0x53, 0x13, 0xc0, 0x4e,
+        0x91, 0x04, 0x29, 0x90, 0x0e, 0x32, 0x94, 0xeb,
+        0xcf, 0x87, 0xd2, 0x4d, 0x3f, 0x67, 0x9d, 0x0e,
+        0x88, 0xf3, 0x82, 0x0c, 0xae, 0x49, 0xd5, 0xa4,
+        0x0a, 0x8f, 0x37, 0x1b, 0x52, 0x3c, 0x9a, 0xfa,
+        0x28, 0xc4, 0xed, 0xfc, 0xe7, 0x16, 0x58, 0xcf,
+        0xd5, 0x38, 0xa5, 0x9c, 0x04, 0xf0, 0xdd, 0xe5,
+        0x94, 0xe5, 0x75, 0x6b, 0x74, 0x3f, 0x94, 0x8d,
+        0x51, 0x7e, 0xd9, 0x2b, 0x8b, 0xb2, 0x8a, 0x69,
+        0x1d, 0xb9, 0x30, 0x0a, 0x1b, 0x40, 0x44, 0xc3,
     };
     static const uint32_t expected_versions[] = {
         0x20000004, 0x20002004, 0x20004004, 0x20006004,
@@ -156,9 +150,9 @@ TEST_CASE("BM1397 work packet and returned midstate preserve version mapping",
     GlobalState *state = bm1397_harness_begin();
     TEST_ASSERT_EQUAL_UINT8(2, bm1397_harness_driver.init(state));
     bm1397_harness_clear_packets();
-    bm_job *job = make_job();
-    asic_job_t job_work = packet_work(job);
-    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, job, &job_work));
+    asic_job_t *job = make_job();
+    asic_job_t job_work = *job;
+    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, &job_work));
 
     TEST_ASSERT_EQUAL_UINT32(1, bm1397_harness_packet_count());
     const bm1397_harness_packet_t *packet = bm1397_harness_packet(0);
@@ -189,17 +183,17 @@ TEST_CASE("Bitmain occupied work slots retain owned common replacements",
     for (size_t index = 0; index < BM13XX_HARNESS_DRIVER_COUNT; ++index) {
         const bm13xx_harness_driver_t *driver = &bm13xx_harness_drivers[index];
         GlobalState *state = bm13xx_harness_begin();
-        bm_job *first = make_job();
-        asic_job_t first_work = packet_work(first);
-        TEST_ASSERT_TRUE(driver->send_work(state, first, &first_work));
+        asic_job_t *first = make_job();
+        asic_job_t first_work = *first;
+        TEST_ASSERT_TRUE(driver->send_work(state, &first_work));
         uint8_t first_id = bm13xx_harness_packet(0)->bytes[4];
         uint8_t replacement_id =
             (uint8_t)((first_id + job_id_steps[index]) % 128);
         bm13xx_harness_install_job(replacement_id, &first_work);
 
-        bm_job *replacement = make_job();
-        asic_job_t replacement_work = packet_work(replacement);
-        TEST_ASSERT_TRUE(driver->send_work(state, replacement, &replacement_work));
+        asic_job_t *replacement = make_job();
+        asic_job_t replacement_work = *replacement;
+        TEST_ASSERT_TRUE(driver->send_work(state, &replacement_work));
 
         TEST_ASSERT_EQUAL_HEX8_MESSAGE(
             replacement_id, bm13xx_harness_packet(1)->bytes[4], driver->name);
@@ -212,16 +206,16 @@ TEST_CASE("Bitmain occupied work slots retain owned common replacements",
     GlobalState *state = bm1397_harness_begin();
     TEST_ASSERT_EQUAL_UINT8(2, bm1397_harness_driver.init(state));
     bm1397_harness_clear_packets();
-    bm_job *first = make_job();
-    asic_job_t first_work = packet_work(first);
-    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, first, &first_work));
+    asic_job_t *first = make_job();
+    asic_job_t first_work = *first;
+    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, &first_work));
     uint8_t first_id = bm1397_harness_packet(0)->bytes[4];
     uint8_t replacement_id = (uint8_t)((first_id + 4) % 128);
     bm1397_harness_install_job(replacement_id, &first_work);
 
-    bm_job *replacement = make_job();
-    asic_job_t replacement_work = packet_work(replacement);
-    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, replacement, &replacement_work));
+    asic_job_t *replacement = make_job();
+    asic_job_t replacement_work = *replacement;
+    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, &replacement_work));
 
     TEST_ASSERT_EQUAL_HEX8(replacement_id, bm1397_harness_packet(1)->bytes[4]);
     assert_saved_job(bm1397_harness_snapshot, replacement_id, replacement);
@@ -273,9 +267,9 @@ TEST_CASE("BM1397 rejects inactive job results and repeated nonces",
     queue_bm1397_job_response(0x78, 0, 0x13579be0);
     TEST_ASSERT_NULL(bm1397_harness_driver.process_work(state));
 
-    bm_job *job = make_job();
-    asic_job_t job_work = packet_work(job);
-    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, job, &job_work));
+    asic_job_t *job = make_job();
+    asic_job_t job_work = *job;
+    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, &job_work));
     free(job);
     uint8_t job_id = bm1397_harness_packet(0)->bytes[4];
     uint32_t nonce = 0x2468ace1;
@@ -288,5 +282,67 @@ TEST_CASE("BM1397 rejects inactive job results and repeated nonces",
 
     queue_bm1397_job_response(job_id, 2, nonce);
     TEST_ASSERT_NULL(bm1397_harness_driver.process_work(state));
+    bm1397_harness_end();
+}
+TEST_CASE("BM1397 sparse mask wrap keeps packet midstates and returned versions paired",
+          "[asic][job-packet][version-rolling]")
+{
+    /* Independent OpenSSL SHA256_Update states for the fixture header. */
+    static const char *expected_midstates[] = {
+        "aea213142fce26501c1f89c22176d042157c1069d260391e164ddf1d7dfb99ce",
+        "417041612e050da243d974921bcaafe6982448d8b4e969ddfdaf4329346f122f",
+        "b445a6480f3bb45f36c53009bb499544e2b201a86ae65313c04e910429900e32",
+        "a28a153db5776db19a0c70fe4544ff93ec146ca3fb92405f59adc55b0b454e54",
+    };
+    const uint32_t expected_versions[] = {
+        0x3000a004, 0x20000004, 0x20002004, 0x20008004,
+    };
+    GlobalState *state = bm1397_harness_begin();
+    TEST_ASSERT_EQUAL_UINT8(2, bm1397_harness_driver.init(state));
+    bm1397_harness_clear_packets();
+    asic_job_t *job = make_job();
+    job->version = expected_versions[0];
+    job->version_mask = 0x1000a000;
+    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, job));
+    free(job);
+    const bm1397_harness_packet_t *sent = bm1397_harness_packet(0);
+    TEST_ASSERT_EQUAL_UINT32(152, sent->length);
+    TEST_ASSERT_EQUAL_UINT8(4, sent->bytes[5]);
+    uint8_t job_id = sent->bytes[4];
+    for (uint8_t i = 0; i < BM1397_NUM_MIDSTATES; ++i) {
+        uint8_t expected[32];
+        TEST_ASSERT_EQUAL_UINT32(32, hex2bin(expected_midstates[i], expected, 32));
+        TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, sent->bytes + 22 + i * 32, 32);
+        queue_bm1397_job_response(job_id, i, 0x71000000 + i);
+        const task_result *result = bm1397_harness_driver.process_work(state);
+        TEST_ASSERT_NOT_NULL(result);
+        TEST_ASSERT_EQUAL_HEX32(expected_versions[i], result->rolled_version);
+    }
+    bm1397_harness_end();
+}
+
+TEST_CASE("BM1397 disabled rolling sends one midstate and returns the base version",
+          "[asic][job-packet][version-rolling]")
+{
+    GlobalState *state = bm1397_harness_begin();
+    TEST_ASSERT_EQUAL_UINT8(2, bm1397_harness_driver.init(state));
+    bm1397_harness_clear_packets();
+    asic_job_t *job = make_job();
+    job->version_mask = 0;
+    TEST_ASSERT_TRUE(bm1397_harness_driver.send_work(state, job));
+    free(job);
+    const bm1397_harness_packet_t *sent = bm1397_harness_packet(0);
+    TEST_ASSERT_EQUAL_UINT32(152, sent->length);
+    TEST_ASSERT_EQUAL_UINT8(1, sent->bytes[5]);
+    uint8_t expected[32];
+    TEST_ASSERT_EQUAL_UINT32(32, hex2bin(
+        "417041612e050da243d974921bcaafe6982448d8b4e969ddfdaf4329346f122f", expected, 32));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, sent->bytes + 22, 32);
+    const uint8_t unused[96] = {0};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(unused, sent->bytes + 54, sizeof(unused));
+    queue_bm1397_job_response(sent->bytes[4], 0, 0x72000000);
+    const task_result *result = bm1397_harness_driver.process_work(state);
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_HEX32(0x20000004, result->rolled_version);
     bm1397_harness_end();
 }

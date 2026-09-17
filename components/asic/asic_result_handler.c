@@ -9,17 +9,13 @@ asic_result_status_t asic_result_handle(
     const asic_result_t *result, const asic_result_context_t *context,
     const asic_result_callbacks_t *callbacks)
 {
-    if (result == NULL || context == NULL || callbacks == NULL ||
-        context->job_store == NULL) {
+    if (result == NULL || context == NULL || callbacks == NULL) {
         return ASIC_RESULT_REJECTED_WORK;
     }
 
-    asic_job_t template;
-    asic_job_context_t provenance;
-    if (!asic_job_store_snapshot_with_context(context->job_store, result->work_handle,
-                                              &template, &provenance)) {
-        return ASIC_RESULT_STALE_WORK;
-    }
+    if (!result->job_valid) return ASIC_RESULT_STALE_WORK;
+    const asic_job_t template = result->job;
+    const asic_job_context_t provenance = result->context;
 
     bool metadata_valid =
         template.source_type >= JOB_TYPE_V1 &&
@@ -69,9 +65,8 @@ asic_result_status_t asic_result_handle(
         return ASIC_RESULT_RECORDED_SELF_TEST;
     }
 
-    if (!asic_job_store_contains(context->job_store, result->work_handle) ||
-        (context->work_is_current != NULL &&
-         !context->work_is_current(context->callback_context, share.work_generation))) {
+    if (context->work_is_current != NULL &&
+         !context->work_is_current(context->callback_context, share.work_generation)) {
         return ASIC_RESULT_STALE_WORK;
     }
 
@@ -103,9 +98,8 @@ asic_result_status_t asic_result_handle(
 
     // A socket callback can yield while a clean job or reconnect retires this
     // result. Expected stale work must not be credited as new runtime proof.
-    if (!asic_job_store_contains(context->job_store, result->work_handle) ||
-        (context->work_is_current != NULL &&
-         !context->work_is_current(context->callback_context, share.work_generation))) {
+    if (context->work_is_current != NULL &&
+         !context->work_is_current(context->callback_context, share.work_generation)) {
         return ASIC_RESULT_STALE_WORK;
     }
     if (callbacks->account_share != NULL) {

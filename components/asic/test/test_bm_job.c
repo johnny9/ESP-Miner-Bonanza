@@ -6,7 +6,7 @@
 #include "asic_driver.h"
 #include "asic_job_store.h"
 #include "asic_result_handler.h"
-#include "bm_job_builder.h"
+#include "bitmain_job_packet.h"
 #include "bm_result.h"
 #include "bzm_driver.h"
 #include "device_config.h"
@@ -135,7 +135,7 @@ TEST_CASE("SV1 adapter owns neutral metadata before Bitmain packet building",
     uint8_t branches[32];
     mining_notify source = sv1_fixture(branches);
     asic_job_t template;
-    bm_job job;
+    bm13xx_job_packet_t job;
 
     TEST_ASSERT_TRUE(mining_build_asic_job_sv1(
         &source, "aabb", 4, 0x11223344, 0x00006000, 1234.5,
@@ -144,11 +144,11 @@ TEST_CASE("SV1 adapter owns neutral metadata before Bitmain packet building",
     TEST_ASSERT_EQUAL_STRING("sv1-job", template.job_id);
     TEST_ASSERT_EQUAL_STRING("44332211", template.extranonce2);
     TEST_ASSERT_EQUAL_DOUBLE(1234.5, template.pool_diff);
-    TEST_ASSERT_TRUE(bm_job_build_from_asic_job(&template, &job));
-    TEST_ASSERT_EQUAL_UINT8(4, job.num_midstates);
-    TEST_ASSERT_EQUAL_HEX32(template.version, job.version);
-    TEST_ASSERT_EQUAL_HEX32(template.ntime, job.ntime);
-    TEST_ASSERT_EQUAL_HEX32(template.nbits, job.target);
+    bm13xx_build_job_packet(&template, 8, &job);
+    TEST_ASSERT_EQUAL_UINT8(1, job.num_midstates);
+    TEST_ASSERT_EQUAL_MEMORY(&template.version, job.version, 4);
+    TEST_ASSERT_EQUAL_MEMORY(&template.ntime, job.ntime, 4);
+    TEST_ASSERT_EQUAL_MEMORY(&template.nbits, job.nbits, 4);
     assert_hex("1f1e1d1c1b1a19181716151413121110"
                "0f0e0d0c0b0a09080706050403020100",
                job.prev_block_hash, 32);
@@ -163,22 +163,22 @@ TEST_CASE("Bitmain builder preserves literal version-rolled midstates",
 {
     sv2_job_t source = standard_fixture();
     asic_job_t template;
-    bm_job job;
+    bm1397_job_packet_t job;
     TEST_ASSERT_TRUE(mining_build_asic_job_sv2_standard(
         &source, 0x00006000, 99.25, &template));
-    TEST_ASSERT_TRUE(bm_job_build_from_asic_job(&template, &job));
+    bm1397_build_job_packet(&template, 4, 4, &job);
     assert_hex("5575b33221dca8b17f0dbad2bae7a27a"
                "db80bad10d806a114f427a126ee1317f",
-               job.midstate, 32);
+               job.midstates[0], 32);
     assert_hex("75283d79539e6198c2c0241123911835"
                "d5b0998c206b045957390b2e17826f14",
-               job.midstate1, 32);
+               job.midstates[1], 32);
     assert_hex("984317c5d90375d7f37d1d1045e18587"
                "17ea220962451f40f8f30921e447accc",
-               job.midstate2, 32);
+               job.midstates[2], 32);
     assert_hex("9d94523f7a43b1cd9149fd80d68de132"
                "5c0c6da6026c767102244a53211a7d99",
-               job.midstate3, 32);
+               job.midstates[3], 32);
 
 }
 
@@ -353,9 +353,9 @@ static const asic_result_callbacks_t RESULT_CALLBACKS = {
     .account_share = account_share,
 };
 
-static asic_result_t result_for(asic_work_handle_t handle)
+static asic_result_t result_for(asic_job_store_t *store, asic_work_handle_t handle)
 {
-    return (asic_result_t) {
+    asic_result_t result = {
         .work_handle = handle,
         .nonce = 0x12345678,
         .final_ntime = 0x6501020a,
@@ -363,6 +363,9 @@ static asic_result_t result_for(asic_work_handle_t handle)
         .version_bits = 0x00006000,
         .timestamp_us = 1000,
     };
+    result.job_valid = asic_job_store_snapshot_with_context(
+        store, handle, &result.job, &result.context);
+    return result;
 }
 
 static void exercise_protocol(mining_job_source_t protocol,
@@ -376,12 +379,11 @@ static void exercise_protocol(mining_job_source_t protocol,
     TEST_ASSERT_TRUE(asic_job_store_store_generated(
         store, &template, &handle));
     asic_result_context_t context = {
-        .job_store = store,
         .username = "worker.name",
         .callback_context = capture,
     };
     capture->transport_ready = true;
-    asic_result_t result = result_for(handle);
+    asic_result_t result = result_for(store, handle);
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED,
                       asic_result_handle(&result, &context,
                                          &RESULT_CALLBACKS));
@@ -431,16 +433,17 @@ TEST_CASE("Result generation rejects an old job before submission and accounting
     asic_job_store_t *store = new_store();
     callback_capture_t capture = {.transport_ready = true};
     asic_result_context_t context = {
-        .job_store = store, .callback_context = &capture,
+        .callback_context = &capture,
         .work_is_current = reject_retired_generation,
     };
     asic_job_t template = owned_template(JOB_TYPE_V1, "reused-id", "00", 1e-20);
     asic_job_context_t provenance = {.work_generation = 7, .job_version = 0x20002000,
         .pool_work = true};
     asic_job_store_begin_submission(store, &template, &provenance);
-    asic_result_t result = result_for(0);
+    asic_result_t result = result_for(store, 0);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
     asic_job_store_end_submission(store);
+    result = result_for(store, result.work_handle);
     TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(0, capture.sv1_count);
     TEST_ASSERT_EQUAL(0, capture.account_count);
@@ -449,6 +452,7 @@ TEST_CASE("Result generation rejects an old job before submission and accounting
     asic_job_store_begin_submission(store, &template, &provenance);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &result.work_handle));
     asic_job_store_end_submission(store);
+    result = result_for(store, result.work_handle);
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(1, capture.sv1_count);
     TEST_ASSERT_EQUAL(1, capture.account_count);
@@ -464,10 +468,9 @@ TEST_CASE("Generic result rejects stale work and accounts low difficulty",
     asic_job_store_t *store = new_store();
     callback_capture_t capture = {.transport_ready = true};
     asic_result_context_t context = {
-        .job_store = store,
         .callback_context = &capture,
     };
-    asic_result_t result = result_for(0x1234);
+    asic_result_t result = result_for(store, 0x1234);
     TEST_ASSERT_EQUAL(ASIC_RESULT_STALE_WORK,
                       asic_result_handle(&result, &context,
                                          &RESULT_CALLBACKS));
@@ -476,6 +479,7 @@ TEST_CASE("Generic result rejects stale work and accounts low difficulty",
         JOB_TYPE_V1, "job", "00", DBL_MAX);
     TEST_ASSERT_TRUE(asic_job_store_store_generated(
         store, &template, &result.work_handle));
+    result = result_for(store, result.work_handle);
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED,
                       asic_result_handle(&result, &context,
                                          &RESULT_CALLBACKS));
@@ -620,8 +624,8 @@ TEST_CASE("Zero pool difficulty does not submit shares", "[asic][result][routing
     asic_work_handle_t handle;
     TEST_ASSERT_TRUE(asic_job_store_store_generated(store, &template, &handle));
     callback_capture_t capture = {.transport_ready = true};
-    asic_result_context_t context = {.job_store = store, .callback_context = &capture};
-    asic_result_t result = result_for(handle);
+    asic_result_context_t context = {.callback_context = &capture};
+    asic_result_t result = result_for(store, handle);
     TEST_ASSERT_EQUAL(ASIC_RESULT_ACCOUNTED, asic_result_handle(&result, &context, &RESULT_CALLBACKS));
     TEST_ASSERT_EQUAL(0, capture.sv1_count);
     TEST_ASSERT_EQUAL(1, capture.account_count);

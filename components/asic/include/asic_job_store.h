@@ -13,15 +13,6 @@
  * current assignment remains addressable while the scheduler rotates. */
 #define ASIC_JOB_STORE_CAPACITY 256
 
-/* Bonanza's internal assignment bookkeeping, never part of asic_job_t or
- * the common job encoder. Copied with a retained assignment under the lock. */
-typedef struct {
-    uint64_t work_generation;
-    uint32_t job_version;
-    bool clean_jobs;
-    bool pool_work;
-} asic_job_context_t;
-
 typedef struct {
     bool valid;
     asic_work_handle_t handle;

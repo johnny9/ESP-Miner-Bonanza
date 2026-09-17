@@ -243,10 +243,9 @@ static void start_fast_dispatch_locked(uint16_t remaining)
 
 static bool result_is_duplicate(const asic_result_t *result)
 {
-    asic_job_t job;
-    asic_job_context_t context;
-    return asic_job_store_snapshot_with_context(REACTOR.job_store, result->work_handle, &job, &context) &&
-           bzm_result_is_duplicate(&RESULT_DEDUP, &job, context.work_generation, result);
+    return result->job_valid &&
+           bzm_result_is_duplicate(&RESULT_DEDUP, &result->job,
+                                    result->context.work_generation, result);
 }
 
 static void staged_report(bzm_bringup_report_t * report, bzm_bringup_outcome_t outcome, bzm_bringup_reason_t reason)

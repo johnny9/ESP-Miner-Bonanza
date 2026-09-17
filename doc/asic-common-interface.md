@@ -1,5 +1,22 @@
 # ASIC common-job interface
 
+## Current integration: PR #1972 (2026-09-17)
+
+Bonanza now integrates [PR #1972 at `492392e6`](https://github.com/bitaxeorg/ESP-Miner/pull/1972).
+Bitmain drivers encode final packets directly from `asic_job_t`; the intermediate
+`bm_job` type and builder are removed. Both Bitmain and BZM decoders capture the
+matched common job and Bonanza submission provenance under the job-store lock.
+Share events own that snapshot, so validation, duplicate detection, and pool
+submission no longer look up a potentially replaced slot. Pool-generation checks
+still reject retired sessions before submission and accounting.
+
+See [merge details and validation](pr1972-integration-20260917.md) for the retained
+Bonanza behavior and test results. The stage 03 description below records the
+earlier integration and hardware validation; its intermediate packet-builder
+and result-lookup descriptions have been superseded by this update.
+
+## Historical stage 03 integration
+
 Bonanza now uses the interface proposed in
 [`upstream-refactor/03-common-jobs-pr1969`](https://github.com/johnny9/skot-ESP-Miner/tree/0697551e957760033c94d1bccdb58c9a92e3c36d),
 unchanged for the common-job contract. The preceding PR #1969 merge

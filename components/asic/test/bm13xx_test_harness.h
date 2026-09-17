@@ -5,18 +5,17 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "asic_common.h"
-#include "bm_job.h"
+#include "asic_job.h"
 #include "mining.h"
 
 typedef struct GlobalState GlobalState;
-typedef struct bm_job bm_job;
 
 enum { BM13XX_HARNESS_DRIVER_COUNT = 4, BM13XX_HARNESS_RESPONSE_SIZE = 11 };
 
 typedef struct {
     const char *name;
     uint8_t (*init)(GlobalState *state);
-    bool (*send_work)(GlobalState *state, const bm_job *job, const asic_job_t *work);
+    bool (*send_work)(GlobalState *state, const asic_job_t *work);
     void (*set_version_mask)(uint32_t mask);
     task_result *(*process_work)(GlobalState *state);
     uint8_t response_job_id;

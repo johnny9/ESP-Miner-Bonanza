@@ -16,6 +16,8 @@ typedef struct {
 } asic_domain_measurement_t;
 
 uint8_t ASIC_init(GlobalState * GLOBAL_STATE);
+/* Driver-owned storage, valid until the next call. Share events own the matched
+ * common job and provenance, independent of subsequent slot reuse. */
 asic_event_t * ASIC_process_work(GlobalState * GLOBAL_STATE);
 int ASIC_set_max_baud(GlobalState * GLOBAL_STATE);
 /* Borrow common work for this call; the adapter retains accepted work.

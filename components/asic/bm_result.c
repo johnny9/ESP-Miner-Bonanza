@@ -20,6 +20,9 @@ bool bm_result_to_event(const task_result *result, asic_event_t *event)
 
     event->type = ASIC_EVENT_SHARE_RESULT;
     event->data.share = (asic_result_t) {
+        .job_valid = true,
+        .job = result->job,
+        .context = result->context,
         .work_handle = result->job_id,
         .nonce = result->nonce,
         .final_ntime = result->ntime,

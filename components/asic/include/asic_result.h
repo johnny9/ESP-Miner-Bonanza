@@ -2,6 +2,17 @@
 #define ASIC_RESULT_H
 
 #include <stdint.h>
+#include <stdbool.h>
+#include "asic_job.h"
+
+/* Bonanza's internal assignment bookkeeping, never part of asic_job_t or
+ * the common job encoder. Copied with a retained assignment under the lock. */
+typedef struct {
+    uint64_t work_generation;
+    uint32_t job_version;
+    bool clean_jobs;
+    bool pool_work;
+} asic_job_context_t;
 
 typedef uint64_t asic_work_handle_t;
 
@@ -21,6 +32,10 @@ typedef enum
 } register_type_t;
 
 typedef struct {
+    // Owned snapshot captured by the decoder under the job-store lock.
+    bool job_valid;
+    asic_job_t job;
+    asic_job_context_t context;
     // Opaque outside the active ASIC-family adapter and its work store.
     asic_work_handle_t work_handle;
     uint32_t nonce;

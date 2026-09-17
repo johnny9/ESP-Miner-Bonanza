@@ -1,4 +1,4 @@
-#include "bm_job.h"
+#include "bitmain_job_packet.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -255,22 +255,15 @@ int BM1397_set_max_baud(void)
 
 static uint8_t id = 0;
 
-bool BM1397_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
-                      const asic_job_t *template)
+bool BM1397_send_work(GlobalState *GLOBAL_STATE, const asic_job_t *template)
 {
-    job_packet job = { 0 };
+    bm1397_job_packet_t job;
     // max job number is 128
     // there is still some really weird logic with the job id bits for the asic to sort out
     // so we have it limited to 128 and it has to increment by 4
     id = (id + 4) % 128;
 
-    job.job_id = id;
-    job.num_midstates = next_bm_job->num_midstates;
-    memcpy(&job.starting_nonce, &next_bm_job->starting_nonce, 4);
-    memcpy(&job.nbits, &next_bm_job->target, 4);
-    memcpy(&job.ntime, &next_bm_job->ntime, 4);
-    memcpy(&job.merkle4, next_bm_job->merkle_root, 4);
-    memcpy(job.midstates, next_bm_job->midstates, next_bm_job->num_midstates * 32);
+    bm1397_build_job_packet(template, id, 4, &job);
 
     if (!asic_job_store_store_slot(&GLOBAL_STATE->asic_job_store, job.job_id,
                                    template, NULL)) {
@@ -282,7 +275,7 @@ bool BM1397_send_work(GlobalState *GLOBAL_STATE, const bm_job *next_bm_job,
     ESP_LOGI(TAG, "Send Job: %02X", job.job_id);
     #endif
 
-    _send_BM1397((TYPE_JOB | GROUP_SINGLE | CMD_WRITE), (uint8_t *)&job, sizeof(job_packet), BM1397_DEBUG_WORK);
+    _send_BM1397((TYPE_JOB | GROUP_SINGLE | CMD_WRITE), (uint8_t *)&job, sizeof(job), BM1397_DEBUG_WORK);
     return true;
 }
 
@@ -314,15 +307,15 @@ task_result *BM1397_process_work(GlobalState * GLOBAL_STATE)
     uint8_t rx_job_id = asic_result.job.id & 0xfc;
     uint8_t rx_midstate_index = asic_result.job.id & 0x03;
 
-    asic_job_t template;
-    if (!asic_job_store_snapshot(&GLOBAL_STATE->asic_job_store, rx_job_id,
-                                 &template)) {
+    if (rx_job_id >= 128 ||
+        !asic_job_store_snapshot_with_context(&GLOBAL_STATE->asic_job_store, rx_job_id,
+                                               &result.job, &result.context)) {
         ESP_LOGW(TAG, "Invalid job nonce found, id=%d", rx_job_id);
         return NULL;
     }
-    uint32_t base_version = template.version;
-    uint32_t version_mask = template.version_mask;
-    uint32_t final_ntime = template.ntime;
+    uint32_t base_version = result.job.version;
+    uint32_t version_mask = result.job.version_mask;
+    uint32_t final_ntime = result.job.ntime;
 
     uint32_t rolled_version = base_version;
     for (int i = 0; i < rx_midstate_index; i++)

@@ -4,28 +4,13 @@
 #include "asic_common.h"
 #include "asic_job.h"
 
-typedef struct bm_job bm_job;
-
 #define BM1370_SERIALTX_DEBUG false
 #define BM1370_SERIALRX_DEBUG false
 #define BM1370_DEBUG_WORK false //causes insane amount of debug output
 #define BM1370_DEBUG_JOBS false //causes insane amount of debug output
 
-typedef struct __attribute__((__packed__))
-{
-    uint8_t job_id;
-    uint8_t num_midstates;
-    uint8_t starting_nonce[4];
-    uint8_t nbits[4];
-    uint8_t ntime[4];
-    uint8_t merkle_root[32];
-    uint8_t prev_block_hash[32];
-    uint8_t version[4];
-} BM1370_job;
-
 uint8_t BM1370_init(GlobalState *GLOBAL_STATE);
-bool BM1370_send_work(GlobalState *GLOBAL_STATE, const bm_job *job,
-                      const asic_job_t *template);
+bool BM1370_send_work(GlobalState *GLOBAL_STATE, const asic_job_t *job);
 void BM1370_set_version_mask(uint32_t version_mask);
 int BM1370_set_max_baud(void);
 float BM1370_send_hash_frequency(float frequency);

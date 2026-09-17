@@ -4,17 +4,16 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "asic_common.h"
-#include "bm_job.h"
+#include "asic_job.h"
 #include "mining.h"
 
 typedef struct GlobalState GlobalState;
-typedef struct bm_job bm_job;
 
 enum { BM1397_HARNESS_RESPONSE_SIZE = 9 };
 
 typedef struct {
     uint8_t (*init)(GlobalState *state);
-    bool (*send_work)(GlobalState *state, const bm_job *job, const asic_job_t *work);
+    bool (*send_work)(GlobalState *state, const asic_job_t *work);
     task_result *(*process_work)(GlobalState *state);
 } bm1397_harness_driver_t;
 

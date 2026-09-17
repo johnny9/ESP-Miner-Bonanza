@@ -21,7 +21,9 @@ static const double NONCE_SPACE = 4294967296.0; //  2^32
 
 typedef struct
 {
-    // Transitional raw result used only by the current Bitmain drivers.
+    asic_job_t job;
+    asic_job_context_t context;
+    // Hardware slot remains private to the Bitmain adapter.
     uint8_t job_id;
     uint32_t nonce;
     uint32_t ntime;

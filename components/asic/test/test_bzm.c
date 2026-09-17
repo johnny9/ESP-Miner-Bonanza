@@ -3,7 +3,7 @@
 
 #include "asic_capabilities.h"
 #include "asic_job_store.h"
-#include "bm_job_builder.h"
+#include "bitmain_job_packet.h"
 #include "bzm.h"
 #include "bzm_bridge.h"
 #include "bzm_reactor.h"
@@ -320,10 +320,10 @@ TEST_CASE("BZM work builder derives four family-private midstates",
     TEST_ASSERT_EQUAL_HEX32(template.starting_nonce, work.starting_nonce);
     TEST_ASSERT_EQUAL_HEX32(UINT32_MAX, work.end_nonce);
 
-    bm_job bm;
-    TEST_ASSERT_TRUE(bm_job_build_from_asic_job(&template, &bm));
+    bm1397_job_packet_t bm;
+    bm1397_build_job_packet(&template, 4, 4, &bm);
     for (size_t word = 0; word < 8; ++word) {
-        const uint8_t *big_endian_word = bm.midstate + (7 - word) * 4;
+        const uint8_t *big_endian_word = bm.midstates[0] + (7 - word) * 4;
         const uint8_t expected_birds_word[4] = {
             big_endian_word[3], big_endian_word[2],
             big_endian_word[1], big_endian_word[0],
@@ -789,6 +789,45 @@ TEST_CASE("BZM incremental assignments retain compact IDs in balanced order",
     TEST_ASSERT_TRUE(bzm_reactor_map_result(reactor, &raw, &event));
     TEST_ASSERT_EQUAL_UINT16(10, event.data.share.engine_id);
 
+    free(transport);
+    free(reactor);
+    delete_store(store);
+}
+
+TEST_CASE("BZM decoded results own job and provenance after slot retirement",
+          "[asic][bzm][result][ownership][qemu-integration]")
+{
+    asic_job_store_t *store = new_store();
+    simulated_transport_t *transport = new_transport();
+    bzm_reactor_t *reactor = new_reactor(store, transport, 2);
+    asic_job_t job = bzm_template("snapshot-job");
+    asic_job_context_t context = {
+        .work_generation = 42, .job_version = job.version, .pool_work = true,
+    };
+    asic_job_store_begin_submission(store, &job, &context);
+    TEST_ASSERT_EQUAL(BZM_ASSIGN_OK, bzm_reactor_assign(reactor, &job, NULL));
+    asic_job_store_end_submission(store);
+    bzm_raw_result_t raw = {
+        .asic_id = BZM_FIRST_ASIC_ID,
+        .engine_id = transport->work[0].engine_id,
+        .status = 8, .sequence_id = 1, .time = 15,
+    };
+    asic_event_t event;
+    TEST_ASSERT_TRUE(bzm_reactor_map_result(reactor, &raw, &event));
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_trylock(&store->lock));
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_unlock(&store->lock));
+    asic_job_store_invalidate_all(store);
+    memset(&job, 0xa5, sizeof(job));
+    TEST_ASSERT_TRUE(event.data.share.job_valid);
+    TEST_ASSERT_EQUAL_STRING("snapshot-job", event.data.share.job.job_id);
+    TEST_ASSERT_TRUE(event.data.share.context.work_generation == UINT64_C(42));
+    TEST_ASSERT_TRUE(event.data.share.context.pool_work);
+    TEST_ASSERT_EQUAL_HEX32(event.data.share.job.ntime + 1, event.data.share.final_ntime);
+    TEST_ASSERT_EQUAL_HEX32(increment_bitmask(event.data.share.job.version,
+                                              event.data.share.job.version_mask),
+                             event.data.share.final_version);
+    asic_event_t stale;
+    TEST_ASSERT_FALSE(bzm_reactor_map_result(reactor, &raw, &stale));
     free(transport);
     free(reactor);
     delete_store(store);

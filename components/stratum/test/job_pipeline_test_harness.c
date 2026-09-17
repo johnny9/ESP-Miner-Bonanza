@@ -212,6 +212,20 @@ void job_pipeline_harness_run(
     mining_allocator_fault_injector_reset(0);
 }
 
+void job_pipeline_harness_submit(const asic_job_t *job,
+                                  job_pipeline_harness_result_t *result)
+{
+    memset(result, 0, sizeof(*result));
+    harness_state = (GlobalState){.ASIC_initalized = true};
+    harness_result = result;
+    harness_failed_sends = 0;
+    harness_retire_during_retry = false;
+    TEST_ASSERT_TRUE(asic_job_store_init(&harness_state.asic_job_store));
+    job_pipeline_test_asic_send_job(&harness_state, job);
+    asic_job_store_destroy(&harness_state.asic_job_store);
+    harness_result = NULL;
+}
+
 void job_pipeline_harness_result_free(job_pipeline_harness_result_t *result)
 {
     if (result == NULL) return;

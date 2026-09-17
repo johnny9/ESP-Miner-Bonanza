@@ -493,9 +493,7 @@ bool bzm_reactor_map_result(bzm_reactor_t *reactor,
         (!previous_batch &&
          assignment->logical_engine_id != logical_engine_id) ||
         assignment->state != BZM_ENGINE_ASSIGNED ||
-        assignment->epoch != reactor->epoch ||
-        !asic_job_store_contains(reactor->job_store,
-                                 assignment->handle)) {
+        assignment->epoch != reactor->epoch) {
         return false;
     }
 
@@ -512,9 +510,19 @@ bool bzm_reactor_map_result(bzm_reactor_t *reactor,
         return false;
     }
 
+    asic_job_t job;
+    asic_job_context_t context;
+    if (!asic_job_store_snapshot_with_context(reactor->job_store,
+                                              assignment->handle, &job, &context)) {
+        return false;
+    }
+
     *event = (asic_event_t) {
         .type = ASIC_EVENT_SHARE_RESULT,
         .data.share = {
+            .job_valid = true,
+            .job = job,
+            .context = context,
             .work_handle = assignment->handle,
             /* Bonanza/cgminer represents the nonce in the per-word-swapped
              * work->data byte order. Convert it to the host-order Bitcoin

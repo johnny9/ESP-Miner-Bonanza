@@ -58,6 +58,10 @@ void job_pipeline_harness_run(
     const job_pipeline_harness_event_t *events, size_t event_count,
     job_pipeline_harness_result_t *result);
 
+/* Exercise direct borrowed-job submission without running the producer. */
+void job_pipeline_harness_submit(const asic_job_t *job,
+                                  job_pipeline_harness_result_t *result);
+
 void job_pipeline_harness_result_free(job_pipeline_harness_result_t *result);
 
 #endif /* JOB_PIPELINE_TEST_HARNESS_H */

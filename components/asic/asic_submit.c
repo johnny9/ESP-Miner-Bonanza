@@ -1,4 +1,5 @@
 #include "asic.h"
+#include <string.h>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -8,6 +9,11 @@
 void ASIC_send_job(GlobalState *state, const asic_job_t *job)
 {
     if (state == NULL || job == NULL) return;
+    if (memchr(job->job_id, 0, sizeof(job->job_id)) == NULL ||
+        memchr(job->extranonce2, 0, sizeof(job->extranonce2)) == NULL) {
+        ESP_LOGE("asic", "Invalid common job metadata");
+        return;
+    }
     const asic_driver_t *driver = asic_driver_for_id(state->DEVICE_CONFIG.family.asic.id);
     if (driver == NULL || driver->ops.send_job == NULL) {
         ESP_LOGE("asic", "No work operation for ASIC id %d", state->DEVICE_CONFIG.family.asic.id);

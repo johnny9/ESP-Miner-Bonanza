@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "asic_job_store.h"
 #include "asic_result.h"
 
 typedef struct {
@@ -30,7 +29,6 @@ typedef struct {
 } asic_share_submission_t;
 
 typedef struct {
-    asic_job_store_t *job_store;
     bool self_test;
     const char *username;
     void *callback_context;
