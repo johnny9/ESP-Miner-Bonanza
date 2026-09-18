@@ -153,7 +153,11 @@ set_source_files_properties(../components/asic/test/bm1368_test_instance.c
 set_source_files_properties(../components/asic/test/bm1397_test_instance.c
     PROPERTIES COMPILE_OPTIONS -Wno-unused-parameter)
 
-target_compile_features(esp_miner_host_tests PRIVATE c_std_11)
+# Compile in the same language mode across host compilers. A minimum feature
+# request alone allows GCC 15's C23 default to hide pre-C23 prototype errors.
+set_target_properties(esp_miner_host_tests PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES)
 target_compile_definitions(
     esp_miner_host_tests
     PRIVATE

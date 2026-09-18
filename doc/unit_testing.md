@@ -53,9 +53,10 @@ using them. A source-specific exception must have a comment explaining why it
 is necessary and should be removed. The imported `base58.c` implementation
 has a `-Wvla` exception. PR #1969 characterization also keeps narrow
 instance-only exceptions for BM1368 signed loop comparisons and BM1397's
-unused version-mask argument. The native state fixture suppresses Clang's
-legacy empty-argument warning only while reading the existing `system.h`;
-test bodies retain strict warnings.
+unused version-mask argument. The host executable explicitly uses C11 across
+compiler versions, so a newer compiler's default language mode cannot hide
+declaration errors from CI's GCC. The native state fixture includes the
+production `system.h` with the same strict prototype warnings as the test bodies.
 
 The first configure downloads Unity, cJSON, and Mbed TLS at revisions pinned in
 `host-tests/CMakeLists.txt`. Later runs reuse the CMake build directory.
