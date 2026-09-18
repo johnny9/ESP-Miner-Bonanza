@@ -388,6 +388,10 @@ int STRATUM_V1_submit_share(esp_transport_handle_t transport, int send_uid, cons
     if (length < 0) return -1;
 
     int ret = esp_transport_write(transport, submit_msg, length, TRANSPORT_TIMEOUT_MS);
+    /* A timeout can return zero, and a short write leaves a partial JSON
+     * frame on the stream. Neither is a submitted share; the owner closes
+     * that connection instead of appending another frame or retrying it. */
+    if (ret != length) return -1;
 
     uint64_t now = esp_timer_get_time();
     if (out_sent_time_us) {

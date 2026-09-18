@@ -2,6 +2,7 @@
 #include "system.h"
 #include "global_state.h"
 #include <lwip/tcpip.h>
+#include <lwip/sockets.h>
 #include "stratum_v1_client.h"
 #include "stratum_task.h"
 #include "asic.h"
@@ -105,6 +106,11 @@ int stratum_v1_submit_share(GlobalState *GLOBAL_STATE, const asic_share_submissi
         if (GLOBAL_STATE->SYSTEM_MODULE.shares_pending < UINT16_MAX) {
             GLOBAL_STATE->SYSTEM_MODULE.shares_pending++;
         }
+    } else {
+        /* Wake the receive owner, which retires this session and reconnects.
+         * Keep the handle protected until shutdown has targeted this socket. */
+        int sock = esp_transport_get_socket(transport);
+        if (sock >= 0) shutdown(sock, SHUT_RDWR);
     }
     pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
     return ret;

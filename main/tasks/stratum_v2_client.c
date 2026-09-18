@@ -193,6 +193,11 @@ int stratum_v2_submit_share(GlobalState *GLOBAL_STATE, const asic_share_submissi
         if (sent_time_us) {
             *sent_time_us = esp_timer_get_time();
         }
+    } else {
+        /* A failed encrypted frame consumes Noise nonces. Retire the socket
+         * so later queued shares cannot continue a broken encrypted stream. */
+        int sock = esp_transport_get_socket(transport);
+        if (sock >= 0) shutdown(sock, SHUT_RDWR);
     }
     pthread_mutex_unlock(&GLOBAL_STATE->transport_mutex);
     return ret;

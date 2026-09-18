@@ -274,6 +274,7 @@ void SYSTEM_init_system(GlobalState * GLOBAL_STATE)
         ESP_LOGE(TAG, "Failed to initialize ASIC job store in PSRAM");
     }
     pthread_mutex_init(&GLOBAL_STATE->transport_mutex, NULL);
+    atomic_init(&GLOBAL_STATE->stratum_work_generation, 0);
 }
 
 void SYSTEM_init_versions(GlobalState * GLOBAL_STATE)

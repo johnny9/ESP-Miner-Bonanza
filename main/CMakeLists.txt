@@ -42,6 +42,8 @@ SRCS
     "./http_server/axe-os/api/system/asic_settings.c"
     "./self_test/self_test.c"
     "./tasks/stratum_task.c"
+    "./tasks/stratum_work.c"
+    "./tasks/stratum_submission.c"
     "./tasks/stratum_v1_client.c"
     "./tasks/stratum_v2_client.c"
     "./tasks/create_jobs_task.c"

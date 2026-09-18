@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -176,8 +177,10 @@ typedef struct GlobalState
 
     esp_transport_handle_t transport;
     pthread_mutex_t transport_mutex;
-    // Pool/session ownership, protected by transport_mutex through submission.
-    uint64_t stratum_work_generation;
+    // Writers hold transport_mutex through submission; readers never wait on I/O.
+    atomic_uint_fast64_t stratum_work_generation;
+    QueueHandle_t stratum_share_queue;
+    uint32_t stratum_share_drops; // Written only by the result task.
 
     bool ASIC_initalized;
     bool psram_is_available;

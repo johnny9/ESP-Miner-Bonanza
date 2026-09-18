@@ -44,6 +44,7 @@ components/asic/test/test_bitmain_job_building.c
 components/asic/test/test_bitmain_job_packets.c
 components/asic/test/test_version_rolling.c
 components/asic/test/test_asic_result_task.c
+components/asic/test/test_asic_share.c
 components/asic/test/test_common_work_contract.c
 
 components/power_management/test/test_power_policy.c

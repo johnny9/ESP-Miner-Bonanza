@@ -90,6 +90,7 @@ add_executable(
     ../components/stratum/test/mining_test_instance.c
     ../components/asic/asic_job_store.c
     ../components/asic/asic_result_handler.c
+    ../components/asic/asic_share.c
     ../components/asic/bm_job_builder.c
     ../components/asic/asic_capabilities.c
     ../components/asic/bzm_balanced_ramp.c

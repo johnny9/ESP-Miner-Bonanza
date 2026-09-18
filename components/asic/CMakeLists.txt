@@ -14,6 +14,7 @@ SRCS
     "asic_capabilities.c"
     "asic_job_store.c"
     "asic_result_handler.c"
+    "asic_share.c"
     "bm_job_builder.c"
     "bm_result.c"
     "bzm.c"

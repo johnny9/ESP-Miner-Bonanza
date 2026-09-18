@@ -30,6 +30,7 @@
 #include "log_level_config.h"
 #include "nvs_config.h"
 #include "stratum_task.h"
+#include "stratum_submission.h"
 #include "miner_job.h"
 #include "esp_netif_sntp.h"
 #include "self_test.h"
@@ -277,6 +278,11 @@ void app_main(void)
         tasks_ready = xTaskCreateWithCaps(statistics_task, "statistics", 8192,
             &GLOBAL_STATE, 3, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
         if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
+            tasks_ready = stratum_submission_init(&GLOBAL_STATE) && tasks_ready;
+            if (GLOBAL_STATE.stratum_share_queue) {
+                tasks_ready = xTaskCreateWithCaps(stratum_submission_task, "stratum submit", 8192,
+                    &GLOBAL_STATE, 5, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
+            }
             tasks_ready = xTaskCreateWithCaps(stratum_task, "stratum", 16384,
                 &GLOBAL_STATE, 5, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
         }
