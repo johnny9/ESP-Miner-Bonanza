@@ -3,7 +3,8 @@ SRCS
     "adc.c"
     "i2c_bitaxe.c"
     "main.c"
-    "bzm_controller.c"
+    "./power/board_power.c"
+    "./power/bzm_board_power.c"
     "log_buffer.c"
     "nvs_config.c"
     "display.c"
@@ -41,6 +42,8 @@ SRCS
     "./http_server/axe-os/api/system/asic_settings.c"
     "./self_test/self_test.c"
     "./tasks/stratum_task.c"
+    "./tasks/stratum_work.c"
+    "./tasks/stratum_submission.c"
     "./tasks/stratum_v1_client.c"
     "./tasks/stratum_v2_client.c"
     "./tasks/create_jobs_task.c"
@@ -62,6 +65,7 @@ SRCS
     "./power/power.c"
     "./power/vcore.c"
     "./power/asic_reset.c"
+    "./power/asic_reset_platform.c"
     "./power/asic_init.c"
     "${CMAKE_CURRENT_BINARY_DIR}/embedded_web_ui.c"
 
@@ -77,6 +81,7 @@ INCLUDE_DIRS
     "${CMAKE_CURRENT_BINARY_DIR}"
 
 REQUIRES
+    "power_management"
     "asic"
     "connect"
     "dns_server"

@@ -283,6 +283,31 @@ static int capture_share_write(esp_transport_handle_t transport, const char *buf
     return length;
 }
 
+static int incomplete_share_write(esp_transport_handle_t transport, const char *buffer,
+                                  int length, int timeout_ms)
+{
+    (void)buffer;
+    (void)timeout_ms;
+    int mode = *(int *)esp_transport_get_context_data(transport);
+    return mode > 0 ? length - 1 : mode;
+}
+
+TEST_CASE("Share writes reject timeouts and partial frames without recording a send", "[stratum][qemu-integration]")
+{
+    esp_transport_handle_t transport = esp_transport_init();
+    TEST_ASSERT_NOT_NULL(transport);
+    TEST_ASSERT_EQUAL(ESP_OK, esp_transport_set_func(transport, NULL, NULL, incomplete_share_write,
+                                                   NULL, NULL, NULL, NULL));
+    for (int mode = -1; mode <= 1; ++mode) {
+        TEST_ASSERT_EQUAL(ESP_OK, esp_transport_set_context_data(transport, &mode));
+        uint64_t sent_time = 0;
+        TEST_ASSERT_LESS_THAN(0, STRATUM_V1_submit_share(transport, 4, "worker", "job", "",
+            0x647025b5, 0x12345678, NULL, &sent_time));
+        TEST_ASSERT_TRUE(sent_time == 0);
+    }
+    esp_transport_destroy(transport);
+}
+
 TEST_CASE("Share wire format omits unnegotiated version bits and includes accepted zero bits", "[stratum][qemu-integration]")
 {
     char output[1024];

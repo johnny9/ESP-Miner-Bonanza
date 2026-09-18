@@ -1,282 +1,352 @@
+#include "power_management_task.h"
+
+#include <math.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "board_power.h"
+#include "bzm_bridge_update.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "global_state.h"
 #include "nvs_config.h"
-#include "vcore.h"
-#include "thermal.h"
-#include "power.h"
-#include "asic.h"
-#include "utils.h"
-#include "asic_init.h"
-#include "asic_reset.h"
-#include "driver/uart.h"
+#include "sv1_client.h"
 
-#define POLL_RATE 100
-#define MAX_TEMP 90.0
-#define SAFE_TEMP 45.0
+#define POLL_RATE_MS 100U
+#define REQUEST_TIMEOUT_MS 180000U
 
-#define VOLTAGE_START_THROTTLE 4900
-#define VOLTAGE_MIN_THROTTLE 3500
-#define VOLTAGE_RANGE (VOLTAGE_START_THROTTLE - VOLTAGE_MIN_THROTTLE)
+static const char *TAG = "power_management";
+static QueueHandle_t requests;
+static SemaphoreHandle_t board_io_lock;
+static power_operations_t board_operations;
+static TaskHandle_t owner_task;
+static power_policy_t policy;
+static atomic_bool ready;
+static atomic_bool initialized;
+static atomic_bool fan_allowed;
+static atomic_bool cooling;
+static atomic_bool maintenance;
+static atomic_bool boot_complete;
+static atomic_bool boot_success;
+/* Stop intent is monotonic, so a concurrent request cannot be erased by a
+ * start finishing or a caller timing out. Only an explicit resume accepts it. */
+static atomic_uint stop_epoch;
+static atomic_uint accepted_epoch;
 
-#define TPS546_THROTTLE_TEMP 105.0
-#define TPS546_MAX_TEMP 145.0
+typedef enum { REQUEST_WAITING, REQUEST_COMPLETE, REQUEST_CANCELLED } request_state_t;
+typedef struct {
+    power_request_kind_t kind;
+    power_owner_t owner;
+    unsigned epoch;
+    SemaphoreHandle_t completion;
+    atomic_uint references;
+    atomic_int state;
+    bool success;
+} power_request_t;
 
-#define ASIC_REDUCTION 100.0
-
-static const char * TAG = "power_management";
-
-static void mining_stop(GlobalState * GLOBAL_STATE)
+static void release_request(power_request_t *request)
 {
-    ESP_LOGI(TAG, "Stopping mining");
-
-    // Wind frequency down to 50 MHz before cutting power. This also updates
-    // the transition tracker so the ramp starts from 50 MHz on next start,
-    // rather than the stale pre-reset frequency.
-    GLOBAL_STATE->POWER_MANAGEMENT_MODULE.frequency_value = 50;
-    GLOBAL_STATE->POWER_MANAGEMENT_MODULE.expected_hashrate = 0;
-
-    ASIC_set_frequency(GLOBAL_STATE);
-    ASIC_set_nonce_space(GLOBAL_STATE);
-
-    // Cut ASIC power and hold in reset
-    VCORE_set_voltage(GLOBAL_STATE, 0.0f);
-    asic_hold_reset_low(GLOBAL_STATE);
-
-    // Mark uninitialized immediately so tasks stop issuing UART commands
-    GLOBAL_STATE->ASIC_initalized = false;
-
-    // Give tasks time to complete any in-progress UART operation
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    // Flush any stale data from the UART buffers
-    uart_flush(UART_NUM_1);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-
-    ESP_LOGI(TAG, "Mining stopped");
-}
-
-static uint8_t mining_start(GlobalState * GLOBAL_STATE)
-{
-    ESP_LOGI(TAG, "Starting mining");
-
-    // Restore voltage from NVS
-    uint16_t voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
-    if (VCORE_set_voltage(GLOBAL_STATE, (double)voltage / 1000.0) !=
-        ESP_OK) {
-        ESP_LOGE(TAG, "Mining start failed - ASIC power did not validate");
-        return 0;
+    if (atomic_fetch_sub_explicit(&request->references, 1, memory_order_acq_rel) == 1) {
+        vSemaphoreDelete(request->completion);
+        free(request);
     }
+}
 
-    // Wait for voltage to stabilize before touching the ASIC
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+bool POWER_MANAGEMENT_stop_requested(void)
+{
+    return atomic_load_explicit(&stop_epoch, memory_order_acquire) !=
+           atomic_load_explicit(&accepted_epoch, memory_order_acquire);
+}
 
-    // Clear any accumulated UART garbage before init
-    uart_flush(UART_NUM_1);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+static void revoke_work(void)
+{
+    atomic_fetch_add_explicit(&stop_epoch, 1, memory_order_acq_rel);
+}
 
-    POWER_MANAGEMENT_init_frequency(GLOBAL_STATE);
-    // Stabilization delay of 2000ms prevents race conditions where tasks are
-    // just starting to use the ASIC while power management tries to change frequency
-    uint8_t chip_count = asic_initialize(GLOBAL_STATE, ASIC_INIT_RECOVERY, 2000);
-
-    if (chip_count > 0) {
-        ESP_LOGI(TAG, "Mining started successfully (%d chip(s))", chip_count);
-    } else {
-        ESP_LOGE(TAG, "Mining start failed - ASIC not detected");
+bool POWER_MANAGEMENT_request(power_request_kind_t kind, power_owner_t owner, uint32_t timeout_ms)
+{
+    if (kind < POWER_REQUEST_PAUSE || kind > POWER_REQUEST_RELEASE ||
+        requests == NULL || !atomic_load_explicit(&initialized, memory_order_acquire)) return false;
+    if (kind == POWER_REQUEST_PAUSE || kind == POWER_REQUEST_ACQUIRE) revoke_work();
+    power_request_t *request = calloc(1, sizeof(*request));
+    if (request == NULL) return false;
+    request->completion = xSemaphoreCreateBinary();
+    if (request->completion == NULL) { free(request); return false; }
+    request->kind = kind;
+    request->owner = owner;
+    request->epoch = atomic_load_explicit(&stop_epoch, memory_order_acquire);
+    atomic_init(&request->references, 2);
+    atomic_init(&request->state, REQUEST_WAITING);
+    if (xQueueSend(requests, &request, 0) != pdTRUE) {
+        release_request(request);
+        release_request(request);
+        return false;
     }
-
-    return chip_count;
+    if (owner_task != NULL) xTaskNotifyGive(owner_task);
+    bool completed = xSemaphoreTake(request->completion, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    if (!completed) {
+        int expected = REQUEST_WAITING;
+        if (atomic_compare_exchange_strong_explicit(&request->state, &expected,
+                REQUEST_CANCELLED, memory_order_acq_rel, memory_order_acquire)) {
+            revoke_work();
+        } else {
+            /* Completion won the timeout race; its result was published
+             * before the state transition and is still owned by this caller. */
+            completed = expected == REQUEST_COMPLETE;
+        }
+    }
+    bool success = completed && request->success;
+    release_request(request);
+    return success;
 }
 
-static float expected_hashrate(GlobalState * GLOBAL_STATE)
+bool POWER_MANAGEMENT_pause(void) { return POWER_MANAGEMENT_request(POWER_REQUEST_PAUSE, POWER_OWNER_NONE, REQUEST_TIMEOUT_MS); }
+bool POWER_MANAGEMENT_resume(void) { return POWER_MANAGEMENT_request(POWER_REQUEST_RESUME, POWER_OWNER_NONE, REQUEST_TIMEOUT_MS); }
+bool POWER_MANAGEMENT_acquire_maintenance(power_owner_t owner) { return POWER_MANAGEMENT_request(POWER_REQUEST_ACQUIRE, owner, REQUEST_TIMEOUT_MS); }
+bool POWER_MANAGEMENT_release_maintenance(power_owner_t owner) { return POWER_MANAGEMENT_request(POWER_REQUEST_RELEASE, owner, REQUEST_TIMEOUT_MS); }
+bool POWER_MANAGEMENT_prepare_restart(void) { return POWER_MANAGEMENT_request(POWER_REQUEST_ACQUIRE, POWER_OWNER_RESTART, REQUEST_TIMEOUT_MS); }
+bool POWER_MANAGEMENT_fan_control_allowed(void)
 {
-    return GLOBAL_STATE->POWER_MANAGEMENT_MODULE.frequency_value * GLOBAL_STATE->DEVICE_CONFIG.family.asic.small_core_count * GLOBAL_STATE->DEVICE_CONFIG.family.asic_count / 1000.0;
+    return atomic_load_explicit(&fan_allowed, memory_order_acquire) && !POWER_MANAGEMENT_stop_requested();
+}
+bool POWER_MANAGEMENT_board_io_begin(void)
+{
+    if (!atomic_load_explicit(&initialized, memory_order_acquire)) return false;
+    if (board_io_lock == NULL || xSemaphoreTake(board_io_lock, pdMS_TO_TICKS(50)) != pdTRUE) return false;
+    if (POWER_MANAGEMENT_in_maintenance()) {
+        xSemaphoreGive(board_io_lock);
+        return false;
+    }
+    return true;
+}
+void POWER_MANAGEMENT_board_io_end(void)
+{
+    xSemaphoreGive(board_io_lock);
 }
 
-void POWER_MANAGEMENT_init_frequency(GlobalState * GLOBAL_STATE)
+static power_start_result_t board_start(void *context)
 {
-    float frequency = nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
-
-    GLOBAL_STATE->POWER_MANAGEMENT_MODULE.frequency_value = frequency;
-    GLOBAL_STATE->POWER_MANAGEMENT_MODULE.actual_frequency = 50.0;
-    GLOBAL_STATE->POWER_MANAGEMENT_MODULE.expected_hashrate = expected_hashrate(GLOBAL_STATE);
-    
-    char expected_hashrate_str[16] = {0};
-    suffixString(GLOBAL_STATE->POWER_MANAGEMENT_MODULE.expected_hashrate * 1e6, expected_hashrate_str, sizeof(expected_hashrate_str), 0);
-    ESP_LOGI(TAG, "ASIC Frequency: %g MHz, Expected hashrate: %sH/s", frequency, expected_hashrate_str);
+    atomic_store_explicit(&fan_allowed, false, memory_order_release);
+    xSemaphoreTake(board_io_lock, portMAX_DELAY);
+    power_start_result_t result = board_operations.start(context);
+    xSemaphoreGive(board_io_lock);
+    return result;
+}
+static bool board_stop(void *context)
+{
+    atomic_store_explicit(&fan_allowed, false, memory_order_release);
+    xSemaphoreTake(board_io_lock, portMAX_DELAY);
+    bool result = board_operations.stop(context);
+    xSemaphoreGive(board_io_lock);
+    return result;
+}
+static bool board_maintenance(void *context, power_owner_t owner, bool acquire)
+{
+    atomic_store_explicit(&fan_allowed, false, memory_order_release);
+    xSemaphoreTake(board_io_lock, portMAX_DELAY);
+    bool result = board_operations.maintenance(context, owner, acquire);
+    xSemaphoreGive(board_io_lock);
+    return result;
 }
 
-void POWER_MANAGEMENT_task(void * pvParameters)
+bool POWER_MANAGEMENT_in_maintenance(void)
 {
-    ESP_LOGI(TAG, "Starting");
+    return atomic_load_explicit(&maintenance, memory_order_acquire);
+}
+bool POWER_MANAGEMENT_overheat_recovery_active(void)
+{
+    return atomic_load_explicit(&cooling, memory_order_acquire);
+}
+void POWER_MANAGEMENT_settings_changed(void)
+{
+    if (owner_task != NULL) xTaskNotifyGive(owner_task);
+}
+void POWER_MANAGEMENT_overheat_mode_changed(bool enabled)
+{
+    (void)enabled;
+    POWER_MANAGEMENT_settings_changed();
+}
 
-    GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
+static bool bridge_acquire(void *context)
+{
+    (void)context;
+    return POWER_MANAGEMENT_acquire_maintenance(POWER_OWNER_BRIDGE);
+}
+static bool bridge_release(void *context)
+{
+    (void)context;
+    return POWER_MANAGEMENT_release_maintenance(POWER_OWNER_BRIDGE);
+}
+static bool restart_guard(void *context)
+{
+    (void)context;
+    return POWER_MANAGEMENT_prepare_restart();
+}
 
-    PowerManagementModule * power_management = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
-    SystemModule * sys_module = &GLOBAL_STATE->SYSTEM_MODULE;
+esp_err_t POWER_MANAGEMENT_init(GlobalState *state)
+{
+    if (state == NULL || requests != NULL) return ESP_ERR_INVALID_STATE;
+    requests = xQueueCreate(4, sizeof(power_request_t *));
+    if (requests == NULL) return ESP_ERR_NO_MEM;
+    board_io_lock = xSemaphoreCreateMutex();
+    if (board_io_lock == NULL) {
+        vQueueDelete(requests);
+        requests = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    if (!BZM_bridge_update_set_maintenance_hooks(bridge_acquire, bridge_release, NULL)) {
+        vQueueDelete(requests);
+        vSemaphoreDelete(board_io_lock);
+        board_io_lock = NULL;
+        requests = NULL;
+        return ESP_FAIL;
+    }
+    STRATUM_V1_set_restart_guard(restart_guard, NULL);
+    /* Above result dispatch (15), below the independent bridge service (18). */
+    if (xTaskCreate(POWER_MANAGEMENT_task, "power management", 8192,
+                    state, 16, &owner_task) != pdPASS) {
+        vQueueDelete(requests);
+        vSemaphoreDelete(board_io_lock);
+        board_io_lock = NULL;
+        requests = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
 
-    POWER_MANAGEMENT_init_frequency(GLOBAL_STATE);
-    
-    float last_asic_frequency = power_management->frequency_value;
+void POWER_MANAGEMENT_set_ready(void)
+{
+    atomic_store_explicit(&ready, true, memory_order_release);
+    POWER_MANAGEMENT_settings_changed();
+}
 
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-    uint16_t last_core_voltage = 0.0;
+bool POWER_MANAGEMENT_wait_started(uint32_t timeout_ms)
+{
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    while (!atomic_load_explicit(&boot_complete, memory_order_acquire)) {
+        if (esp_timer_get_time() >= deadline) { revoke_work(); return false; }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return atomic_load_explicit(&boot_success, memory_order_acquire);
+}
 
-    uint16_t last_known_asic_voltage = 0;
-    float last_known_asic_frequency = 0.0;
-    bool is_paused = false;
+void POWER_MANAGEMENT_init_frequency(GlobalState *state)
+{
+    float frequency = state->SELF_TEST_MODULE.is_active
+        ? state->DEVICE_CONFIG.family.asic.default_frequency_mhz
+        : nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
+    state->POWER_MANAGEMENT_MODULE.frequency_value = frequency;
+    state->POWER_MANAGEMENT_MODULE.actual_frequency = 50;
+    state->POWER_MANAGEMENT_MODULE.expected_hashrate = frequency *
+        state->DEVICE_CONFIG.family.asic.small_core_count * state->DEVICE_CONFIG.family.asic_count / 1000.0f;
+}
 
-    while (1) {
-        if (GLOBAL_STATE->SELF_TEST_MODULE.is_finished) {
-            ESP_LOGI(TAG, "Stopped");
-            vTaskDelete(NULL);
-            return;
-        }
-
-        power_management->voltage = Power_get_input_voltage(GLOBAL_STATE);
-        Power_get_output(GLOBAL_STATE, &power_management->power, &power_management->current);
-        power_management->core_voltage = VCORE_get_voltage_mv(GLOBAL_STATE);
-
-        power_management->chip_temp_avg = Thermal_get_chip_temp(GLOBAL_STATE);
-        power_management->chip_temp2_avg = Thermal_get_chip_temp2(GLOBAL_STATE);
-
-        power_management->vr_temp = Power_get_vreg_temp(GLOBAL_STATE);
-        // User pause, hardware fault, or all pools unreachable
-        bool wants_stop = sys_module->mining_paused || sys_module->hardware_fault || sys_module->pools_unavailable;
-        if (wants_stop && !is_paused) {
-            mining_stop(GLOBAL_STATE);
-            is_paused = true;
-        } else if (!wants_stop && is_paused) {
-            mining_start(GLOBAL_STATE);
-            is_paused = false;
-        }
-
-        // If we've paused or have a hardware fault, skip doing anything else
-        if (is_paused || sys_module->hardware_fault) {
-            vTaskDelay(POLL_RATE / portTICK_PERIOD_MS);
-            continue;
-        }
-
-        bool asic_overheat =
-            power_management->chip_temp_avg >
-                THERMAL_ASIC_THROTTLE_TEMP_C ||
-            power_management->chip_temp2_avg >
-                THERMAL_ASIC_THROTTLE_TEMP_C;
-
-        if ((power_management->vr_temp > TPS546_THROTTLE_TEMP || asic_overheat) && (power_management->frequency_value > 50 || power_management->voltage > 1000)) {
-            if (power_management->chip_temp2_avg > 0) {
-                ESP_LOGE(TAG, "OVERHEAT! VR: %fC ASIC1: %fC ASIC2: %fC", power_management->vr_temp, power_management->chip_temp_avg, power_management->chip_temp2_avg);
-            } else {
-                ESP_LOGE(TAG, "OVERHEAT! VR: %fC ASIC: %fC", power_management->vr_temp, power_management->chip_temp_avg);
+static void process_request(power_request_t *request)
+{
+    bool cancelled = atomic_load_explicit(&request->state, memory_order_acquire) == REQUEST_CANCELLED;
+    bool success = false;
+    if (request->kind == POWER_REQUEST_PAUSE) {
+        success = power_policy_pause(&policy);
+    } else if (!cancelled || request->kind == POWER_REQUEST_RELEASE) {
+        /* A release must drain even after its caller times out, otherwise an
+         * update that has already finished would retain board ownership. */
+        switch (request->kind) {
+        case POWER_REQUEST_RESUME:
+            if (request->epoch == atomic_load_explicit(&stop_epoch, memory_order_acquire)) {
+                atomic_store_explicit(&accepted_epoch, request->epoch, memory_order_release);
+                success = power_policy_resume(&policy);
             }
-
-            last_known_asic_voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
-            last_known_asic_frequency = nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
-            nvs_config_set_bool(NVS_CONFIG_AUTO_FAN_SPEED, false);
-            nvs_config_set_u16(NVS_CONFIG_MANUAL_FAN_SPEED, 100);
-            nvs_config_set_bool(NVS_CONFIG_OVERHEAT_MODE, true);
-            ESP_LOGW(TAG, "Entering safe mode due to overheat condition. System operation halted.");
-            mining_stop(GLOBAL_STATE);
-            
-            // Note: ASIC temperature readings are invalid when ASIC is powered down (returns -1)
-            // For 600-series boards that use ASIC thermal diode, we rely on VR temp and fixed cooling time
-            // For boards with EMC internal temp sensor, readings remain valid
-            bool asic_temp_valid = GLOBAL_STATE->DEVICE_CONFIG.emc_internal_temp;
-            int cooling_cycles = 0;
-            const int MIN_COOLING_CYCLES = 6; // Minimum 30 seconds cooling
-            
-            while (cooling_cycles < MIN_COOLING_CYCLES || power_management->vr_temp > TPS546_THROTTLE_TEMP - 10) {
-                vTaskDelay(5000 / portTICK_PERIOD_MS); // Wait 5 seconds
-                cooling_cycles++;
-                
-                power_management->vr_temp = Power_get_vreg_temp(GLOBAL_STATE);
-                
-                // Only check ASIC temps if they're valid (not using ASIC thermal diode)
-                if (asic_temp_valid) {
-                    power_management->chip_temp_avg = Thermal_get_chip_temp(GLOBAL_STATE);
-                    power_management->chip_temp2_avg = Thermal_get_chip_temp2(GLOBAL_STATE);
-                    ESP_LOGW(TAG, "Safe mode active (cycle %d) - VR: %.1f°C ASIC1: %.1f°C ASIC2: %.1f°C",
-                             cooling_cycles, power_management->vr_temp, power_management->chip_temp_avg, power_management->chip_temp2_avg);
-                    
-                    // Continue if ASIC temps still too high
-                    if (power_management->chip_temp_avg >  SAFE_TEMP || power_management->chip_temp2_avg > SAFE_TEMP) {
-                        cooling_cycles = 0; // Reset cycle count if still hot
-                    }
-                } else {
-                    // For boards using ASIC thermal diode (600 series), rely on VR temp and time
-                    ESP_LOGW(TAG, "Safe mode active (cycle %d/%d) - VR: %.1f°C (ASIC temps unavailable while powered down)",
-                             cooling_cycles, MIN_COOLING_CYCLES, power_management->vr_temp);
-                }
-            }
-            ESP_LOGI(TAG, "Temperature normalized after %d cooling cycles. Reinitializing ASIC...", cooling_cycles);
-            
-            uint16_t reduced_voltage = last_known_asic_voltage > ASIC_REDUCTION ? last_known_asic_voltage - ASIC_REDUCTION : 1000;
-            float reduced_asic_frequency = last_known_asic_frequency > ASIC_REDUCTION ? last_known_asic_frequency - ASIC_REDUCTION : 400.0;
-
-            // Never drop below the regulator's minimum core voltage. TPS546_set_vout()
-            // rejects anything lower (out of range), which leaves the VR stuck in a
-            // "power fault" — and the invalid value is persisted to NVS, so it survives
-            // reboots. Frequency reduction still provides the cooling headroom.
-            int16_t min_voltage = VCORE_get_voltage_min_mv(GLOBAL_STATE);
-            if (min_voltage > 0 && reduced_voltage < min_voltage) {
-                reduced_voltage = (uint16_t) min_voltage;
-            }
-
-            nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, reduced_voltage);
-            nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, reduced_asic_frequency);
-            
-            ESP_LOGI(TAG, "Restoring at reduced settings: %umV (was %umV), %.0f MHz (was %.0f MHz)",
-                     reduced_voltage, last_known_asic_voltage, reduced_asic_frequency, last_known_asic_frequency);
-
-            uint8_t chip_count = mining_start(GLOBAL_STATE);
-
-            if (chip_count > 0) {
-                // Frequency reduction will now be applied by normal power management loop
-                nvs_config_set_bool(NVS_CONFIG_OVERHEAT_MODE, false);
-                ESP_LOGI(TAG, "Resuming normal operation. Reduced frequency (%.0f MHz) will be applied automatically.", reduced_asic_frequency);
-            }
+            break;
+        case POWER_REQUEST_ACQUIRE:
+            atomic_store_explicit(&maintenance, true, memory_order_release);
+            success = power_policy_maintenance(&policy, request->owner, true);
+            break;
+        case POWER_REQUEST_RELEASE:
+            success = power_policy_maintenance(&policy, request->owner, false);
+            if (success) atomic_store_explicit(&maintenance, false, memory_order_release);
+            break;
+        default: break;
         }
+    }
+    request->success = success;
+    int expected = REQUEST_WAITING;
+    if (!atomic_compare_exchange_strong_explicit(&request->state, &expected,
+            REQUEST_COMPLETE, memory_order_acq_rel, memory_order_acquire)) {
+        if (success && request->kind == POWER_REQUEST_ACQUIRE)
+            (void)power_policy_maintenance(&policy, request->owner, false);
+        if (policy.owner == POWER_OWNER_NONE) (void)power_policy_pause(&policy);
+    }
+    atomic_store_explicit(&maintenance, policy.owner != POWER_OWNER_NONE, memory_order_release);
+    xSemaphoreGive(request->completion);
+    release_request(request);
+}
 
-        uint16_t core_voltage = GLOBAL_STATE->SELF_TEST_MODULE.is_active
-                                 ? GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_voltage_mv
-                                 : nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
-        float asic_frequency = GLOBAL_STATE->SELF_TEST_MODULE.is_active
-                                 ? GLOBAL_STATE-> DEVICE_CONFIG.family.asic.default_frequency_mhz
-                                 : nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
-
-        if (core_voltage != last_core_voltage) {
-            ESP_LOGI(TAG, "setting new vcore voltage to %umV", core_voltage);
-            if (VCORE_set_voltage(
-                    GLOBAL_STATE, (double)core_voltage / 1000.0) == ESP_OK) {
-                last_core_voltage = core_voltage;
+void POWER_MANAGEMENT_task(void *parameter)
+{
+    GlobalState *state = parameter;
+    xSemaphoreTake(board_io_lock, portMAX_DELAY);
+    esp_err_t board_result = BoardPower_init(state, &board_operations);
+    xSemaphoreGive(board_io_lock);
+    power_operations_t operations = board_operations;
+    operations.start = board_start;
+    operations.stop = board_stop;
+    operations.maintenance = board_maintenance;
+    if (!power_policy_init(&policy, operations)) {
+        ESP_LOGE(TAG, "Invalid board power operations");
+        atomic_store(&boot_complete, true);
+        vTaskDelete(NULL);
+        return;
+    }
+    policy.fault = board_result != ESP_OK;
+    atomic_store_explicit(&initialized, true, memory_order_release);
+    for (;;) {
+        policy.ready = atomic_load_explicit(&ready, memory_order_acquire);
+        power_target_t target = {
+            .voltage_mv = state->SELF_TEST_MODULE.is_active
+                ? state->DEVICE_CONFIG.family.asic.default_voltage_mv
+                : nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE),
+            .frequency_mhz = state->SELF_TEST_MODULE.is_active
+                ? state->DEVICE_CONFIG.family.asic.default_frequency_mhz
+                : nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY),
+        };
+        policy.target = target;
+        policy.pool_unavailable = state->SYSTEM_MODULE.pools_unavailable;
+        power_request_t *request;
+        while (xQueueReceive(requests, &request, 0) == pdTRUE) process_request(request);
+        /* A failed enqueue or timed-out caller still revokes mining. */
+        if (POWER_MANAGEMENT_stop_requested() && !policy.paused && policy.owner == POWER_OWNER_NONE)
+            (void)power_policy_pause(&policy);
+        /* No board access during maintenance, including SWD recovery. */
+        power_sample_t sample = policy.owner == POWER_OWNER_NONE
+            ? BoardPower_sample(state) : (power_sample_t){0};
+        if (state->SELF_TEST_MODULE.is_finished) policy.paused = true;
+        power_policy_step(&policy, (uint64_t)(esp_timer_get_time() / 1000), target, sample,
+            state->SYSTEM_MODULE.pools_unavailable, state->SYSTEM_MODULE.hardware_fault,
+            nvs_config_get_bool(NVS_CONFIG_OVERHEAT_MODE));
+        state->SYSTEM_MODULE.mining_paused = policy.paused;
+        atomic_store_explicit(&cooling, policy.cooling, memory_order_release);
+        atomic_store_explicit(&fan_allowed, policy.running && !policy.fault && !policy.cooling, memory_order_release);
+        if (policy.ready && (policy.running || policy.fault || policy.paused || policy.cooling)) {
+            atomic_store_explicit(&boot_success, policy.running, memory_order_release);
+            atomic_store_explicit(&boot_complete, true, memory_order_release);
+        }
+        if (policy.fault) {
+            state->POWER_MANAGEMENT_MODULE.expected_hashrate = 0;
+            if (!state->SYSTEM_MODULE.hardware_fault ||
+                state->SYSTEM_MODULE.hardware_fault_msg[0] == '\0') {
+                snprintf(state->SYSTEM_MODULE.hardware_fault_msg,
+                    sizeof(state->SYSTEM_MODULE.hardware_fault_msg), "%.*s",
+                    (int)sizeof(state->SYSTEM_MODULE.hardware_fault_msg) - 1,
+                    sample.detail[0] ? sample.detail : "Board startup, shutdown or power transition failed");
             }
+            state->SYSTEM_MODULE.hardware_fault = true;
         }
-
-        if (asic_frequency != last_asic_frequency) {
-            ESP_LOGI(TAG, "New ASIC frequency requested: %g MHz (current: %g MHz)", asic_frequency, last_asic_frequency);
-            
-            power_management->frequency_value = asic_frequency;
-            power_management->expected_hashrate = expected_hashrate(GLOBAL_STATE);
-
-            ASIC_set_frequency(GLOBAL_STATE);
-            ASIC_set_nonce_space(GLOBAL_STATE);
-            
-            last_asic_frequency = asic_frequency;
-        }
-
-        // Check for changing of overheat mode
-        bool new_overheat_mode = nvs_config_get_bool(NVS_CONFIG_OVERHEAT_MODE);
-        
-        if (new_overheat_mode != sys_module->overheat_mode) {
-            sys_module->overheat_mode = new_overheat_mode;
-            ESP_LOGI(TAG, "Overheat mode updated to: %d", sys_module->overheat_mode);
-        }
-
-        VCORE_check_fault(GLOBAL_STATE);
-
-        // looper:
-        vTaskDelay(POLL_RATE / portTICK_PERIOD_MS);
+        /* Notifications only shorten this wait; hardware ownership never
+         * moves to an HTTP, Stratum, fan, or bridge-update caller. */
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(POLL_RATE_MS));
     }
 }

@@ -8,6 +8,7 @@
 #include "scoreboard.h"
 #include "self_test.h"
 #include "stratum_task.h"
+#include "stratum_submission.h"
 #include "system.h"
 #include "unity.h"
 
@@ -28,7 +29,6 @@ typedef struct {
     unsigned repeated_results;
     double pool_diff;
     int submit_result;
-    uint64_t sent_time;
     uint32_t final_ntime;
     uint64_t work_generation;
     mining_job_source_t protocol;
@@ -80,8 +80,7 @@ asic_event_t *result_task_fake_process_work(GlobalState *state)
     longjmp(fixture_done, 1);
 }
 
-int result_task_fake_submit_share(GlobalState *state, const asic_share_submission_t *job,
-                                  uint64_t *sent_time)
+int result_task_fake_queue_share(GlobalState *state, const asic_share_submission_t *job)
 {
     TEST_ASSERT_EQUAL_PTR(&fixture_state, state);
     TEST_ASSERT_EQUAL_HEX32(7, job->nonce);
@@ -100,7 +99,6 @@ int result_task_fake_submit_share(GlobalState *state, const asic_share_submissio
         TEST_ASSERT_EQUAL_STRING("42", job->job_id);
         TEST_ASSERT_EQUAL_STRING("aabb", job->extranonce2);
     }
-    *sent_time = fixture_case.sent_time;
     return fixture_case.submit_result;
 }
 
@@ -234,7 +232,6 @@ TEST_CASE("result task keeps owned snapshots through submission for every protoc
             .paused = true,
             .pool_diff = 1e-30,
             .protocol = (mining_job_source_t)type,
-            .sent_time = 2000,
             .replace_during_submit = false,
             .replace_before_handling = true,
         });
@@ -244,11 +241,11 @@ TEST_CASE("result task keeps owned snapshots through submission for every protoc
         TEST_ASSERT_EQUAL_UINT32(0, fixture_self_tests);
         TEST_ASSERT_EQUAL_STRING("42", fixture_submitted_id);
         TEST_ASSERT_EQUAL_STRING("42", fixture_scored_id);
-        TEST_ASSERT_EQUAL_FLOAT(1.0f,
+        TEST_ASSERT_EQUAL_FLOAT(0.0f,
                                 fixture_state.SYSTEM_MODULE.process_time);
         run_result_case((result_case_t) {
             .pool_diff = 1e-30, .protocol = (mining_job_source_t)type,
-            .sent_time = 2000, .replace_during_submit = true,
+            .replace_during_submit = true,
             .retire_during_submit = true,
         });
         TEST_ASSERT_EQUAL_UINT32(1, fixture_submissions);
@@ -293,7 +290,6 @@ TEST_CASE("result task preserves thresholds self test and repeated delivery",
     run_result_case((result_case_t) {
         .pool_diff = 1e-30,
         .submit_result = -1,
-        .sent_time = 2000,
     });
     TEST_ASSERT_EQUAL_UINT32(1, fixture_submissions);
     TEST_ASSERT_EQUAL_UINT32(1, fixture_scores);
@@ -314,12 +310,12 @@ TEST_CASE("Common results preserve actual header time for every pool protocol", 
     for (int protocol = JOB_TYPE_V1; protocol <= JOB_TYPE_SV2_EXTENDED; ++protocol) {
         run_result_case((result_case_t) {
             .pool_diff = 1e-30, .protocol = (mining_job_source_t)protocol,
-            .final_ntime = 124, .sent_time = 2000,
+            .final_ntime = 124,
         });
         TEST_ASSERT_EQUAL_UINT32(1, fixture_submissions);
         TEST_ASSERT_EQUAL_UINT32(1, fixture_scores);
         TEST_ASSERT_EQUAL_UINT32(1, fixture_notifications);
-        TEST_ASSERT_EQUAL_FLOAT(1.0f, fixture_state.SYSTEM_MODULE.process_time);
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, fixture_state.SYSTEM_MODULE.process_time);
     }
 }
 

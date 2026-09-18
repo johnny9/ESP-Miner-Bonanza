@@ -15,7 +15,7 @@
 #define ASIC_process_work result_task_fake_process_work
 #define ASIC_record_local_result result_task_spy_local_result
 #define stratum_work_is_current result_task_fake_work_is_current
-#define stratum_submit_share result_task_fake_submit_share
+#define stratum_queue_share result_task_fake_queue_share
 #define self_test_record_nonce result_task_spy_record_nonce
 #define SYSTEM_notify_found_nonce result_task_spy_notify_found_nonce
 #define scoreboard_add result_task_spy_scoreboard_add

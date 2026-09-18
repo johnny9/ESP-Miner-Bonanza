@@ -19,6 +19,7 @@
 #include "device_config.h"
 #include "PID.h"
 #include "self_test.h"
+#include "power_management_task.h"
 #include "miner_job.h"
 #include "sv1_protocol.h"
 #include "utils.h"
@@ -33,7 +34,6 @@
 #define SELF_TEST_PID_P 5.0f
 #define SELF_TEST_PID_I 0.1f
 #define SELF_TEST_PID_D 2.0f
-#define SELF_TEST_POWER_MONITOR_STOP_MS 150
 #define SELF_TEST_DOMAIN_HASHRATE_TOLERANCE 0.33f
 #define SELF_TEST_DOMAIN_REJECTED_WARN_RATIO 0.25f
 
@@ -304,7 +304,7 @@ static bool self_test_should_run()
 
 esp_err_t self_test_init(GlobalState * GLOBAL_STATE)
 {
-    /* Board 1002 has a dedicated production controller and must never
+    /* Board 1002 uses staged board startup and must never
      * enter the legacy implicit powered self-test path. Neither an NVS flag
      * nor a held boot button may enter this path. */
     if (GLOBAL_STATE != NULL &&
@@ -312,7 +312,7 @@ esp_err_t self_test_init(GlobalState * GLOBAL_STATE)
         if (nvs_config_get_bool(NVS_CONFIG_SELF_TEST) ||
             gpio_get_level(CONFIG_GPIO_BUTTON_BOOT) == 0) {
             ESP_LOGW(TAG,
-                     "Legacy self-test ignored on board 1002; the locked production controller starts automatically");
+                     "Legacy self-test ignored on board 1002; power management starts the board automatically");
         }
         GLOBAL_STATE->SELF_TEST_MODULE.is_active = false;
         return ESP_OK;
@@ -792,17 +792,9 @@ static void tests_done(GlobalState * GLOBAL_STATE, bool isTestPassed)
 {
     GLOBAL_STATE->SELF_TEST_MODULE.is_finished = true;
     self_test_stop_nonce_measurement(GLOBAL_STATE);
-    asic_hold_reset_low(GLOBAL_STATE);
-    if (VCORE_is_initialized()) {
-        // Let the power monitor observe is_finished and exit before VCORE is
-        // intentionally disabled, otherwise it can report the OFF status as a
-        // regulator fault during self-test cleanup.
-        vTaskDelay(pdMS_TO_TICKS(SELF_TEST_POWER_MONITOR_STOP_MS));
-        if (VCORE_set_voltage(GLOBAL_STATE, 0.0f) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to turn off VCORE after self-test");
-        }
-    } else {
-        ESP_LOGW(TAG, "Skipping VCORE shutdown because the regulator was not initialized");
+    if (VCORE_is_initialized() && !POWER_MANAGEMENT_pause()) {
+        ESP_LOGE(TAG, "Power management could not verify self-test shutdown");
+        isTestPassed = false;
     }
     if (isTestPassed) {
         if (isFactoryTest) {
@@ -817,7 +809,10 @@ static void tests_done(GlobalState * GLOBAL_STATE, bool isTestPassed)
             GLOBAL_STATE->SELF_TEST_MODULE.finished = logString;
             vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
-        esp_restart();
+        if (POWER_MANAGEMENT_prepare_restart()) {
+            esp_restart();
+        }
+        ESP_LOGE(TAG, "Restart blocked: board shutdown could not be verified");
     } else {
         // isTestFailed
         GLOBAL_STATE->SELF_TEST_MODULE.result = "SELF-TEST FAIL!";
@@ -838,7 +833,10 @@ static void tests_done(GlobalState * GLOBAL_STATE, bool isTestPassed)
                 nvs_config_set_bool(NVS_CONFIG_SELF_TEST, false);
                 // Wait until NVS is written
                 vTaskDelay(100 / portTICK_PERIOD_MS);
-                esp_restart();
+                if (POWER_MANAGEMENT_prepare_restart()) {
+                    esp_restart();
+                }
+                ESP_LOGE(TAG, "Restart blocked: board shutdown could not be verified");
             }
         }
     }

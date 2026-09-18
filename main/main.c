@@ -12,10 +12,11 @@
 #include "asic.h"
 #include "asic_init.h"
 #include "asic_reset.h"
+#include "asic_reset_backend.h"
 #include "asic_result_task.h"
 #include "bap/bap.h"
 #include "bzm_bridge_update.h"
-#include "bzm_controller.h"
+#include "power_management_task.h"
 #include "connect.h"
 #include "create_jobs_task.h"
 #include "device_config.h"
@@ -29,6 +30,7 @@
 #include "log_level_config.h"
 #include "nvs_config.h"
 #include "stratum_task.h"
+#include "stratum_submission.h"
 #include "miner_job.h"
 #include "esp_netif_sntp.h"
 #include "self_test.h"
@@ -139,7 +141,9 @@ void app_main(void)
 
     // Board identity decides whether reset is a direct GPIO or is owned by
     // the Bonanza RP2040 bridge. Never drive GPIO1 before that decision.
-    esp_err_t reset_safe_err = asic_hold_reset_low(&GLOBAL_STATE);
+    ESP_ERROR_CHECK(asic_reset_configure(GLOBAL_STATE.DEVICE_CONFIG.bonanza_bridge
+        ? &ASIC_RESET_BRIDGE_BACKEND : &ASIC_RESET_GPIO_BACKEND));
+    esp_err_t reset_safe_err = asic_hold_reset_low();
     if (reset_safe_err == ESP_OK) {
         ESP_LOGI(TAG, "ASIC reset initialized to the safe state");
     } else if (bzm_bridge_update_boot_recovery_allowed(
@@ -147,7 +151,7 @@ void app_main(void)
         /*
          * A factory-blank RP2040 cannot acknowledge this command. Continue
          * booting so Wi-Fi, AxeOS, and the onboard SWD recovery endpoint stay
-         * available. The Bonanza controller remains fail-closed and will not
+         * available. Board power management remains fail-closed and will not
          * energize or dispatch work without coherent bridge safety evidence.
          */
         GLOBAL_STATE.SYSTEM_MODULE.mining_paused = true;
@@ -188,29 +192,17 @@ void app_main(void)
     SYSTEM_init_versions(&GLOBAL_STATE);
 
     if (system_init_ret == ESP_OK) {
-        if (GLOBAL_STATE.DEVICE_CONFIG.bonanza_bridge) {
-            /*
-             * Board 1002 uses its dedicated production controller instead of
-             * the legacy voltage and frequency management task.
-             */
-            esp_err_t runtime_err = bzm_controller_init(&GLOBAL_STATE);
-            if (runtime_err != ESP_OK) {
-                ESP_LOGE(TAG, "Bonanza safe-off runtime initialization failed: %s", esp_err_to_name(runtime_err));
-                system_init_ret = runtime_err;
-            }
-        } else {
-            if (xTaskCreate(POWER_MANAGEMENT_task, "power management", 8192, (void *) &GLOBAL_STATE, 10, NULL) != pdPASS) {
-                ESP_LOGE(TAG, "Error creating power management task");
-            }
-            if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
-                if (xTaskCreate(FAN_CONTROLLER_task, "fan_controller", 8192, (void *) &GLOBAL_STATE, 10, NULL) != pdPASS) {
-                    ESP_LOGE(TAG, "Error creating fan controller task");
-                }
-            }
+        system_init_ret = POWER_MANAGEMENT_init(&GLOBAL_STATE);
+        if (system_init_ret == ESP_OK && !GLOBAL_STATE.SELF_TEST_MODULE.is_active &&
+            xTaskCreateWithCaps(FAN_CONTROLLER_task, "fan_controller", 8192,
+                &GLOBAL_STATE, 10, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
+            system_init_ret = ESP_ERR_NO_MEM;
+            GLOBAL_STATE.SYSTEM_MODULE.hardware_fault = true;
+            ESP_LOGE(TAG, "Required fan controller task could not start");
         }
-    } else {
-        ESP_LOGE(TAG, "Critical peripheral initialization failure (%s). Entering degraded mode.",
-                 esp_err_to_name(system_init_ret));
+    }
+    if (system_init_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Peripheral/power initialization failed: %s", esp_err_to_name(system_init_ret));
     }
 
     if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
@@ -272,58 +264,39 @@ void app_main(void)
 
     miner_job_pool_init();
 
-    if (GLOBAL_STATE.DEVICE_CONFIG.bonanza_bridge) {
-        if (!bzm_controller_mining_stack_ready()) {
-            ESP_LOGE(TAG, "Bonanza remained safe-off after automatic startup failure");
-        } else if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active &&
-                   xTaskCreateWithCaps(FAN_CONTROLLER_task, "fan_controller",
-                                       8192, (void *) &GLOBAL_STATE, 5, NULL,
-                                       MALLOC_CAP_SPIRAM) != pdPASS) {
-            /* The bridge is still holding the last safe full-speed command,
-             * so mining can remain thermally protected even when dynamic
-             * control could not start. Surface the degraded state instead of
-             * silently claiming that settings are being applied. */
-            ESP_LOGE(TAG, "Bonanza fan controller task could not start; fan remains at 100%%");
-            GLOBAL_STATE.SYSTEM_MODULE.hardware_fault = true;
-            snprintf(GLOBAL_STATE.SYSTEM_MODULE.hardware_fault_msg,
-                     sizeof(GLOBAL_STATE.SYSTEM_MODULE.hardware_fault_msg),
-                     "Fan controller task failed; fan held at 100%%");
-        }
-        return;
-    }
-
     if (system_init_ret == ESP_OK) {
-        if (asic_initialize(&GLOBAL_STATE, ASIC_INIT_COLD_BOOT, 0) == 0) {
-            if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
-                return;
+        /* Common task stack for every board. Power management alone starts
+         * hardware, after all required consumers exist. Dispatch stays shut
+         * until its board startup operation succeeds. */
+        bool tasks_ready =
+            xTaskCreate(create_jobs_task, "stratum miner", 8192, &GLOBAL_STATE,
+                20, &GLOBAL_STATE.create_jobs_task_handle) == pdPASS;
+        tasks_ready = xTaskCreateWithCaps(ASIC_result_task, "asic result", 8192,
+            &GLOBAL_STATE, 15, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
+        tasks_ready = xTaskCreateWithCaps(hashrate_monitor_task, "hashrate monitor", 8192,
+            &GLOBAL_STATE, 5, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
+        tasks_ready = xTaskCreateWithCaps(statistics_task, "statistics", 8192,
+            &GLOBAL_STATE, 3, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
+        if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
+            tasks_ready = stratum_submission_init(&GLOBAL_STATE) && tasks_ready;
+            if (GLOBAL_STATE.stratum_share_queue) {
+                tasks_ready = xTaskCreateWithCaps(stratum_submission_task, "stratum submit", 8192,
+                    &GLOBAL_STATE, 5, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
             }
-
-            self_test_show_message(&GLOBAL_STATE, GLOBAL_STATE.SYSTEM_MODULE.asic_status);
-            system_init_ret = ESP_FAIL;
-        } else {
-            if (xTaskCreate(create_jobs_task, "stratum miner", 8192, (void *) &GLOBAL_STATE, 20, &GLOBAL_STATE.create_jobs_task_handle) != pdPASS) {
-                ESP_LOGE(TAG, "Error creating stratum miner task");
-            }
-            if (xTaskCreateWithCaps(ASIC_result_task, "asic result", 8192,
-                                    (void *)&GLOBAL_STATE, 15, NULL,
-                                    MALLOC_CAP_SPIRAM) != pdPASS) {
-                ESP_LOGE(TAG, "Error creating asic result task");
-            }
-
-            if (xTaskCreateWithCaps(hashrate_monitor_task, "hashrate monitor", 8192, (void *) &GLOBAL_STATE, 5, NULL,
-                                    MALLOC_CAP_SPIRAM) != pdPASS) {
-                ESP_LOGE(TAG, "Error creating hashrate monitor task");
-            }
-            if (xTaskCreateWithCaps(statistics_task, "statistics", 8192, (void *) &GLOBAL_STATE, 3, NULL, MALLOC_CAP_SPIRAM) !=
-                pdPASS) {
-                ESP_LOGE(TAG, "Error creating statistics task");
-            }
+            tasks_ready = xTaskCreateWithCaps(stratum_task, "stratum", 16384,
+                &GLOBAL_STATE, 5, NULL, MALLOC_CAP_SPIRAM) == pdPASS && tasks_ready;
         }
-    }
-
-    if (!GLOBAL_STATE.SELF_TEST_MODULE.is_active) {
-        if (xTaskCreateWithCaps(stratum_task, "stratum", 16384, (void *) &GLOBAL_STATE, 5, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
-            ESP_LOGE(TAG, "Error creating stratum task");
+        if (tasks_ready) {
+            POWER_MANAGEMENT_set_ready();
+            if (GLOBAL_STATE.SELF_TEST_MODULE.is_active &&
+                !POWER_MANAGEMENT_wait_started(180000)) {
+                system_init_ret = ESP_FAIL;
+                ESP_LOGE(TAG, "Power management kept the ASIC off; recovery services remain available");
+            }
+        } else {
+            system_init_ret = ESP_ERR_NO_MEM;
+            GLOBAL_STATE.SYSTEM_MODULE.hardware_fault = true;
+            ESP_LOGE(TAG, "Required mining task could not start; hardware remains off");
         }
     }
 

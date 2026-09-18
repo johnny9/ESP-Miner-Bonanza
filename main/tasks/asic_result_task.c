@@ -15,6 +15,7 @@
 #include "self_test.h"
 #include "sv1_client.h"
 #include "stratum_task.h"
+#include "stratum_submission.h"
 #include "sv2_protocol.h"
 #include "system.h"
 
@@ -41,14 +42,7 @@ static void record_self_test(void *context, double nonce_diff)
 static int submit_share(void *context, const asic_share_submission_t *share)
 {
     GlobalState *state = ((result_callback_context *)context)->state;
-    uint64_t sent_time_us = 0;
-    int ret = stratum_submit_share(state, share, &sent_time_us);
-    if (ret >= 0 && sent_time_us >= share->result->timestamp_us) {
-        state->SYSTEM_MODULE.process_time =
-            (sent_time_us - share->result->timestamp_us) / 1000.0f;
-        ESP_LOGD(TAG, "Processing time: %0.1f ms", state->SYSTEM_MODULE.process_time);
-    }
-    return ret;
+    return stratum_queue_share(state, share);
 }
 
 static void account_share(void *context,

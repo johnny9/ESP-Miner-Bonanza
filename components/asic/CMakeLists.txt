@@ -16,6 +16,7 @@ SRCS
     "asic_result_handler.c"
     "bitmain_job_packet.c"
     "bm_hashrate.c"
+    "asic_share.c"
     "bm_result.c"
     "bzm.c"
     "bzm_balanced_ramp.c"
@@ -52,6 +53,7 @@ INCLUDE_DIRS
 PRIV_INCLUDE_DIRS "private_include"
 
 REQUIRES 
+    "power_management"
     "mining_job"
     "freertos"
     "esp_driver_uart"

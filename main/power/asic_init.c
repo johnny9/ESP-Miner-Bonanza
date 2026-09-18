@@ -26,7 +26,7 @@ uint8_t asic_initialize(GlobalState *GLOBAL_STATE, asic_init_mode_t mode, uint32
                                      : 1;
     ESP_LOGI(TAG, "Starting ASIC initialization (%s mode)", mode_str);
 
-    if (asic_reset(GLOBAL_STATE, INIT_RESET_LOW_MS, INIT_RESET_RELEASE_MS) != ESP_OK) {
+    if (asic_reset(INIT_RESET_LOW_MS, INIT_RESET_RELEASE_MS) != ESP_OK) {
         GLOBAL_STATE->SYSTEM_MODULE.asic_status = "ASIC reset failed";
         ESP_LOGE(TAG, "ASIC reset failed!");
         return 0;
@@ -61,7 +61,7 @@ uint8_t asic_initialize(GlobalState *GLOBAL_STATE, asic_init_mode_t mode, uint32
             ESP_LOGW(TAG, "Resetting and re-probing %s chain (%u/%u)",
                      GLOBAL_STATE->DEVICE_CONFIG.family.asic.name, attempt, max_attempts);
             if (SERIAL_set_baud(UART_FREQ) != ESP_OK ||
-                asic_reset(GLOBAL_STATE, RETRY_RESET_LOW_MS, RETRY_RESET_RELEASE_MS) != ESP_OK) {
+                asic_reset(RETRY_RESET_LOW_MS, RETRY_RESET_RELEASE_MS) != ESP_OK) {
                 GLOBAL_STATE->SYSTEM_MODULE.asic_status = "ASIC retry reset failed";
                 ESP_LOGE(TAG, "%s retry reset failed", GLOBAL_STATE->DEVICE_CONFIG.family.asic.name);
                 return 0;
