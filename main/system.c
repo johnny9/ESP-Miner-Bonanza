@@ -375,18 +375,8 @@ esp_err_t SYSTEM_init_peripherals(GlobalState * GLOBAL_STATE) {
         return ret;
     }
 
-    // For self-test, we set a stable known voltage before ASIC initialization
-    if (GLOBAL_STATE->SELF_TEST_MODULE.is_active &&
-        !GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-
-        ret = VCORE_set_voltage(GLOBAL_STATE, (float)GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_voltage_mv / 1000.0f);
-        if (ret != ESP_OK) {
-            self_test_show_message(GLOBAL_STATE, "VCORE:FAIL");
-            ESP_LOGE(TAG, "VCORE set failed");
-            return ret;
-        }
-    }
+    // Power management applies the normal or self-test voltage at startup,
+    // after the required tasks exist.
 
     ret = Thermal_init(&GLOBAL_STATE->DEVICE_CONFIG);
     if (ret != ESP_OK) {

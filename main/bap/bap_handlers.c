@@ -18,7 +18,7 @@
 #include "bap_subscription.h"
 #include "bap.h"
 #include "asic.h"
-#include "bzm_controller.h"
+#include "power_management_task.h"
 #include "device_config.h"
 
 static const char *TAG = "BAP_HANDLERS";
@@ -324,14 +324,7 @@ void BAP_handle_settings(const char *parameter, const char *value) {
                 }
 
                 nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, target_frequency);
-                if (bonanza) {
-                    bzm_controller_tuning_settings_changed();
-                } else {
-                    bap_global_state->POWER_MANAGEMENT_MODULE.frequency_value =
-                        target_frequency;
-                    ASIC_set_frequency(bap_global_state);
-                    ASIC_set_nonce_space(bap_global_state);
-                }
+                POWER_MANAGEMENT_settings_changed();
 
                 char freq_str[32];
                 snprintf(freq_str, sizeof(freq_str), "%.2f", target_frequency);
@@ -359,9 +352,7 @@ void BAP_handle_settings(const char *parameter, const char *value) {
                 }
 
                 nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, target_voltage_mv);
-                if (bonanza) {
-                    bzm_controller_tuning_settings_changed();
-                }
+                POWER_MANAGEMENT_settings_changed();
 
                 char voltage_str[32];
                 snprintf(voltage_str, sizeof(voltage_str), "%d", target_voltage_mv);
@@ -391,7 +382,7 @@ void BAP_handle_settings(const char *parameter, const char *value) {
                         vTaskDelay(pdMS_TO_TICKS(100));
                         BAP_send_message(BAP_CMD_STA, "status", "restarting");
                         vTaskDelay(pdMS_TO_TICKS(1000));
-                        esp_restart();
+                        if (POWER_MANAGEMENT_prepare_restart()) esp_restart();
                     } else {
                         if (existing_pass) free(existing_pass);
                     }
@@ -420,7 +411,7 @@ void BAP_handle_settings(const char *parameter, const char *value) {
                     //ESP_LOGI(TAG, "Restarting to apply new WiFi settings");
                     BAP_send_message(BAP_CMD_STA, "status", "restarting");
                     vTaskDelay(pdMS_TO_TICKS(1000));
-                    esp_restart();
+                    if (POWER_MANAGEMENT_prepare_restart()) esp_restart();
                 } else {
                     ESP_LOGE(TAG, "Failed to set WiFi password");
                     BAP_send_message(BAP_CMD_ERR, parameter, "set_failed");

@@ -232,7 +232,7 @@ esp_err_t VCORE_init(GlobalState * GLOBAL_STATE)
             /*
              * Keep initializing the independently controlled TPS546 in its
              * off state. A blank RP2040 must not prevent Wi-Fi/HTTP recovery,
-             * and the production controller will refuse to mine without the
+             * and power management will refuse to mine without the
              * missing bridge readback.
              */
             ESP_LOGE(TAG,
@@ -440,6 +440,20 @@ int16_t VCORE_get_voltage_mv(GlobalState * GLOBAL_STATE)
         return TPS546_get_vout() / GLOBAL_STATE->DEVICE_CONFIG.family.voltage_domains * 1000;
     }
     return ADC_get_vcore();
+}
+
+// Lowest core voltage (mV) the regulator will accept. Use the effective
+// configuration, including board defaults and NVS overrides.
+int16_t VCORE_get_voltage_min_mv(GlobalState * GLOBAL_STATE)
+{
+    if (GLOBAL_STATE->DEVICE_CONFIG.TPS546) {
+        TPS546_CONFIG config = get_tps546_config(&GLOBAL_STATE->DEVICE_CONFIG.family);
+        uint16_t domains = GLOBAL_STATE->DEVICE_CONFIG.family.voltage_domains;
+        if (domains == 0) domains = 1;
+        // Round up so core_mv * domains never lands just below VOUT_MIN.
+        return (int16_t)ceilf(config.TPS546_INIT_VOUT_MIN / domains * 1000.0f);
+    }
+    return 0; // Non-TPS546 boards have no PMBus minimum.
 }
 
 esp_err_t VCORE_check_fault(GlobalState * GLOBAL_STATE)

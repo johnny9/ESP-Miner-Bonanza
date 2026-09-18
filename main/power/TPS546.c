@@ -31,6 +31,7 @@
 #define TPS546_I2C_TIMEOUT_MS 500
 
 static const char *TAG = "TPS546";
+static esp_err_t write_entire_config_checked(void);
 
 const TPS546_CONFIG TPS546_CONFIG_DEFAULT = {
     .TPS546_INIT_PHASE = TPS546_INIT_PHASE_SINGLE,
@@ -910,7 +911,7 @@ esp_err_t TPS546_init(TPS546_CONFIG config)
     ESP_RETURN_ON_ERROR(smb_read_byte(PMBUS_VOUT_MODE, &voutmode), TAG,
                         "read VOUT_MODE failed");
     ESP_LOGI(TAG, "VOUT_MODE: %02x", voutmode);
-    ESP_RETURN_ON_ERROR(TPS546_write_entire_config(), TAG,
+    ESP_RETURN_ON_ERROR(write_entire_config_checked(), TAG,
                         "TPS546 configuration failed");
     //}
 
@@ -1035,7 +1036,15 @@ void TPS546_read_mfr_info(uint8_t *read_mfr_revision)
 /**
  * @brief Set all the relevant config registers for normal operation 
 */
-esp_err_t TPS546_write_entire_config(void)
+void TPS546_write_entire_config(void)
+{
+    esp_err_t err = write_entire_config_checked();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "TPS546 configuration failed: %s", esp_err_to_name(err));
+    }
+}
+
+static esp_err_t write_entire_config_checked(void)
 {
     if (tps546_config.TPS546_EXTENDED_CONFIG) {
         return TPS546_write_extended_config();

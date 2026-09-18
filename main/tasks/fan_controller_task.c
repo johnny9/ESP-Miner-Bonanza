@@ -5,7 +5,7 @@
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "bzm_controller.h"
+#include "power_management_task.h"
 #include "global_state.h"
 #include "fan_controller_task.h"
 #include "nvs_config.h"
@@ -94,8 +94,12 @@ void FAN_CONTROLLER_task(void * pvParameters)
     TickType_t taskWakeTime = xTaskGetTickCount();
 
     while (1) {
+        if (!POWER_MANAGEMENT_board_io_begin()) {
+            vTaskDelay(pdMS_TO_TICKS(POLL_TIME_MS));
+            continue;
+        }
         if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge &&
-            !bzm_controller_fan_control_allowed()) {
+            !POWER_MANAGEMENT_fan_control_allowed()) {
             update_fan_speed(GLOBAL_STATE, 100.0f, "Bonanza safe");
         } else if (bonanza_asic_overheated(GLOBAL_STATE)) {
             update_fan_speed(GLOBAL_STATE, 100.0f, "Overheat");
@@ -167,6 +171,7 @@ void FAN_CONTROLLER_task(void * pvParameters)
             power_management->fan2_rpm = Thermal_get_fan2_speed(&GLOBAL_STATE->DEVICE_CONFIG);
         }
 
+        POWER_MANAGEMENT_board_io_end();
         vTaskDelayUntil(&taskWakeTime, POLL_TIME_MS / portTICK_PERIOD_MS);
     }
 }

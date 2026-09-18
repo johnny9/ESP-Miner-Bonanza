@@ -51,6 +51,7 @@ INCLUDE_DIRS
 PRIV_INCLUDE_DIRS "private_include"
 
 REQUIRES 
+    "power_management"
     "mining_job"
     "freertos"
     "esp_driver_uart"

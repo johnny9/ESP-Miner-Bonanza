@@ -9,6 +9,7 @@
 
 #include "cJSON.h"
 #include "esp_log.h"
+#include "power_management_task.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -319,7 +320,8 @@ static void setup_ble_restart_task(void *param)
 {
     (void)param;
     vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    if (POWER_MANAGEMENT_prepare_restart()) esp_restart();
+    vTaskDelete(NULL);
 }
 
 static void setup_ble_handle_command(const char *command)

@@ -132,7 +132,7 @@ uint16_t Thermal_get_fan2_speed(DeviceConfig * DEVICE_CONFIG)
 
 float Thermal_get_chip_temp(GlobalState * GLOBAL_STATE)
 {
-    if (!GLOBAL_STATE->ASIC_initalized) {
+    if (!GLOBAL_STATE->ASIC_initalized && !GLOBAL_STATE->DEVICE_CONFIG.emc_internal_temp) {
         return -1;
     }
 

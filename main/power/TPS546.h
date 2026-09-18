@@ -50,7 +50,7 @@ typedef struct TPS546_CONFIG
   /* Phase readout configuration */
   uint8_t TPS546_INIT_PHASE; /* phase register configuration */
   uint16_t TPS546_INIT_SMBALERT_MASK[7];
-  int TPS546_INIT_FREQUENCY;
+  uint16_t TPS546_INIT_FREQUENCY; /* Switch frequency in KHz */
   /* vin voltage */
   float TPS546_INIT_VIN_ON;  /* V */
   float TPS546_INIT_VIN_OFF; /* V */
@@ -235,7 +235,7 @@ extern const TPS546_CONFIG TPS546_CONFIG_GAMMA_HEX;
 esp_err_t TPS546_init(TPS546_CONFIG config);
 
 void TPS546_read_mfr_info(uint8_t *);
-esp_err_t TPS546_write_entire_config(void);
+void TPS546_write_entire_config(void);
 int TPS546_get_frequency(void);
 void TPS546_set_frequency(int);
 int TPS546_get_temperature(void);

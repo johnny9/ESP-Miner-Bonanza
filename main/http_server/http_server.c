@@ -52,7 +52,7 @@
 #include "bzm_bridge.h"
 #include "bzm_bridge_update.h"
 #include "bzm_ota_guard.h"
-#include "bzm_controller.h"
+#include "power_management_task.h"
 #include "thermal.h"
 
 static const char * TAG = "http_server";
@@ -89,12 +89,9 @@ static GlobalState * GLOBAL_STATE;
 static bool bzm_ota_maintenance_acquire(void *context)
 {
     (void)context;
-    if (GLOBAL_STATE == NULL ||
-        !GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
-        return true;
-    }
-    if (bzm_controller_acquire_maintenance(
-            BZM_SUPERVISOR_OWNER_ESP_OTA)) {
+    if (GLOBAL_STATE == NULL) return false;
+    if (POWER_MANAGEMENT_acquire_maintenance(
+            POWER_OWNER_OTA)) {
         return true;
     }
     return false;
@@ -103,10 +100,9 @@ static bool bzm_ota_maintenance_acquire(void *context)
 static bool bzm_ota_maintenance_release(void *context)
 {
     (void)context;
-    return GLOBAL_STATE == NULL ||
-           !GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge ||
-           bzm_controller_release_maintenance(
-               BZM_SUPERVISOR_OWNER_ESP_OTA);
+    return GLOBAL_STATE != NULL &&
+           POWER_MANAGEMENT_release_maintenance(
+               POWER_OWNER_OTA);
 }
 
 static bool bzm_ota_begin(httpd_req_t *req, bzm_ota_guard_t *guard)
@@ -119,7 +115,7 @@ static bool bzm_ota_begin(httpd_req_t *req, bzm_ota_guard_t *guard)
     }
     httpd_resp_set_status(req, "409 Conflict");
     (void)httpd_resp_sendstr(
-        req, "Bonanza OTA requires exclusive verified OFF_SAFE ownership");
+        req, "Firmware update requires exclusive board shutdown");
     return false;
 }
 
@@ -1219,9 +1215,8 @@ static esp_err_t PATCH_update_settings(httpd_req_t * req)
         overheat_mode_changed &&
         (overheat_mode_item->valueint != 0 ||
          cJSON_IsTrue(overheat_mode_item));
-    if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge &&
-        overheat_mode_changed && !requested_overheat_mode &&
-        bzm_controller_overheat_recovery_active()) {
+    if (overheat_mode_changed && !requested_overheat_mode &&
+        POWER_MANAGEMENT_overheat_recovery_active()) {
         /* Treat the upstream settings action as a request to run recovery,
          * not permission to clear its persistent marker while still hot. */
         cJSON_DeleteItemFromObject(root, "overheat_mode");
@@ -1250,10 +1245,10 @@ static esp_err_t PATCH_update_settings(httpd_req_t * req)
         }
     }
     if (tuning_settings_changed) {
-        bzm_controller_tuning_settings_changed();
+        POWER_MANAGEMENT_settings_changed();
     }
     if (overheat_mode_changed) {
-        bzm_controller_overheat_mode_changed(requested_overheat_mode);
+        POWER_MANAGEMENT_overheat_mode_changed(requested_overheat_mode);
     }
 
     if (redirect_url) {
@@ -1328,11 +1323,11 @@ static esp_err_t POST_restart(httpd_req_t * req)
         return ESP_OK;
     }
 
-    if (!bzm_controller_prepare_restart()) {
+    if (!POWER_MANAGEMENT_prepare_restart()) {
         httpd_resp_set_status(req, "409 Conflict");
         return httpd_resp_sendstr(
             req,
-            "Bonanza restart blocked: verified OFF_SAFE ownership unavailable");
+            "Restart blocked: verified board shutdown unavailable");
     }
 
     httpd_resp_set_type(req, "application/json");
@@ -1498,15 +1493,11 @@ static esp_err_t POST_mining_pause(httpd_req_t * req)
         return ESP_OK;
     }
 
-    if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
-        if (!bzm_controller_pause()) {
-            httpd_resp_set_status(req, "409 Conflict");
-            return httpd_resp_sendstr(
-                req,
-                "Bonanza pause blocked: verified OFF_SAFE unavailable");
-        }
-    } else {
-        GLOBAL_STATE->SYSTEM_MODULE.mining_paused = true;
+    if (!POWER_MANAGEMENT_pause()) {
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(
+            req,
+            "Pause blocked: board shutdown did not complete");
     }
     ESP_LOGI(TAG, "Mining paused by API request");
 
@@ -1533,17 +1524,13 @@ static esp_err_t POST_mining_resume(httpd_req_t * req)
         return ESP_OK;
     }
 
-    if (GLOBAL_STATE->DEVICE_CONFIG.bonanza_bridge) {
-        if (!bzm_controller_resume()) {
-            httpd_resp_set_status(req, "409 Conflict");
-            return httpd_resp_sendstr(
-                req,
-                "Bonanza resume blocked: startup ownership or validation unavailable");
-        }
-    } else {
-        GLOBAL_STATE->SYSTEM_MODULE.mining_paused = false;
+    if (!POWER_MANAGEMENT_resume()) {
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(
+            req,
+            "Resume blocked: board startup is unavailable");
     }
-    ESP_LOGI(TAG, "Mining resumed by API request");
+    ESP_LOGI(TAG, "Mining resume requested by API");
 
     httpd_resp_set_type(req, "application/json");
     cJSON * resp = cJSON_CreateObject();
@@ -1551,7 +1538,7 @@ static esp_err_t POST_mining_resume(httpd_req_t * req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Internal error");
         return ESP_OK;
     }
-    cJSON_AddStringToObject(resp, "message", "Mining resumed");
+    cJSON_AddStringToObject(resp, "message", "Mining resume requested");
     esp_err_t res = HTTP_send_json(req, resp, &api_common_prebuffer_len);
     cJSON_Delete(resp);
     return res;
@@ -1652,10 +1639,16 @@ static esp_err_t POST_system_boot(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No valid firmware found on partition");
     }
 
+    if (!POWER_MANAGEMENT_prepare_restart()) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(req, "Boot partition change blocked: board shutdown unavailable");
+    }
     esp_err_t err = esp_ota_set_boot_partition(p);
     cJSON_Delete(root);
 
     if (err != ESP_OK) {
+        (void)POWER_MANAGEMENT_release_maintenance(POWER_OWNER_RESTART);
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to set boot partition");
     }
 
@@ -2005,7 +1998,11 @@ static esp_err_t GET_bridge_info(httpd_req_t *req)
     }
 
     bzm_bridge_info_t info;
-    esp_err_t info_err = BZM_bridge_get_info(&info);
+    esp_err_t info_err = ESP_ERR_INVALID_STATE;
+    if (POWER_MANAGEMENT_board_io_begin()) {
+        info_err = BZM_bridge_get_info(&info);
+        POWER_MANAGEMENT_board_io_end();
+    }
     bool available = info_err == ESP_OK || info_err == ESP_ERR_NOT_SUPPORTED;
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {

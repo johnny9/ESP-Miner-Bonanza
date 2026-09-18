@@ -75,6 +75,8 @@ add_executable(
     src/host_platform_stubs.c
     src/esp_log_host.c
     ${host_test_sources}
+    ../components/power_management/power_policy.c
+    ../main/power/asic_reset.c
     ../components/asic/test/bm1366_test_instance.c
     ../components/asic/test/bm1368_test_instance.c
     ../components/asic/test/bm1370_test_instance.c
@@ -213,6 +215,7 @@ target_include_directories(
         ../components/mining_job/include
         ../components/stratum/include
         ../components/stratum_v2/include
+        ../components/power_management/include
         ../components/asic/include
         ../components/asic/private_include
         ../components/bonanza_display_protocol/include
@@ -221,6 +224,7 @@ target_include_directories(
         ../components/identify_mode/include
         ../components/log_level_config/include
         ../main/http_server
+        ../main/power
         ../main
         ../main/tasks
         ../main/self_test
